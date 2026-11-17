@@ -335,6 +335,24 @@ func TestInfoRuleNeverAuthorised(t *testing.T) {
 	}
 }
 
+// An unknown or empty tier fails closed: not movable, and refused by the gate.
+func TestUnknownTierIsNotMovable(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Caches/x/f", Content: "x"}}})
+	for _, tier := range []rules.Tier{"", "bogus", "SAFE"} {
+		r := goodRule("odd.tier", "Library/Caches")
+		r.Tier = tier
+		if r.Movable() || r.RuleMovable() {
+			t.Errorf("tier %q: reported movable", tier)
+		}
+		if d := policy.Authorize(policy.Env{Home: home}, r, home+"/Library/Caches/x"); d.Allowed || d.Reason != policy.ReasonInfoTier {
+			t.Errorf("tier %q: want %q, got %+v", tier, policy.ReasonInfoTier, d)
+		}
+	}
+	if r := goodRule("safe.tier", "Library/Caches"); !r.Movable() {
+		t.Error("safe tier reported not movable")
+	}
+}
+
 func TestCatalogueIsACopy(t *testing.T) {
 	a := rules.Catalogue()
 	a[0].Roots[0] = "Documents"

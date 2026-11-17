@@ -128,8 +128,9 @@ func (r Rule) RuleRoots() []string { return r.Roots }
 // RuleExcludes implements policy.Rule.
 func (r Rule) RuleExcludes() []string { return r.Exclude }
 
-// Movable reports whether kipple may ever move items of this rule.
-func (r Rule) Movable() bool { return r.Tier != TierInfo }
+// Movable reports whether kipple may ever move items of this rule. An
+// unknown or empty tier is not movable (fail closed).
+func (r Rule) Movable() bool { return r.Tier.Valid() && r.Tier != TierInfo }
 
 // RuleMovable implements policy.Rule: info rules are never authorised.
 func (r Rule) RuleMovable() bool { return r.Movable() }
