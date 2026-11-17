@@ -353,7 +353,7 @@ func TestEveryDenylistEntryRefused(t *testing.T) {
 		root := StaticRule{ID: "everything", Roots: []string{strings.Split(rel, "/")[0]}}
 		for _, cand := range []string{rel, rel + "/child", strings.ToUpper(rel)} {
 			got := Authorize(Env{Home: home}, root, home+"/"+cand)
-			if got.Allowed || (got.Reason != ReasonDenylisted && got.Reason != ReasonIsRuleRoot) {
+			if got.Allowed || got.Reason != ReasonDenylisted {
 				t.Errorf("%s: candidate %q got %+v", entry, cand, got)
 			}
 			if !IsDenylisted(cand) {
