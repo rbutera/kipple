@@ -2,7 +2,10 @@
 
 package policy
 
-import "errors"
+import (
+	"errors"
+	"io/fs"
+)
 
 // Session on non-unix platforms delegates to the stateless Authorize, which
 // refuses every path there (device identity is unknown). kipple targets
@@ -29,6 +32,27 @@ func (s *Session) Home() string { return s.env.Home }
 
 // Authorize delegates to Authorize.
 func (s *Session) Authorize(rule Rule, path string) Decision { return Authorize(s.env, rule, path) }
+
+// Fresh is an approved path with its parent held open (unix only).
+type Fresh struct {
+	ParentFd int
+	Name     string
+	Info     fs.FileInfo
+}
+
+// Close is a no-op here.
+func (f *Fresh) Close() error { return nil }
+
+// AuthorizeFresh delegates to Authorize, which refuses every path here.
+func (s *Session) AuthorizeFresh(rule Rule, path string) (*Fresh, Decision) {
+	return nil, Authorize(s.env, rule, path)
+}
+
+// Identity returns the file identity of info, if known.
+func Identity(info fs.FileInfo) (dev, ino uint64, ok bool) {
+	id, ok := identityOf(info)
+	return id.dev, id.ino, ok
+}
 
 // Open is unsupported on non-unix platforms.
 func (s *Session) Open(path string) (Entry, error) {

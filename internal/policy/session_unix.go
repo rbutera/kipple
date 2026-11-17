@@ -171,13 +171,13 @@ func (s *Session) Authorize(rule Rule, path string) Decision {
 	if s.homeFail != "" {
 		return refuse(s.homeFail)
 	}
-	w := s.walk(lx.comps, lx.want, true, false)
+	w := s.walk(lx.comps, lx.want, s.ids, false, true)
 	defer w.close(s.homeFd)
 	if !w.d.Allowed {
 		return w.d
 	}
 	if lx.want == directory {
-		return s.checkMarkers(w.parent, rule.RuleMatchMarkers())
+		return s.checkMarkers(w.parent, rule.RuleMatchMarkers(), true)
 	}
 	return Decision{Allowed: true}
 }
@@ -206,7 +206,7 @@ func (s *Session) Open(path string) (Entry, error) {
 		return Entry{}, &RefusedError{Path: path, Reason: s.homeFail}
 	}
 	comps := strings.Split(path[len(home)+1:], "/")
-	w := s.walk(comps, anyType, false, true)
+	w := s.walk(comps, anyType, nil, true, true)
 	defer w.close(s.homeFd)
 	if !w.d.Allowed {
 		return Entry{}, &RefusedError{Path: path, Reason: w.d.Reason, Err: w.err}
@@ -223,6 +223,83 @@ func (s *Session) Open(path string) (Entry, error) {
 // path below home) of rule, used while measuring the item.
 func (s *Session) Guard(rule Rule, item string) *Guard {
 	return newGuard(s.env, s.ids, rule, item)
+}
+
+// Fresh is an approved path with its verified parent directory held open,
+// returned by AuthorizeFresh. Wave 3 apply moves the item with
+// renameat(ParentFd, Name, trashFd, newName) (or renameatx_np with
+// RENAME_EXCL), so the move acts on exactly the object that was approved
+// and a swapped ancestor cannot redirect it. Close releases ParentFd.
+type Fresh struct {
+	// ParentFd is an O_DIRECTORY|O_NOFOLLOW descriptor of the item's parent,
+	// reached by the verified walk. The caller owns it.
+	ParentFd int
+	// Name is the item's name as stored in that directory.
+	Name string
+	// Info is the item's lstat-equivalent info, taken during the walk.
+	Info fs.FileInfo
+}
+
+// Close releases the parent descriptor.
+func (f *Fresh) Close() error {
+	if f == nil || f.ParentFd < 0 {
+		return nil
+	}
+	err := unix.Close(f.ParentFd)
+	f.ParentFd = -1
+	return err
+}
+
+// AuthorizeFresh decides like Authorize, but with protected identities
+// collected again for this call and without the directory-listing cache, so
+// the decision reflects the filesystem now rather than when the session
+// started. When the path is allowed it also returns the verified parent
+// descriptor and stored name for the move (see Fresh); the caller must
+// Close it. Wave 3 apply calls it immediately before each move.
+//
+// TODO(wave 3): apply uses Fresh with renameat; not wired yet.
+func (s *Session) AuthorizeFresh(rule Rule, path string) (*Fresh, Decision) {
+	lx := lexical(s.env, rule, path)
+	if lx.done {
+		return nil, lx.d
+	}
+	s.life.RLock()
+	defer s.life.RUnlock()
+	if s.closed {
+		return nil, refuse(ReasonInvalidEnv)
+	}
+	if s.homeFail != "" {
+		return nil, refuse(s.homeFail)
+	}
+	ids := collectIDs(s.env.Home, s.env.Protect)
+	w := s.walk(lx.comps, lx.want, ids, false, false)
+	defer w.close(s.homeFd)
+	if !w.d.Allowed {
+		return nil, w.d
+	}
+	if lx.want == directory {
+		if d := s.checkMarkers(w.parent, rule.RuleMatchMarkers(), false); !d.Allowed {
+			return nil, d
+		}
+	}
+	parent := w.parent
+	if parent == s.homeFd {
+		fd, err := unix.Dup(parent)
+		if err != nil {
+			return nil, refuse(ReasonMissing)
+		}
+		unix.CloseOnExec(fd)
+		parent = fd
+	} else {
+		w.parent = -1 // ownership passes to Fresh
+	}
+	return &Fresh{ParentFd: parent, Name: lx.comps[len(lx.comps)-1], Info: w.final}, Decision{Allowed: true}
+}
+
+// Identity returns the (st_dev, st_ino) of info from os.Lstat or a Session.
+func Identity(info fs.FileInfo) (dev, ino uint64, ok bool) {
+	id, ok := identityOf(info)
+	return id.dev, id.ino, ok
 }
 
 // walkResult holds the descriptors a walk leaves open.
@@ -244,10 +321,11 @@ func (w *walkResult) close(homeFd int) {
 }
 
 // walk runs filesystem checks 8 to 10 component by component from the home
-// descriptor, in the same order as checkFilesystem. With ids set it applies
-// the protected-identity check; with openFinal set it also opens the final
-// component when it is a directory.
-func (s *Session) walk(comps []string, want itemType, ids, openFinal bool) walkResult {
+// descriptor, in the same order as checkFilesystem. With ids non-nil it
+// applies the protected-identity check; with openFinal set it also opens the
+// final component when it is a directory; with cache set it reuses
+// directory listings for the stored-name check.
+func (s *Session) walk(comps []string, want itemType, ids *protectedIDs, openFinal, cache bool) walkResult {
 	w := walkResult{parent: s.homeFd, finalFd: -1}
 	stop := func(reason string, err error) walkResult {
 		w.d, w.err = refuse(reason), err
@@ -273,12 +351,12 @@ func (s *Session) walk(comps []string, want itemType, ids, openFinal bool) walkR
 		if !ok {
 			return stop(ReasonDifferentDevice, nil)
 		}
-		if ids && s.ids != nil {
-			if reason, hit := s.ids.refusal(id, last); hit {
+		if ids != nil {
+			if reason, hit := ids.refusal(id, last); hit {
 				return stop(reason, nil)
 			}
 		}
-		stored, err := s.stored(w.parent, c)
+		stored, err := s.stored(w.parent, c, cache)
 		if err != nil {
 			return stop(ReasonMissing, err)
 		}
@@ -334,7 +412,7 @@ func openVerified(dirfd int, name string, want fileID) (int, string, error) {
 }
 
 // checkMarkers is checkMarkers relative to the artifact's verified parent.
-func (s *Session) checkMarkers(dirfd int, markers []string) Decision {
+func (s *Session) checkMarkers(dirfd int, markers []string, cache bool) Decision {
 	for _, m := range markers {
 		if m == "" || m == "." || m == ".." || strings.Contains(m, "/") || hasMeta(m) {
 			continue
@@ -346,7 +424,7 @@ func (s *Session) checkMarkers(dirfd int, markers []string) Decision {
 		if !(statInfo{name: m, st: st}).Mode().IsRegular() {
 			continue
 		}
-		if stored, err := s.stored(dirfd, m); err == nil && stored {
+		if stored, err := s.stored(dirfd, m, cache); err == nil && stored {
 			return Decision{Allowed: true}
 		}
 	}
@@ -356,7 +434,19 @@ func (s *Session) checkMarkers(dirfd int, markers []string) Decision {
 // stored reports whether the directory open at dirfd holds an entry whose
 // stored name is byte-identical to name, using the cached listing while the
 // directory's mtime and ctime are unchanged.
-func (s *Session) stored(dirfd int, name string) (bool, error) {
+func (s *Session) stored(dirfd int, name string, cache bool) (bool, error) {
+	if !cache {
+		names, err := readNames(dirfd)
+		if err != nil {
+			return false, err
+		}
+		for _, n := range names {
+			if n == name {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 	var st unix.Stat_t
 	if err := fstat(dirfd, &st); err != nil {
 		return false, err

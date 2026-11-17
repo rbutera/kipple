@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/rbutera/kipple/internal/testutil"
 )
@@ -26,7 +29,63 @@ func authorizeBoth(t *testing.T, env Env, rule Rule, path string) Decision {
 			t.Errorf("Session.Authorize (call %d) = %+v, stateless Authorize = %+v for %q", i+1, got, want, path)
 		}
 	}
+	f, got := s.AuthorizeFresh(rule, path)
+	if got != want {
+		t.Errorf("Session.AuthorizeFresh = %+v, stateless Authorize = %+v for %q", got, want, path)
+	}
+	if got.Allowed {
+		checkFresh(t, f, path)
+	} else if f != nil {
+		t.Errorf("AuthorizeFresh returned a descriptor for a refused path %q", path)
+	}
 	return want
+}
+
+// checkFresh verifies that f's parent descriptor and name reach the object
+// at path, then closes it.
+func checkFresh(t *testing.T, f *Fresh, path string) {
+	t.Helper()
+	if f == nil {
+		t.Fatalf("AuthorizeFresh allowed %q without a descriptor", path)
+	}
+	defer func() { _ = f.Close() }()
+	var st unix.Stat_t
+	if err := unix.Fstatat(f.ParentFd, f.Name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		t.Fatalf("fstatat(parent, %q): %v", f.Name, err)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, ino, _ := Identity(fi)
+	if uint64(st.Dev) != dev || st.Ino != ino || filepath.Base(path) != f.Name {
+		t.Fatalf("descriptor for %q reaches another object", path)
+	}
+}
+
+// AuthorizeFresh collects protected identities again: a protected file that
+// appears after the session started is refused, where the session snapshot
+// still allows a hard link to it.
+func TestAuthorizeFreshSeesNewProtections(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Caches/innocent", Content: "machine x"}}})
+	s, err := NewSession(Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	item := home + "/Library/Caches/innocent"
+	if err := os.Link(item, home+"/.netrc"); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Authorize(cachesRule, item); !d.Allowed {
+		t.Fatalf("the cached snapshot predates .netrc and should still allow: %+v", d)
+	}
+	if f, d := s.AuthorizeFresh(cachesRule, item); d.Reason != ReasonDenylisted || f != nil {
+		t.Fatalf("AuthorizeFresh: want %q, got %+v", ReasonDenylisted, d)
+	}
+	if d := Authorize(Env{Home: home}, cachesRule, item); d.Reason != ReasonDenylisted {
+		t.Fatalf("stateless: %+v", d)
+	}
 }
 
 func TestSessionHomeErrors(t *testing.T) {
