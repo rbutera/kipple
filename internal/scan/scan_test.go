@@ -133,7 +133,7 @@ func ruleStatus(p plan.Plan, id string) plan.RuleStatus {
 }
 
 // Spec scenario "Default level".
-func TestDefaultLevelSelectsOnlySafe(t *testing.T) {
+func scenarioDefaultLevelSelectsOnlySafe(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	p := runScan(t, home, "")
 	if p.Level != rules.LevelSafe {
@@ -191,7 +191,7 @@ func TestInfoNeverSelected(t *testing.T) {
 }
 
 // Spec scenario "No Xcode installed".
-func TestAbsentRoots(t *testing.T) {
+func scenarioAbsentRoots(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	p := runScan(t, home, "")
 	for _, id := range []string{"xcode.deriveddata", "xcode.devicesupport", "xcode.archives", "simulator.runtimes", "docker.raw"} {
@@ -229,7 +229,7 @@ func TestScanIsReadOnly(t *testing.T) {
 	}
 }
 
-func TestScanIsReadOnlyWholeHome(t *testing.T) {
+func scenarioScanIsReadOnlyWholeHome(t *testing.T) {
 	spec := fixtureSpec()
 	spec.Dirs = slices.DeleteFunc(spec.Dirs, func(d testutil.Dir) bool { return d.Unreadable })
 	home := testutil.NewHome(t, spec)
@@ -241,7 +241,7 @@ func TestScanIsReadOnlyWholeHome(t *testing.T) {
 }
 
 // Spec scenario "Two scans, same IDs".
-func TestStableIDs(t *testing.T) {
+func scenarioStableIDs(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	ids := func() []string {
 		var out []string
@@ -308,7 +308,7 @@ func TestListingOutcomes(t *testing.T) {
 }
 
 // Spec scenario "Partial scan recorded".
-func TestPartialItem(t *testing.T) {
+func scenarioPartialItem(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	it := byRel(t, runScan(t, home, ""), home)["Library/Caches/partial"]
 	if it.ScanStatus != plan.ScanPartial || it.SizeBytes != 2*kib || len(it.Warnings) == 0 {
@@ -399,3 +399,17 @@ func TestRegenerableDescendantsDoNotBlock(t *testing.T) {
 		t.Errorf("codex worktree with a .git file: %+v", wt)
 	}
 }
+
+func TestScanIsReadOnlyWholeHome(t *testing.T) {
+	t.Run("Fixture unchanged", scenarioScanIsReadOnlyWholeHome)
+}
+
+func TestPartialItem(t *testing.T) { t.Run("Partial scan recorded", scenarioPartialItem) }
+
+func TestStableIDs(t *testing.T) { t.Run("Two scans, same IDs", scenarioStableIDs) }
+
+func TestDefaultLevelSelectsOnlySafe(t *testing.T) {
+	t.Run("Default level", scenarioDefaultLevelSelectsOnlySafe)
+}
+
+func TestAbsentRoots(t *testing.T) { t.Run("No Xcode installed", scenarioAbsentRoots) }

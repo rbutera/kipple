@@ -88,7 +88,7 @@ func golden(t *testing.T, name string, got []byte) {
 }
 
 // Spec scenario "Dry-run footer" and "Human output shows paths and sizes".
-func TestPlanGolden(t *testing.T) {
+func scenarioPlanGolden(t *testing.T) {
 	var buf bytes.Buffer
 	if err := Plan(&buf, fixturePlan(rules.LevelSafe), titles()); err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestReviewNextStep(t *testing.T) {
 }
 
 // Spec scenario "Human listing".
-func TestRulesGolden(t *testing.T) {
+func scenarioRulesGolden(t *testing.T) {
 	var buf bytes.Buffer
 	if err := Rules(&buf, rules.Catalogue()); err != nil {
 		t.Fatal(err)
@@ -160,3 +160,7 @@ func TestExplain(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanGolden(t *testing.T) { t.Run("Dry-run footer", scenarioPlanGolden) }
+
+func TestRulesGolden(t *testing.T) { t.Run("Human listing", scenarioRulesGolden) }

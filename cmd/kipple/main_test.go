@@ -76,30 +76,68 @@ func exactlyOneJSON(t *testing.T, stdout string, v any) {
 	}
 }
 
-// Spec scenarios "Scan JSON is parseable", "JSON plan", "Fixture home".
+// Spec scenarios "Scan JSON is parseable", "JSON plan", "Fixture home" and
+// "Fixture unchanged", through the CLI.
 func TestScanJSON(t *testing.T) {
-	home := fixture(t)
-	before := testutil.Checksum(t, home)
-	code, out, _ := cli(t, "scan", "--json")
-	if code != exitOK {
-		t.Fatalf("exit %d", code)
-	}
-	var p plan.Plan
-	exactlyOneJSON(t, out, &p)
-	if p.Home != home || p.SchemaVersion != plan.SchemaVersion || p.KippleVersion != version {
-		t.Fatalf("plan header: home=%q schema=%d version=%q", p.Home, p.SchemaVersion, p.KippleVersion)
-	}
-	if len(p.Items) == 0 {
-		t.Fatal("no items")
-	}
-	for _, it := range p.Items {
-		if !strings.HasPrefix(it.Path, home+"/") {
-			t.Errorf("path outside the fixture home: %s", it.Path)
+	t.Run("Scan JSON is parseable", func(t *testing.T) {
+		fixture(t)
+		code, out, _ := cli(t, "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if code != exitOK || len(p.Items) == 0 {
+			t.Fatalf("exit %d, %d items", code, len(p.Items))
 		}
-	}
-	if testutil.Checksum(t, home) != before {
-		t.Fatal("scan changed the fixture")
-	}
+	})
+	t.Run("JSON plan", func(t *testing.T) {
+		fixture(t)
+		_, out, errOut := cli(t, "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if p.SchemaVersion != plan.SchemaVersion || p.KippleVersion != version {
+			t.Fatalf("plan header: schema=%d version=%q", p.SchemaVersion, p.KippleVersion)
+		}
+		_, schema, _ := cli(t, "schema", "plan")
+		if err := plantest.ValidateWith([]byte(schema), "plan", []byte(out)); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(errOut, "{") {
+			t.Fatalf("JSON leaked to stderr: %q", errOut)
+		}
+	})
+	t.Run("Fixture home", func(t *testing.T) {
+		home := fixture(t)
+		_, out, _ := cli(t, "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if p.Home != home {
+			t.Fatalf("plan home %q, want %q", p.Home, home)
+		}
+		for _, it := range p.Items {
+			if !strings.HasPrefix(it.Path, home+"/") {
+				t.Errorf("path outside the fixture home: %s", it.Path)
+			}
+		}
+	})
+	t.Run("Fixture unchanged", func(t *testing.T) {
+		home := fixture(t)
+		before := testutil.Checksum(t, home)
+		if code, _, _ := cli(t, "scan", "--json", "--level", "review"); code != exitOK {
+			t.Fatalf("exit %d", code)
+		}
+		if testutil.Checksum(t, home) != before {
+			t.Fatal("scan changed the fixture")
+		}
+	})
+}
+
+// Spec scenario "Unknown flag".
+func TestUnknownFlag(t *testing.T) {
+	t.Run("Unknown flag", func(t *testing.T) {
+		fixture(t)
+		if code, out, _ := cli(t, "scan", "--bogus"); code != exitUsage || out != "" {
+			t.Fatalf("exit %d stdout %q", code, out)
+		}
+	})
 }
 
 // Spec scenario "Plan validates against schema", using kipple schema plan.
@@ -251,7 +289,7 @@ func TestExplainItem(t *testing.T) {
 }
 
 // Spec scenario "Version JSON".
-func TestVersion(t *testing.T) {
+func scenarioVersion(t *testing.T) {
 	home := fixture(t)
 	code, out, _ := cli(t, "version", "--json")
 	var v map[string]any
@@ -286,7 +324,7 @@ func TestRunAsRoot(t *testing.T) {
 }
 
 // Spec scenario "Dry-run footer".
-func TestHumanScan(t *testing.T) {
+func scenarioHumanScan(t *testing.T) {
 	home := fixture(t)
 	code, out, _ := cli(t, "scan")
 	if code != exitOK {
@@ -303,7 +341,7 @@ func TestHumanScan(t *testing.T) {
 }
 
 // Spec scenario "No Xcode installed": absent roots exit 0.
-func TestEmptyHomeScan(t *testing.T) {
+func scenarioEmptyHomeScan(t *testing.T) {
 	testutil.NewHome(t, testutil.Spec{})
 	code, out, _ := cli(t, "scan", "--json")
 	var p plan.Plan
@@ -318,33 +356,38 @@ func TestEmptyHomeScan(t *testing.T) {
 	}
 }
 
-// Spec scenario "Catalogue listing" and "Human listing".
+// Spec scenarios "Catalogue listing" and "Human listing".
 func TestRules(t *testing.T) {
-	home := fixture(t)
-	_, out, _ := cli(t, "rules", "--json")
-	var doc struct {
-		SchemaVersion int              `json:"schema_version"`
-		Home          string           `json:"home"`
-		Rules         []map[string]any `json:"rules"`
-	}
-	exactlyOneJSON(t, out, &doc)
-	if doc.SchemaVersion != 1 || doc.Home != home || len(doc.Rules) != len(rules.Catalogue()) {
-		t.Fatalf("rules doc: %d %q %d", doc.SchemaVersion, doc.Home, len(doc.Rules))
-	}
-	for _, r := range doc.Rules {
-		for _, k := range []string{"id", "title", "tier", "roots", "what", "if_removed", "owner"} {
-			if _, ok := r[k]; !ok {
-				t.Fatalf("rule %v lacks %s", r["id"], k)
+	t.Run("Catalogue listing", func(t *testing.T) {
+		home := fixture(t)
+		_, out, _ := cli(t, "rules", "--json")
+		var doc struct {
+			SchemaVersion int              `json:"schema_version"`
+			Home          string           `json:"home"`
+			Rules         []map[string]any `json:"rules"`
+		}
+		exactlyOneJSON(t, out, &doc)
+		if doc.SchemaVersion != 1 || doc.Home != home || len(doc.Rules) != len(rules.Catalogue()) {
+			t.Fatalf("rules doc: %d %q %d", doc.SchemaVersion, doc.Home, len(doc.Rules))
+		}
+		for _, r := range doc.Rules {
+			for _, k := range []string{"id", "title", "tier", "roots", "what", "if_removed", "owner"} {
+				if _, ok := r[k]; !ok {
+					t.Fatalf("rule %v lacks %s", r["id"], k)
+				}
 			}
 		}
-	}
-	if err := plantest.Validate("rules", []byte(out)); err != nil {
-		t.Fatal(err)
-	}
-	code, text, _ := cli(t, "rules")
-	if code != exitOK || !strings.Contains(text, "SAFE:") || !strings.Contains(text, "INFO:") || !strings.Contains(text, "Home: "+home) {
-		t.Fatalf("human rules:\n%s", text)
-	}
+		if err := plantest.Validate("rules", []byte(out)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("Human listing", func(t *testing.T) {
+		home := fixture(t)
+		code, text, _ := cli(t, "rules")
+		if code != exitOK || !strings.Contains(text, "SAFE:") || !strings.Contains(text, "INFO:") || !strings.Contains(text, "Home: "+home) {
+			t.Fatalf("human rules:\n%s", text)
+		}
+	})
 }
 
 func TestConfiguredLevelAndProjectRoots(t *testing.T) {
@@ -434,3 +477,9 @@ func TestHelpDocumentsExitCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestHumanScan(t *testing.T) { t.Run("Dry-run footer", scenarioHumanScan) }
+
+func TestVersion(t *testing.T) { t.Run("Version JSON", scenarioVersion) }
+
+func TestEmptyHomeScan(t *testing.T) { t.Run("No Xcode installed", scenarioEmptyHomeScan) }
