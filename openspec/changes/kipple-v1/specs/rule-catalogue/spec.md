@@ -20,6 +20,10 @@ Every rule SHALL have a stable ID, a title, a tier of `safe`, `review`, `manual`
 ### Requirement: Catalogue invariants
 Every rule root SHALL be under home, SHALL NOT be on the denylist, and no two rules SHALL claim the same root. Every rule SHALL have non-empty explanations.
 
+Two exemptions apply, and only these:
+- `info` rule roots MAY be on the denylist (for example `.claude/projects`, `.codex/sessions`, Docker's disk image under `Library/Containers`). Info roots are measured and reported only and are never movable; the policy refuses every `info` rule with reason `info_tier` before any other check, and the denylist still refuses those paths for every other rule.
+- Project artifact rules MAY share roots with each other, because they all search the configured project roots. They SHALL instead have disjoint artifact names, so no path is offered by two of them, and their roots SHALL NOT overlap any other rule's root.
+
 #### Scenario: Invariant test
 - **WHEN** the catalogue test suite runs
 - **THEN** it fails if any rule violates an invariant, naming the rule
