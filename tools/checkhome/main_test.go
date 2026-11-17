@@ -149,6 +149,108 @@ func TestCheck(t *testing.T) {
 			want: []string{"has Example functions (ExampleF)"},
 		},
 		{
+			name: "syscall.Getenv HOME fails",
+			files: map[string]string{
+				"internal/a/a.go": "package a\nimport \"syscall\"\nfunc F() (string, bool) { return syscall.Getenv(\"HOME\") }\n",
+			},
+			want: []string{`internal/a/a.go:3: syscall.Getenv("HOME")`},
+		},
+		{
+			name: "os.ExpandEnv of $HOME fails",
+			files: map[string]string{
+				"internal/a/a.go": "package a\nimport \"os\"\nvar p = os.ExpandEnv(\"$HOME/Library\")\n",
+			},
+			want: []string{"internal/a/a.go:3: os.ExpandEnv of $HOME"},
+		},
+		{
+			name: "os.ExpandEnv of ${HOME} fails",
+			files: map[string]string{
+				"internal/a/a.go": "package a\nimport \"os\"\nvar p = os.ExpandEnv(\"${HOME}\")\n",
+			},
+			want: []string{"os.ExpandEnv of $HOME"},
+		},
+		{
+			name: "os.Expand of $HOME fails",
+			files: map[string]string{
+				"internal/a/a.go": "package a\nimport \"os\"\nvar p = os.Expand(\"$HOME\", os.Getenv)\n",
+			},
+			want: []string{"os.Expand of $HOME"},
+		},
+		{
+			name: "os.ExpandEnv of a variable that only starts with HOME passes",
+			files: map[string]string{
+				"internal/a/a.go": "package a\nimport \"os\"\nvar p = os.ExpandEnv(\"$HOMEBREW_PREFIX/bin\")\n",
+			},
+		},
+		{
+			name: "Getenv of a constant equal to HOME fails",
+			files: map[string]string{
+				"internal/a/a.go": "package a\nimport \"os\"\nconst k = \"HOME\"\nfunc F() string { return os.Getenv(k) }\n",
+			},
+			want: []string{`internal/a/a.go:4: os.Getenv("HOME")`},
+		},
+		{
+			name: "LookupEnv of a constant from another file of the package fails",
+			files: map[string]string{
+				"internal/a/k.go": "package a\nconst prefix = \"HO\"\nconst key = prefix + (\"ME\")\n",
+				"internal/a/a.go": "package a\nimport \"os\"\nfunc F() (string, bool) { return os.LookupEnv(key) }\n",
+			},
+			want: []string{`internal/a/a.go:3: os.LookupEnv("HOME")`},
+		},
+		{
+			name: "Getenv of a constant in a different package directory passes",
+			files: map[string]string{
+				"internal/b/k.go": "package b\nconst key = \"HOME\"\n",
+				"internal/a/a.go": "package a\nimport \"os\"\nconst key = \"PATH\"\nfunc F() string { return os.Getenv(key) }\n",
+			},
+		},
+		{
+			name: "guard file may use os/user but not Getenv HOME",
+			files: map[string]string{
+				"internal/testutil/guard.go": "package testutil\nimport (\"os\"; \"os/user\")\nfunc r() { _, _ = user.Current(); _, _ = os.UserHomeDir(); _ = os.Getenv(\"HOME\") }\n",
+			},
+			want: []string{`internal/testutil/guard.go:3: os.Getenv("HOME")`},
+		},
+		{
+			name: "GuardedMain from another package does not count",
+			files: map[string]string{
+				"internal/a/a_test.go": "package a\nimport (\"os\"; \"testing\"; testutil \"example.com/fake/testutil\")\nfunc TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }\n",
+			},
+			want: []string{"internal/a: TestMain does not call testutil.GuardedMain"},
+		},
+		{
+			name: "local GuardRealHome does not count",
+			files: map[string]string{
+				"internal/a/a_test.go": "package a\nimport \"testing\"\nfunc GuardRealHome(testing.TB) {}\nfunc TestX(t *testing.T) { GuardRealHome(t) }\n",
+			},
+			want: []string{"do not call testutil.GuardRealHome: TestX"},
+		},
+		{
+			name: "aliased testutil import counts",
+			files: map[string]string{
+				"internal/a/a_test.go": "package a\nimport (\"os\"; \"testing\"; tu \"github.com/rbutera/kipple/internal/testutil\")\nfunc TestMain(m *testing.M) { os.Exit(tu.GuardedMain(m)) }\n",
+			},
+		},
+		{
+			name: "dot-imported testutil counts",
+			files: map[string]string{
+				"internal/a/a_test.go": "package a\nimport (\"testing\"; . \"github.com/rbutera/kipple/internal/testutil\")\nfunc TestX(t *testing.T) { GuardRealHome(t) }\n",
+			},
+		},
+		{
+			name: "package testutil may call its own guard unqualified",
+			files: map[string]string{
+				"internal/testutil/x_test.go": "package testutil\nimport (\"os\"; \"testing\")\nfunc TestMain(m *testing.M) { os.Exit(GuardedMain(m)) }\n",
+			},
+		},
+		{
+			name: "a package named testutil elsewhere may not call unqualified",
+			files: map[string]string{
+				"internal/other/x_test.go": "package testutil\nimport (\"os\"; \"testing\")\nfunc GuardedMain(m *testing.M) int { return m.Run() }\nfunc TestMain(m *testing.M) { os.Exit(GuardedMain(m)) }\n",
+			},
+			want: []string{"internal/other: TestMain does not call testutil.GuardedMain"},
+		},
+		{
 			name: "testdata is ignored",
 			files: map[string]string{
 				"internal/a/testdata/x.go": "package x\nimport \"os\"\nfunc F() { _, _ = os.UserHomeDir() }\n",
