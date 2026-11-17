@@ -1,0 +1,25 @@
+schema: spec-driven
+
+context: |
+  kipple is an open-source (MIT) macOS disk cleaner for the junk AI coding tools
+  and developer toolchains leave behind. Written in Go. One core library
+  (internal/ packages), a CLI (cmd/kipple) with stable versioned JSON output for
+  agents, a Bubble Tea TUI, and an optional GUI as a separate build target.
+  Safety is the product: dry-run is the only default, --apply is required to act,
+  Trash is the only default destination, every move writes a receipt that can be
+  restored, every deletable path must descend from an allowlisted rule and must
+  pass a single path validator with a hard-coded denylist. Symlinks are never
+  followed. Never sudo. Home folder only.
+  Tests must run against temp fixture directories only; no test or dev command
+  may ever modify the real home folder of the machine it runs on. Read-only
+  inspection (ls, stat) of real paths is fine.
+  Research: research/elfclean.md documents ElfClean, Mole, Dusty and the gaps.
+
+rules:
+  proposal:
+    - State what is out of scope for v1 explicitly
+  specs:
+    - Every requirement about deletion must state the dry-run and Trash defaults
+  tasks:
+    - Group tasks into numbered waves suitable for the /wave skill; each wave must be independently reviewable and end with passing tests
+    - Every task that touches the filesystem must name the fixture-based test that proves it
