@@ -458,3 +458,43 @@ func TestMountInsideItem(t *testing.T) {
 		t.Fatalf("item with a mount inside: selected=%v reasons=%v", it.Selected, it.Reasons)
 	}
 }
+
+// Red-team finding: conditions computed from an interrupted walk are not
+// satisfied. A mount inside an old debug item fails its minimum age, and a
+// project whose source cannot be fully read is not idle.
+func TestInterruptedWalksFailConditions(t *testing.T) {
+	spec := fixtureSpec()
+	spec.Files = append(spec.Files,
+		testutil.File{Path: "dev/lockedsrc/package.json", Content: "{}", MTime: old},
+		testutil.File{Path: "dev/lockedsrc/src/a.js", Content: "x", MTime: old},
+		testutil.File{Path: "dev/lockedsrc/node_modules/x/i.js", Content: "x", MTime: old},
+		testutil.File{Path: ".claude/debug/mountedold/log.txt", Content: "x", MTime: old},
+	)
+	spec.Dirs = append(spec.Dirs, testutil.Dir{Path: ".claude/debug/mountedold", MTime: old})
+	spec.Dirs = append(spec.Dirs, testutil.Dir{Path: "dev/lockedsrc/src", Unreadable: true})
+	home := testutil.NewHome(t, spec)
+	orig := measureDir
+	t.Cleanup(func() { measureDir = orig })
+	measureDir = func(ctx context.Context, dir *os.File, o sizes.Options) (sizes.Result, error) {
+		r, err := orig(ctx, dir, o)
+		if strings.HasSuffix(dir.Name(), "/.claude/debug/mountedold") || strings.HasSuffix(dir.Name(), "/Library/Logs/app") {
+			r.Mounts = append(r.Mounts, "mnt")
+			r.Status = sizes.StatusPartial
+		}
+		return r, err
+	}
+	items := byRel(t, runScan(t, home, rules.LevelReview), home)
+	logs := items["Library/Logs/app"]
+	if logs.Selected || !slices.Equal(logs.Reasons, []string{plan.ReasonScanPartial, plan.ReasonContainsMount}) {
+		t.Errorf("mount in a logs item: selected=%v reasons=%v", logs.Selected, logs.Reasons)
+	}
+	proj := items["dev/lockedsrc/node_modules"]
+	if proj.Selected || !slices.Contains(proj.Reasons, plan.ReasonProjectActive) {
+		t.Errorf("partly unreadable project must not count as idle: %v", proj.Reasons)
+	}
+	// An old item under a 7-day minimum age, interrupted by a mount.
+	aged := items[".claude/debug/mountedold"]
+	if aged.Selected || !slices.Equal(aged.Reasons, []string{plan.ReasonTooRecent, plan.ReasonScanPartial, plan.ReasonContainsMount}) {
+		t.Errorf("mount-interrupted walk satisfied min age: selected=%v reasons=%v", aged.Selected, aged.Reasons)
+	}
+}
