@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-17T12:00:00Z",
+  "kipple_version": "0.0.0-test",
+  "home": "/tmp/fx/home",
+  "level": "safe",
+  "totals": {
+    "listed_count": 3,
+    "listed_bytes": 12288,
+    "selected_count": 1,
+    "selected_bytes": 8192,
+    "reclaimable_bytes": 8192
+  },
+  "rules": [
+    {
+      "id": "caches.user",
+      "tier": "safe",
+      "status": "present",
+      "item_count": 1,
+      "bytes": 8192
+    },
+    {
+      "id": "xcode.deriveddata",
+      "tier": "safe",
+      "status": "absent",
+      "item_count": 0,
+      "bytes": 0
+    },
+    {
+      "id": "project.node-modules",
+      "tier": "review",
+      "status": "present",
+      "item_count": 1,
+      "bytes": 4096
+    },
+    {
+      "id": "ollama.models",
+      "tier": "info",
+      "status": "present",
+      "item_count": 1,
+      "bytes": 0
+    }
+  ],
+  "items": [
+    {
+      "id": "2sqzl6oahyvx",
+      "rule": "caches.user",
+      "tier": "safe",
+      "path": "/tmp/fx/home/Library/Caches/com.example.app",
+      "size_bytes": 5000,
+      "allocated_bytes": 8192,
+      "reclaimable_bytes": 8192,
+      "file_count": 2,
+      "newest_mtime": "2026-01-02T03:04:05Z",
+      "scan_status": "complete",
+      "selected": true,
+      "reasons": []
+    },
+    {
+      "id": "ukeacnnziynv",
+      "rule": "project.node-modules",
+      "tier": "review",
+      "path": "/tmp/fx/home/dev/app/node_modules",
+      "size_bytes": 10,
+      "allocated_bytes": 4096,
+      "reclaimable_bytes": 4096,
+      "file_count": 1,
+      "newest_mtime": "2026-01-02T03:04:05Z",
+      "scan_status": "complete",
+      "selected": false,
+      "reasons": [
+        "tier_review",
+        "git_unchecked"
+      ],
+      "git": {
+        "state": "unchecked"
+      }
+    },
+    {
+      "id": "xpkwypbdgoao",
+      "rule": "ollama.models",
+      "tier": "info",
+      "path": "/tmp/fx/home/.ollama/models/blobs",
+      "size_bytes": 0,
+      "allocated_bytes": 0,
+      "reclaimable_bytes": 0,
+      "file_count": 0,
+      "newest_mtime": "2026-01-02T03:04:05Z",
+      "scan_status": "partial",
+      "selected": false,
+      "reasons": [
+        "tier_info",
+        "contains_protected"
+      ],
+      "protected_paths": [
+        "x/.env"
+      ],
+      "warnings": [
+        "locked: cannot be read"
+      ],
+      "owner_command": "ollama rm <model>"
+    }
+  ],
+  "warnings": []
+}
