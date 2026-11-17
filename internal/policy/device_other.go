@@ -8,5 +8,8 @@ import "io/fs"
 // ReasonDifferentDevice. kipple targets macOS.
 func device(fs.FileInfo) (uint64, bool) { return 0, false }
 
+// storedName cannot be checked on non-unix platforms, so every path is refused.
+func storedName(string, string) (bool, error) { return false, nil }
+
 // identityOf is unknown on non-unix platforms.
 func identityOf(fs.FileInfo) (fileID, bool) { return fileID{}, false }

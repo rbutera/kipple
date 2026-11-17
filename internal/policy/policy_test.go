@@ -396,7 +396,7 @@ func TestIsDenylisted(t *testing.T) {
 // Reasons is a closed set: every reason produced by the table above is in it.
 func TestReasonsClosedSet(t *testing.T) {
 	want := []string{"not_absolute", "is_home", "outside_home", "denylisted", "user_protected",
-		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device", "info_tier", "not_rule_item"}
+		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device", "info_tier", "not_rule_item", "name_mismatch"}
 	got := Reasons()
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Reasons() = %v, want %v", got, want)

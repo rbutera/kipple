@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 
@@ -25,6 +26,8 @@ func unicodeFixture(t *testing.T) string {
 			{Path: "Library/Keychains/login.db", Content: "x"},
 			{Path: "Library/Caches/" + nfdCafe + "/blob", Content: "x"},
 			{Path: "Library/Caches/plain/blob", Content: "x"},
+			{Path: "Library/Caches/sample/blob", Content: "x"},
+			{Path: "Library/Caches/nfc-" + nfcCafe + "/blob", Content: "x"},
 		},
 	})
 }
@@ -118,6 +121,8 @@ func TestNFCAndNFDSpellings(t *testing.T) {
 		{"Protect NFC, candidate NFC on an NFD fixture dir", nfcCafe, nfcCafe},
 		{"Protect NFD, candidate NFC", nfdCafe, nfcCafe},
 		{"Protect NFC, candidate is a file inside the NFD dir", nfcCafe, nfdCafe + "/blob"},
+		{"Protect NFD, fixture and candidate NFC", "nfc-" + nfdCafe, "nfc-" + nfcCafe},
+		{"Protect NFD, candidate NFD on an NFC fixture dir", "nfc-" + nfdCafe, "nfc-" + nfdCafe},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,5 +169,55 @@ func TestConfusableRune(t *testing.T) {
 		if got := foldName(alias); got != real {
 			t.Errorf("foldName(%q) = %q, want %q", alias, got, real)
 		}
+	}
+}
+
+// Every component must be byte-identical to the name stored on disk, so a
+// spelling APFS would resolve to another entry is refused even when nothing
+// it reaches is protected.
+func TestStoredNameMismatch(t *testing.T) {
+	home := unicodeFixture(t)
+	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}}
+	libGlob := StaticRule{ID: "x", Roots: []string{"Library/*/sample"}}
+	cases := []struct {
+		name string
+		rule Rule
+		rel  string
+		real string // the stored spelling the alias resolves to
+		want string
+	}{
+		{"Stored spelling is allowed", caches, "Library/Caches/sample", "", ""},
+		{"Stored NFD spelling is allowed", caches, "Library/Caches/" + nfdCafe, "", ""},
+		{"Stored NFC spelling is allowed", caches, "Library/Caches/nfc-" + nfcCafe, "", ""},
+		{"Case variant of the item", caches, "Library/Caches/SAMPLE", "Library/Caches/sample", ReasonNameMismatch},
+		{"Long s variant of the item", caches, "Library/Caches/ſample", "Library/Caches/sample", ReasonNameMismatch},
+		{"NFC spelling of an NFD-stored item", caches, "Library/Caches/" + nfcCafe, "Library/Caches/" + nfdCafe, ReasonNameMismatch},
+		{"NFD spelling of an NFC-stored item", caches, "Library/Caches/nfc-" + nfdCafe, "Library/Caches/nfc-" + nfcCafe, ReasonNameMismatch},
+		{"Case variant in the middle of the path", libGlob, "Library/CACHES/sample/blob", "Library/Caches/sample/blob", ReasonNameMismatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.real != "" && !sameObject(home+"/"+tc.rel, home+"/"+tc.real) {
+				t.Skip("this volume does not alias the spelling")
+			}
+			got := Authorize(Env{Home: home}, tc.rule, home+"/"+tc.rel)
+			if tc.want == "" {
+				if !got.Allowed {
+					t.Fatalf("want allowed, got %+v", got)
+				}
+				return
+			}
+			if got.Reason != tc.want {
+				t.Fatalf("want %q, got %+v", tc.want, got)
+			}
+		})
+	}
+
+	// A parent that cannot be listed cannot be verified.
+	orig := hasStored
+	t.Cleanup(func() { hasStored = orig })
+	hasStored = func(string, string) (bool, error) { return false, fs.ErrPermission }
+	if got := Authorize(Env{Home: home}, caches, home+"/Library/Caches/sample"); got.Reason != ReasonMissing {
+		t.Fatalf("unlistable parent: want %q, got %+v", ReasonMissing, got)
 	}
 }

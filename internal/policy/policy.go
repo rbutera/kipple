@@ -35,6 +35,16 @@
 //     the path is not a directory containing one (ReasonDenylisted,
 //     ReasonUserProtected). This catches spellings that folding misses, such
 //     as NFC/NFD variants, since APFS resolves them to the same object.
+//  10. Stored name: every component is byte-identical to a name stored in
+//     its parent directory, read with readdir (ReasonNameMismatch). APFS
+//     opens a case, Unicode-fold or normalisation variant of a name as the
+//     stored entry; this refuses every such spelling, so the lexical checks
+//     above always see the name as it exists on disk. A parent that cannot
+//     be listed refuses with ReasonMissing.
+//
+// Checks 8 to 10 run component by component from home down, in that order
+// for each component (the identity check reports the more specific reason
+// when an alias reaches a protected object).
 //
 // Lexical refusals (1 to 7) come before filesystem checks so a denylisted path
 // is refused with ReasonDenylisted whether or not it exists.
@@ -62,6 +72,7 @@ const (
 	ReasonDifferentDevice  = "different_device"
 	ReasonInfoTier         = "info_tier"
 	ReasonNotRuleItem      = "not_rule_item"
+	ReasonNameMismatch     = "name_mismatch"
 )
 
 // Reasons returns every refusal reason Authorize can produce.
@@ -79,6 +90,7 @@ func Reasons() []string {
 		ReasonDifferentDevice,
 		ReasonInfoTier,
 		ReasonNotRuleItem,
+		ReasonNameMismatch,
 	}
 }
 
@@ -152,10 +164,12 @@ type Decision struct {
 
 func refuse(reason string) Decision { return Decision{Reason: reason} }
 
-// Test hooks. Production code uses os.Lstat and the real device number.
+// Test hooks. Production code uses os.Lstat, the real device number and
+// the directory's stored names.
 var (
-	lstat    = os.Lstat
-	deviceOf = func(_ string, fi fs.FileInfo) (uint64, bool) { return device(fi) }
+	lstat     = os.Lstat
+	deviceOf  = func(_ string, fi fs.FileInfo) (uint64, bool) { return device(fi) }
+	hasStored = storedName
 )
 
 // Authorize decides whether rule may move path. See the package comment for
@@ -450,6 +464,7 @@ func checkFilesystem(home string, comps []string, want itemType, ids *protectedI
 	}
 	cur := home
 	for i, c := range comps {
+		parent := cur
 		cur = cur + "/" + c
 		fi, err := lstat(cur)
 		if err != nil {
@@ -470,6 +485,13 @@ func checkFilesystem(home string, comps []string, want itemType, ids *protectedI
 		}
 		if reason, hit := ids.refusal(id, i == len(comps)-1); hit {
 			return refuse(reason)
+		}
+		stored, err := hasStored(parent, c)
+		if err != nil {
+			return refuse(ReasonMissing)
+		}
+		if !stored {
+			return refuse(ReasonNameMismatch)
 		}
 		if i < len(comps)-1 && !fi.IsDir() {
 			return refuse(ReasonMissing)
