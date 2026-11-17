@@ -73,6 +73,12 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
+// helpDocument is what --help prints on stdout under --json.
+type helpDocument struct {
+	Command string `json:"command"`
+	Help    string `json:"help"`
+}
+
 // app holds per-invocation state shared by the commands.
 type app struct {
 	rt     runtimeEnv
@@ -159,7 +165,12 @@ func (a *app) rootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          noArgs,
-		RunE:          func(c *cobra.Command, _ []string) error { return c.Help() },
+		RunE: func(c *cobra.Command, _ []string) error {
+			if a.json {
+				return usageErr("no command given (see kipple --help)")
+			}
+			return c.Help()
+		},
 		PersistentPreRunE: func(*cobra.Command, []string) error {
 			if a.level != "" && a.level != rules.LevelSafe && a.level != rules.LevelReview {
 				return usageErr("--level must be %q or %q, not %q", rules.LevelSafe, rules.LevelReview, a.level)
@@ -169,6 +180,21 @@ func (a *app) rootCommand() *cobra.Command {
 	}
 	root.SetOut(a.stdout)
 	root.SetErr(a.stderr)
+	// With --json, help text goes to stderr and stdout carries one JSON
+	// document holding the same text, so stdout is never anything but JSON.
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if !a.json {
+			defaultHelp(c, args)
+			return
+		}
+		var buf strings.Builder
+		c.SetOut(&buf)
+		defaultHelp(c, args)
+		c.SetOut(nil)
+		_, _ = io.WriteString(a.stderr, buf.String())
+		_ = plan.Encode(a.stdout, helpDocument{Command: c.CommandPath(), Help: buf.String()})
+	})
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErr("%v", err) })
 	root.PersistentFlags().BoolVar(&a.json, "json", a.json, "print one JSON document on stdout")
 	root.PersistentFlags().StringVar(&a.level, "level", "", `selection level: "safe" (default, or config level) or "review"`)

@@ -166,6 +166,10 @@ func TestStdoutIsOnlyJSON(t *testing.T) {
 		{"schema", "rules"},
 		{"version", "--json"},
 		{"explain", "nonexistent.rule", "--json"},
+		{"--json"},
+		{"scan", "--json", "--help"},
+		{"--json", "--help"},
+		{"help", "scan", "--json"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -178,6 +182,28 @@ func TestStdoutIsOnlyJSON(t *testing.T) {
 		})
 	}
 	_ = home
+}
+
+func TestHelpUnderJSON(t *testing.T) {
+	fixture(t)
+	code, out, errOut := cli(t, "--json")
+	if errOut == "" {
+		t.Fatal("bare --json: no message on stderr")
+	}
+	var env errorEnvelope
+	exactlyOneJSON(t, out, &env)
+	if code != exitUsage || env.Error.Code != codeUsage {
+		t.Fatalf("bare --json: exit %d %+v", code, env)
+	}
+	code, out, errOut = cli(t, "scan", "--json", "--help")
+	var h helpDocument
+	exactlyOneJSON(t, out, &h)
+	if code != exitOK || h.Command != "kipple scan" || !strings.Contains(h.Help, "Usage:") || !strings.Contains(errOut, "Usage:") {
+		t.Fatalf("scan --json --help: exit %d doc %+v stderr %q", code, h, errOut)
+	}
+	if code, out, _ := cli(t); code != exitOK || !strings.Contains(out, "Exit codes") {
+		t.Fatalf("bare kipple: exit %d", code)
+	}
 }
 
 // Spec scenario "Explain a rule".
