@@ -7,24 +7,28 @@ import (
 	"io/fs"
 	"os"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-// device returns the st_dev of an lstat result.
+// device returns the st_dev of an lstat result (os.Lstat or a Session's
+// fstatat).
 func device(fi fs.FileInfo) (uint64, bool) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, false
-	}
-	return uint64(st.Dev), true
+	id, ok := identityOf(fi)
+	return id.dev, ok
 }
 
-// identityOf returns the (st_dev, st_ino) of an lstat result.
+// identityOf returns the (st_dev, st_ino) of an lstat result (os.Lstat or a
+// Session's fstatat).
 func identityOf(fi fs.FileInfo) (fileID, bool) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
+	switch st := fi.Sys().(type) {
+	case *syscall.Stat_t:
+		return fileID{dev: uint64(st.Dev), ino: uint64(st.Ino)}, true
+	case *unix.Stat_t:
+		return fileID{dev: uint64(st.Dev), ino: uint64(st.Ino)}, true
+	default:
 		return fileID{}, false
 	}
-	return fileID{dev: uint64(st.Dev), ino: uint64(st.Ino)}, true
 }
 
 // storedName reports whether dir (already verified by lstat to be a real

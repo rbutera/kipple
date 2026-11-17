@@ -2,7 +2,8 @@
 // listed as movable, moved or restored unless Authorize approves it, and apply
 // calls Authorize again immediately before each move.
 //
-// The package depends only on the standard library so it can be exhaustively
+// The package depends only on the standard library and golang.org/x/sys/unix
+// (for the descriptor-relative walk in Session) so it can be exhaustively
 // table-tested. It never reads the real home directory: Env.Home is injected.
 //
 // Authorize checks, in order:
@@ -185,52 +186,75 @@ var (
 )
 
 // Authorize decides whether rule may move path. See the package comment for
-// the order of checks.
+// the order of checks. It is stateless: every call re-collects protected
+// identities and lstats every component. A scan uses a Session instead, which
+// returns the same decisions with far fewer system calls.
 func Authorize(env Env, rule Rule, path string) Decision {
+	lx := lexical(env, rule, path)
+	if lx.done {
+		return lx.d
+	}
+	home := env.Home
+	if fd := checkFilesystem(home, lx.comps, lx.want, collectIDs(home, env.Protect)); !fd.Allowed {
+		return fd
+	}
+	if lx.want == directory {
+		return checkMarkers(home+"/"+strings.Join(lx.comps[:len(lx.comps)-1], "/"), rule.RuleMatchMarkers())
+	}
+	return Decision{Allowed: true}
+}
+
+// lexicalResult is the outcome of checks 1 to 7. When done is set, d is the
+// final decision; otherwise the filesystem checks run on comps.
+type lexicalResult struct {
+	d     Decision
+	done  bool
+	comps []string
+	want  itemType
+}
+
+// lexical runs checks 1 to 7, which need no filesystem access. Authorize and
+// Session.Authorize share it, so their lexical decisions cannot drift.
+func lexical(env Env, rule Rule, path string) lexicalResult {
+	stop := func(reason string) lexicalResult { return lexicalResult{d: refuse(reason), done: true} }
 	home := env.Home
 	if !isCanonicalAbs(home) || home == "/" {
-		return refuse(ReasonNotAbsolute)
+		return stop(ReasonNotAbsolute)
 	}
 	for _, p := range env.Protect {
 		if !isCanonicalAbs(p) {
-			return refuse(ReasonInvalidEnv)
+			return stop(ReasonInvalidEnv)
 		}
 	}
 	if !isCanonicalAbs(path) {
-		return refuse(ReasonNotAbsolute)
+		return stop(ReasonNotAbsolute)
 	}
 	if path == home {
-		return refuse(ReasonIsHome)
+		return stop(ReasonIsHome)
 	}
 	if !strings.HasPrefix(path, home+"/") {
 		if strings.EqualFold(path, home) {
-			return refuse(ReasonIsHome)
+			return stop(ReasonIsHome)
 		}
-		return refuse(ReasonOutsideHome)
+		return stop(ReasonOutsideHome)
 	}
 	if rule != nil && !rule.RuleMovable() {
-		return refuse(ReasonInfoTier)
+		return stop(ReasonInfoTier)
 	}
 	rel := path[len(home)+1:]
 	comps := strings.Split(rel, "/")
 
 	if isDenylisted(comps) {
-		return refuse(ReasonDenylisted)
+		return stop(ReasonDenylisted)
 	}
 	if isProtected(env.Protect, path) {
-		return refuse(ReasonUserProtected)
+		return stop(ReasonUserProtected)
 	}
 	d, want := checkRule(rule, comps)
 	if !d.Allowed {
-		return d
+		return lexicalResult{d: d, done: true}
 	}
-	if fd := checkFilesystem(home, comps, want, collectIDs(home, env.Protect)); !fd.Allowed {
-		return fd
-	}
-	if want == directory {
-		return checkMarkers(home+"/"+strings.Join(comps[:len(comps)-1], "/"), rule.RuleMatchMarkers())
-	}
-	return Decision{Allowed: true}
+	return lexicalResult{comps: comps, want: want}
 }
 
 // checkMarkers requires a project marker beside the artifact: a regular file

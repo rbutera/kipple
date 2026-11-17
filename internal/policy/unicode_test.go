@@ -69,7 +69,7 @@ func TestUnicodeAliasOfADenylistedFolder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Authorize(Env{Home: home}, tc.rule, home+"/"+tc.alias); got.Reason != ReasonDenylisted {
+			if got := authorizeBoth(t, Env{Home: home}, tc.rule, home+"/"+tc.alias); got.Reason != ReasonDenylisted {
 				t.Fatalf("want %q, got %+v", ReasonDenylisted, got)
 			}
 			if !IsDenylisted(tc.alias) {
@@ -132,7 +132,7 @@ func TestNFCAndNFDSpellings(t *testing.T) {
 			if strings.Contains(tc.candidate, "/") {
 				rule = StaticRule{ID: "x", Roots: []string{"Library/Caches/" + strings.Split(tc.candidate, "/")[0]}, Kind: MatchChildren}
 			}
-			if got := Authorize(env, rule, home+"/Library/Caches/"+tc.candidate); got.Reason != ReasonUserProtected {
+			if got := authorizeBoth(t, env, rule, home+"/Library/Caches/"+tc.candidate); got.Reason != ReasonUserProtected {
 				t.Fatalf("want %q, got %+v", ReasonUserProtected, got)
 			}
 		})
@@ -204,7 +204,7 @@ func TestStoredNameMismatch(t *testing.T) {
 			if tc.real != "" && !sameObject(home+"/"+tc.rel, home+"/"+tc.real) {
 				t.Skip("this volume does not alias the spelling")
 			}
-			got := Authorize(Env{Home: home}, tc.rule, home+"/"+tc.rel)
+			got := authorizeBoth(t, Env{Home: home}, tc.rule, home+"/"+tc.rel)
 			if tc.want == "" {
 				if !got.Allowed {
 					t.Fatalf("want allowed, got %+v", got)
@@ -260,7 +260,7 @@ func TestStoredNameWithoutIdentityCheck(t *testing.T) {
 			if tc.protect != "" {
 				env.Protect = []string{home + "/" + tc.protect}
 			}
-			if got := Authorize(env, caches, home+"/"+tc.alias); got.Reason != ReasonNameMismatch {
+			if got := authorizeBoth(t, env, caches, home+"/"+tc.alias); got.Reason != ReasonNameMismatch {
 				t.Fatalf("want %q, got %+v", ReasonNameMismatch, got)
 			}
 			// The stored spelling itself is still decided normally.
@@ -268,7 +268,7 @@ func TestStoredNameWithoutIdentityCheck(t *testing.T) {
 			if tc.protect != "" {
 				want = ReasonUserProtected
 			}
-			if got := Authorize(env, caches, home+"/"+tc.real); got.Reason != want {
+			if got := authorizeBoth(t, env, caches, home+"/"+tc.real); got.Reason != want {
 				t.Fatalf("stored spelling: want %q, got %+v", want, got)
 			}
 		})

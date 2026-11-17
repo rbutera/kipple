@@ -223,7 +223,7 @@ func TestAuthorize(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Authorize(tc.env, tc.rule, tc.path)
+			got := authorizeBoth(t, tc.env, tc.rule, tc.path)
 			if tc.want == "" {
 				if !got.Allowed || got.Reason != "" {
 					t.Fatalf("want allowed, got %+v", got)
@@ -241,10 +241,10 @@ func TestAuthorize(t *testing.T) {
 // sibling cache directory is allowed.
 func TestAgentStateUnderDotClaudeRoot(t *testing.T) {
 	home := testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".claude/projects"}, {Path: ".claude/debug"}}})
-	if got := Authorize(Env{Home: home}, claudeRule, home+"/.claude/projects"); got.Reason != ReasonDenylisted {
+	if got := authorizeBoth(t, Env{Home: home}, claudeRule, home+"/.claude/projects"); got.Reason != ReasonDenylisted {
 		t.Fatalf("want denylisted, got %+v", got)
 	}
-	if got := Authorize(Env{Home: home}, claudeRule, home+"/.claude/debug"); !got.Allowed {
+	if got := authorizeBoth(t, Env{Home: home}, claudeRule, home+"/.claude/debug"); !got.Allowed {
 		t.Fatalf("want .claude/debug allowed under a .claude root, got %+v", got)
 	}
 }
@@ -258,7 +258,7 @@ func TestApplyReauthorisesBeforeMoving(t *testing.T) {
 	})
 	env := Env{Home: home}
 	item := home + "/Library/Caches/com.example.app"
-	if d := Authorize(env, cachesRule, item); !d.Allowed {
+	if d := authorizeBoth(t, env, cachesRule, item); !d.Allowed {
 		t.Fatalf("scan-time authorisation should pass, got %+v", d)
 	}
 	// Between scan and apply, the item is swapped for a symlink.
@@ -268,7 +268,7 @@ func TestApplyReauthorisesBeforeMoving(t *testing.T) {
 	if err := os.Symlink(home+"/Documents/important", item); err != nil {
 		t.Fatal(err)
 	}
-	if d := Authorize(env, cachesRule, item); d.Allowed || d.Reason != ReasonSymlinkInPath {
+	if d := authorizeBoth(t, env, cachesRule, item); d.Allowed || d.Reason != ReasonSymlinkInPath {
 		t.Fatalf("apply-time authorisation: want %q, got %+v", ReasonSymlinkInPath, d)
 	}
 }
@@ -304,7 +304,7 @@ func TestDifferentDevice(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Authorize(Env{Home: home}, tc.rule, tc.path)
+			got := authorizeBoth(t, Env{Home: home}, tc.rule, tc.path)
 			if tc.want == "" {
 				if !got.Allowed {
 					t.Fatalf("want allowed, got %+v", got)
@@ -318,7 +318,7 @@ func TestDifferentDevice(t *testing.T) {
 	}
 
 	deviceOf = func(string, fs.FileInfo) (uint64, bool) { return 0, false }
-	if got := Authorize(Env{Home: home}, cachesRule, home+"/Library/Caches/local"); got.Reason != ReasonDifferentDevice {
+	if got := authorizeBoth(t, Env{Home: home}, cachesRule, home+"/Library/Caches/local"); got.Reason != ReasonDifferentDevice {
 		t.Fatalf("unknown device must refuse, got %+v", got)
 	}
 }
@@ -329,7 +329,7 @@ func TestHomeIsSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if got := Authorize(Env{Home: link}, cachesRule, link+"/Library/Caches/a"); got.Reason != ReasonSymlinkInPath {
+	if got := authorizeBoth(t, Env{Home: link}, cachesRule, link+"/Library/Caches/a"); got.Reason != ReasonSymlinkInPath {
 		t.Fatalf("want %q, got %+v", ReasonSymlinkInPath, got)
 	}
 }
@@ -385,7 +385,7 @@ func TestEveryDenylistEntryRefused(t *testing.T) {
 		}
 		root := StaticRule{ID: "everything", Roots: []string{strings.Split(rel, "/")[0]}, Kind: MatchChildren}
 		for _, cand := range []string{rel, rel + "/child", strings.ToUpper(rel)} {
-			got := Authorize(Env{Home: home}, root, home+"/"+cand)
+			got := authorizeBoth(t, Env{Home: home}, root, home+"/"+cand)
 			if got.Allowed || got.Reason != ReasonDenylisted {
 				t.Errorf("%s: candidate %q got %+v", entry, cand, got)
 			}
