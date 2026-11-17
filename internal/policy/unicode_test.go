@@ -50,22 +50,22 @@ func sameObject(a, b string) bool {
 // with the alias or a glob covers it.
 func TestUnicodeAliasOfADenylistedFolder(t *testing.T) {
 	home := unicodeFixture(t)
-	star := StaticRule{ID: "hypothetical.star", Roots: []string{"*"}}
+	star := StaticRule{ID: "hypothetical.star", Roots: []string{"*"}, Kind: MatchChildren}
 	cases := []struct {
 		name  string
 		rule  Rule
 		alias string
 		real  string
 	}{
-		{"Long s in Documents", StaticRule{ID: "x", Roots: []string{"Documentſ"}}, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
+		{"Long s in Documents", StaticRule{ID: "x", Roots: []string{"Documentſ"}, Kind: MatchChildren}, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
 		{"Long s in Documents under a bare glob root (itself invalid)", star, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
-		{"Long s in .ssh", StaticRule{ID: "x", Roots: []string{".ſſh"}}, ".ſſh/id_ed25519", ".ssh/id_ed25519"},
-		{"Long s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/Meſſages"}}, "Library/Meſſages/chat.db", "Library/Messages/chat.db"},
-		{"St ligature in Library/CloudStorage", StaticRule{ID: "x", Roots: []string{"Library/Cloudﬆorage"}}, "Library/Cloudﬆorage/x", "Library/CloudStorage/x"},
-		{"Long st ligature in Library/CloudStorage", StaticRule{ID: "x", Roots: []string{"Library/Cloudﬅorage"}}, "Library/Cloudﬅorage/x", "Library/CloudStorage/x"},
-		{"Sharp s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/Meßages"}}, "Library/Meßages/chat.db", "Library/Messages/chat.db"},
-		{"Capital sharp s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/MEẞAGES"}}, "Library/MEẞAGES/chat.db", "Library/Messages/chat.db"},
-		{"Kelvin sign in Library/Keychains", StaticRule{ID: "x", Roots: []string{"Library/Keychains"}}, "Library/Keychains/login.db", "Library/Keychains/login.db"},
+		{"Long s in .ssh", StaticRule{ID: "x", Roots: []string{".ſſh"}, Kind: MatchChildren}, ".ſſh/id_ed25519", ".ssh/id_ed25519"},
+		{"Long s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/Meſſages"}, Kind: MatchChildren}, "Library/Meſſages/chat.db", "Library/Messages/chat.db"},
+		{"St ligature in Library/CloudStorage", StaticRule{ID: "x", Roots: []string{"Library/Cloudﬆorage"}, Kind: MatchChildren}, "Library/Cloudﬆorage/x", "Library/CloudStorage/x"},
+		{"Long st ligature in Library/CloudStorage", StaticRule{ID: "x", Roots: []string{"Library/Cloudﬅorage"}, Kind: MatchChildren}, "Library/Cloudﬅorage/x", "Library/CloudStorage/x"},
+		{"Sharp s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/Meßages"}, Kind: MatchChildren}, "Library/Meßages/chat.db", "Library/Messages/chat.db"},
+		{"Capital sharp s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/MEẞAGES"}, Kind: MatchChildren}, "Library/MEẞAGES/chat.db", "Library/Messages/chat.db"},
+		{"Kelvin sign in Library/Keychains", StaticRule{ID: "x", Roots: []string{"Library/Keychains"}, Kind: MatchChildren}, "Library/Keychains/login.db", "Library/Keychains/login.db"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestIdentityRefusesAncestorAlias(t *testing.T) {
 // normalise, so the identity check is what refuses the other spelling.
 func TestNFCAndNFDSpellings(t *testing.T) {
 	home := unicodeFixture(t)
-	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}}
+	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}, Kind: MatchChildren}
 	if !sameObject(home+"/Library/Caches/"+nfcCafe, home+"/Library/Caches/"+nfdCafe) {
 		t.Skip("this volume is normalisation-sensitive")
 	}
@@ -130,7 +130,7 @@ func TestNFCAndNFDSpellings(t *testing.T) {
 			env := Env{Home: home, Protect: []string{home + "/Library/Caches/" + tc.protect}}
 			rule := caches
 			if strings.Contains(tc.candidate, "/") {
-				rule = StaticRule{ID: "x", Roots: []string{"Library/Caches/" + strings.Split(tc.candidate, "/")[0]}}
+				rule = StaticRule{ID: "x", Roots: []string{"Library/Caches/" + strings.Split(tc.candidate, "/")[0]}, Kind: MatchChildren}
 			}
 			if got := Authorize(env, rule, home+"/Library/Caches/"+tc.candidate); got.Reason != ReasonUserProtected {
 				t.Fatalf("want %q, got %+v", ReasonUserProtected, got)
@@ -178,8 +178,8 @@ func TestConfusableRune(t *testing.T) {
 // it reaches is protected.
 func TestStoredNameMismatch(t *testing.T) {
 	home := unicodeFixture(t)
-	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}}
-	libGlob := StaticRule{ID: "x", Roots: []string{"Library/*/sample"}}
+	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}, Kind: MatchChildren}
+	libGlob := StaticRule{ID: "x", Roots: []string{"Library/*/sample"}, Kind: MatchChildren}
 	cases := []struct {
 		name string
 		rule Rule
@@ -234,7 +234,7 @@ func TestStoredNameWithoutIdentityCheck(t *testing.T) {
 	collectIDs = func(string, []string) *protectedIDs {
 		return &protectedIDs{objects: map[fileID]string{}, ancestors: map[fileID]string{}, stats: map[string]statResult{}}
 	}
-	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}}
+	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}, Kind: MatchChildren}
 	cases := []struct {
 		name    string
 		protect string // home-relative, "" for none

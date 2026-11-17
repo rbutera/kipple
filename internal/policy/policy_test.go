@@ -17,13 +17,14 @@ var (
 		ID:      "caches.user",
 		Roots:   []string{"Library/Caches"},
 		Exclude: []string{"com.apple.bird", "CloudKit", "com.apple.cloudkit", "com.apple.icloud*", "Homebrew"},
+		Kind:    MatchChildren,
 	}
-	derivedDataRule = StaticRule{ID: "xcode.deriveddata", Roots: []string{"Library/Developer/Xcode/DerivedData"}}
-	mailRule        = StaticRule{ID: "hypothetical.mail", Roots: []string{"Library/Mail/V10"}}
-	editorRule      = StaticRule{ID: "editor.glob", Roots: []string{"Library/Application Support/*/Cache"}}
-	libraryRule     = StaticRule{ID: "hypothetical.library", Roots: []string{"Library"}}
-	claudeRule      = StaticRule{ID: "hypothetical.claude", Roots: []string{".claude"}}
-	anyRule         = StaticRule{ID: "hypothetical.any", Roots: []string{"Library/Caches", "dev", "Library/Logs"}}
+	derivedDataRule = StaticRule{ID: "xcode.deriveddata", Roots: []string{"Library/Developer/Xcode/DerivedData"}, Kind: MatchChildren}
+	mailRule        = StaticRule{ID: "hypothetical.mail", Roots: []string{"Library/Mail/V10"}, Kind: MatchChildren}
+	editorRule      = StaticRule{ID: "editor.glob", Roots: []string{"Library/Application Support/*/Cache"}, Kind: MatchChildren}
+	libraryRule     = StaticRule{ID: "hypothetical.library", Roots: []string{"Library"}, Kind: MatchChildren}
+	claudeRule      = StaticRule{ID: "hypothetical.claude", Roots: []string{".claude"}, Kind: MatchChildren}
+	anyRule         = StaticRule{ID: "hypothetical.any", Roots: []string{"Library/Caches", "dev", "Library/Logs"}, Kind: MatchChildren}
 	downloadsRule   = StaticRule{ID: "downloads.installers", Roots: []string{"Downloads"}, Kind: MatchExtensions, Extensions: []string{".dmg", ".pkg", ".iso"}}
 	nodeModulesRule = StaticRule{ID: "project.node-modules", Roots: []string{"dev", "code"}, Kind: MatchProjectArtifact, Names: []string{"node_modules"}, Markers: []string{"package.json"}}
 	venvRule        = StaticRule{ID: "project.venv", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{".venv", "venv"}, Markers: []string{"pyproject.toml", "requirements.txt"}}
@@ -101,7 +102,7 @@ func TestAuthorize(t *testing.T) {
 		{"Allowed under one-level glob root", Env{Home: home}, editorRule, p("Library/Application Support/Cursor/Cache/Cache_Data"), ""},
 
 		// Requirement: Home-only.
-		{"Path outside home", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches"}}, "/Library/Caches/x", ReasonOutsideHome},
+		{"Path outside home", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches"}, Kind: MatchChildren}, "/Library/Caches/x", ReasonOutsideHome},
 		{"Path is a sibling sharing the home prefix", Env{Home: home}, cachesRule, home + "-other/Library/Caches/x", ReasonOutsideHome},
 		{"Path is home itself", Env{Home: home}, cachesRule, home, ReasonIsHome},
 		{"Home prefix with different case is outside home", Env{Home: home}, cachesRule, strings.ToUpper(home) + "/Library/Caches/com.example.app", ReasonOutsideHome},
@@ -109,7 +110,7 @@ func TestAuthorize(t *testing.T) {
 		// Requirement: No symlink traversal.
 		{"Symlinked cache directory", Env{Home: home}, cachesRule, p("Library/Caches/foo"), ReasonSymlinkInPath},
 		{"Symlink as the item itself", Env{Home: home}, cachesRule, p("Library/Caches/link-to-file"), ReasonSymlinkInPath},
-		{"Symlink in the middle of the path", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches/mid"}}, p("Library/Caches/mid/child"), ReasonSymlinkInPath},
+		{"Symlink in the middle of the path", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches/mid"}, Kind: MatchChildren}, p("Library/Caches/mid/child"), ReasonSymlinkInPath},
 
 		// Canonical form.
 		{"Relative path", Env{Home: home}, cachesRule, "Library/Caches/com.example.app", ReasonNotAbsolute},
@@ -127,7 +128,7 @@ func TestAuthorize(t *testing.T) {
 
 		// Requirement: Hard-coded denylist.
 		{"Rule points into denylist", Env{Home: home}, mailRule, p("Library/Mail/V10/MailData"), ReasonDenylisted},
-		{"Unicode alias of a denylisted folder", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Documentſ"}}, p("Documentſ/important"), ReasonDenylisted},
+		{"Unicode alias of a denylisted folder", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Documentſ"}, Kind: MatchChildren}, p("Documentſ/important"), ReasonDenylisted},
 		{"Denylisted rule root itself is denylisted, not is_rule_root", Env{Home: home}, mailRule, p("Library/Mail/V10"), ReasonDenylisted},
 		{"Denylist matches regardless of case", Env{Home: home}, anyRule, p("documents/important"), ReasonDenylisted},
 		{"Ancestor of a denylisted path", Env{Home: home}, libraryRule, p("Library/Application Support"), ReasonDenylisted},
@@ -167,16 +168,18 @@ func TestAuthorize(t *testing.T) {
 		{"Nil rule", Env{Home: home}, nil, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
 
 		// Requirement: Tier semantics (info rules are never movable).
-		{"Info rule item", Env{Home: home}, StaticRule{ID: "ollama.models", Roots: []string{".ollama/models"}, Info: true}, p(".ollama/models/blobs"), ReasonInfoTier},
-		{"Info rule never authorised", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true}, p("Library/Caches/com.example.app"), ReasonInfoTier},
-		{"Info rule refused before filesystem checks", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true}, p("Library/Caches/never-created"), ReasonInfoTier},
-		{"Rule without roots", Env{Home: home}, StaticRule{ID: "empty"}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
-		{"Absolute rule root authorises nothing", Env{Home: home}, StaticRule{ID: "abs", Roots: []string{home + "/Library/Caches"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
-		{"Dot-dot rule root authorises nothing", Env{Home: home}, StaticRule{ID: "dd", Roots: []string{"Library/../Library/Caches"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
-		{"Two glob segments authorise nothing", Env{Home: home}, StaticRule{ID: "g2", Roots: []string{"Library/*/*"}}, p("Library/Caches/com.example.app/blob"), ReasonOutsideRuleRoots},
-		{"Double-star root authorises nothing", Env{Home: home}, StaticRule{ID: "gg", Roots: []string{"Library/**"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
-		{"Dot root authorises nothing", Env{Home: home}, StaticRule{ID: "dot", Roots: []string{"."}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
-		{"Malformed exclusion excludes everything", Env{Home: home}, StaticRule{ID: "bad", Roots: []string{"Library/Caches"}, Exclude: []string{"["}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Info rule item", Env{Home: home}, StaticRule{ID: "ollama.models", Roots: []string{".ollama/models"}, Info: true, Kind: MatchChildren}, p(".ollama/models/blobs"), ReasonInfoTier},
+		{"Info rule never authorised", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true, Kind: MatchChildren}, p("Library/Caches/com.example.app"), ReasonInfoTier},
+		{"Info rule refused before filesystem checks", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true, Kind: MatchChildren}, p("Library/Caches/never-created"), ReasonInfoTier},
+		{"Rule without roots", Env{Home: home}, StaticRule{ID: "empty", Kind: MatchChildren}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Absolute rule root authorises nothing", Env{Home: home}, StaticRule{ID: "abs", Roots: []string{home + "/Library/Caches"}, Kind: MatchChildren}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Dot-dot rule root authorises nothing", Env{Home: home}, StaticRule{ID: "dd", Roots: []string{"Library/../Library/Caches"}, Kind: MatchChildren}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Two glob segments authorise nothing", Env{Home: home}, StaticRule{ID: "g2", Roots: []string{"Library/*/*"}, Kind: MatchChildren}, p("Library/Caches/com.example.app/blob"), ReasonOutsideRuleRoots},
+		{"Double-star root authorises nothing", Env{Home: home}, StaticRule{ID: "gg", Roots: []string{"Library/**"}, Kind: MatchChildren}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Dot root authorises nothing", Env{Home: home}, StaticRule{ID: "dot", Roots: []string{"."}, Kind: MatchChildren}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Malformed exclusion excludes everything", Env{Home: home}, StaticRule{ID: "bad", Roots: []string{"Library/Caches"}, Exclude: []string{"["}, Kind: MatchChildren}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Empty match kind authorises nothing", Env{Home: home}, StaticRule{ID: "project.node-modules", Roots: []string{"dev"}}, p("dev/app"), ReasonNotRuleItem},
+		{"Empty match kind authorises no cache child", Env{Home: home}, StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}}, p("Library/Caches/com.example.app"), ReasonNotRuleItem},
 		{"Unknown match kind authorises nothing", Env{Home: home}, StaticRule{ID: "k", Roots: []string{"Library/Caches"}, Kind: "everything"}, p("Library/Caches/com.example.app"), ReasonNotRuleItem},
 
 		// Item shape: children rules offer direct children only.
@@ -215,8 +218,8 @@ func TestAuthorize(t *testing.T) {
 
 		// Filesystem state.
 		{"Missing path", Env{Home: home}, cachesRule, p("Library/Caches/never-created"), ReasonMissing},
-		{"Path through a regular file", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches/plain.txt"}}, p("Library/Caches/plain.txt/child"), ReasonMissing},
-		{"Home does not exist", Env{Home: home + "-missing"}, StaticRule{ID: "x", Roots: []string{"a"}}, home + "-missing/a/b", ReasonMissing},
+		{"Path through a regular file", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches/plain.txt"}, Kind: MatchChildren}, p("Library/Caches/plain.txt/child"), ReasonMissing},
+		{"Home does not exist", Env{Home: home + "-missing"}, StaticRule{ID: "x", Roots: []string{"a"}, Kind: MatchChildren}, home + "-missing/a/b", ReasonMissing},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -278,7 +281,7 @@ func TestDifferentDevice(t *testing.T) {
 		},
 	})
 	mount := home + "/Library/Caches/mounted"
-	mountedRule := StaticRule{ID: "x", Roots: []string{"Library/Caches/mounted"}}
+	mountedRule := StaticRule{ID: "x", Roots: []string{"Library/Caches/mounted"}, Kind: MatchChildren}
 	orig := deviceOf
 	t.Cleanup(func() { deviceOf = orig })
 	// Pretend a volume is mounted at Library/Caches/mounted.
@@ -380,7 +383,7 @@ func TestEveryDenylistEntryRefused(t *testing.T) {
 		if strings.HasPrefix(entry, "**/") {
 			rel = "Library/Caches/some/" + rel
 		}
-		root := StaticRule{ID: "everything", Roots: []string{strings.Split(rel, "/")[0]}}
+		root := StaticRule{ID: "everything", Roots: []string{strings.Split(rel, "/")[0]}, Kind: MatchChildren}
 		for _, cand := range []string{rel, rel + "/child", strings.ToUpper(rel)} {
 			got := Authorize(Env{Home: home}, root, home+"/"+cand)
 			if got.Allowed || got.Reason != ReasonDenylisted {

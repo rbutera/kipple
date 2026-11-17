@@ -143,7 +143,8 @@ type Rule interface {
 }
 
 // StaticRule is a value implementation of Rule. Info marks an info-tier
-// rule (the zero value is movable). An empty Kind means MatchChildren.
+// rule (the zero value is movable). Kind must be one of the Match*
+// constants: an empty or unknown Kind authorises nothing.
 type StaticRule struct {
 	ID         string
 	Roots      []string
@@ -162,12 +163,7 @@ func (r StaticRule) RuleMovable() bool             { return !r.Info }
 func (r StaticRule) RuleMatchExtensions() []string { return r.Extensions }
 func (r StaticRule) RuleMatchNames() []string      { return r.Names }
 func (r StaticRule) RuleMatchMarkers() []string    { return r.Markers }
-func (r StaticRule) RuleMatchKind() string {
-	if r.Kind == "" {
-		return MatchChildren
-	}
-	return r.Kind
-}
+func (r StaticRule) RuleMatchKind() string         { return r.Kind }
 
 // Decision is the outcome of Authorize. Reason is empty when Allowed.
 type Decision struct {

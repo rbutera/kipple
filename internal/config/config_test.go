@@ -53,7 +53,7 @@ func TestConfigCannotShrinkTheDenylist(t *testing.T) {
 				t.Fatalf("error %q should name key %q", err, tc.wantKey)
 			}
 			// Documents stays refused regardless.
-			rule := policy.StaticRule{ID: "probe", Roots: []string{"Documents"}}
+			rule := policy.StaticRule{ID: "probe", Roots: []string{"Documents"}, Kind: policy.MatchChildren}
 			if d := policy.Authorize(policy.Env{Home: home}, rule, home+"/Documents/code"); d.Reason != policy.ReasonDenylisted {
 				t.Fatalf("Documents/code should stay denylisted, got %+v", d)
 			}
