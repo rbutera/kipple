@@ -11,6 +11,7 @@
       "CloudKit",
       "com.apple.cloudkit",
       "com.apple.icloud*",
+      "JetBrains",
       "Homebrew",
       "org.swift.swiftpm",
       "Yarn",

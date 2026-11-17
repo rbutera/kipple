@@ -56,6 +56,10 @@ var catalogue = []Rule{
 		Exclude: []string{
 			// iCloud and CloudKit state lives here despite the folder name.
 			"com.apple.bird", "CloudKit", "com.apple.cloudkit", "com.apple.icloud*",
+			// JetBrains IDEs keep LocalHistory (your local edit history) under
+			// JetBrains/<IDE>/, deeper than an exclusion can reach, so the whole
+			// folder is excluded until a dedicated JetBrains rule exists.
+			"JetBrains",
 			// Children owned by more specific rules below.
 			"Homebrew", "org.swift.swiftpm", "Yarn", "pip", "pypoetry", "go-build", "CocoaPods",
 		},
