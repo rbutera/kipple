@@ -40,9 +40,14 @@ type Session struct {
 	homeFail string // filesystem refusal for every path when home is unusable
 	ids      *protectedIDs
 
-	mu     sync.Mutex
+	// life guards closed and homeFd: every walk holds the read lock from
+	// start to finish and Close takes the write lock, so Close can never
+	// close (and the process reuse) homeFd while a walk is using it.
+	life   sync.RWMutex
 	closed bool
-	dirs   map[fileID]*dirNames
+
+	mu   sync.Mutex // guards dirs
+	dirs map[fileID]*dirNames
 }
 
 // dirNames is one directory's stored-name set, valid while the directory's
@@ -132,25 +137,21 @@ func NewSession(env Env) (*Session, error) {
 
 // Close releases the home descriptor. Later calls refuse everything.
 func (s *Session) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.life.Lock()
+	defer s.life.Unlock()
 	if s.closed {
 		return nil
 	}
 	s.closed = true
+	s.mu.Lock()
 	s.dirs = nil
+	s.mu.Unlock()
 	if s.homeFd >= 0 {
 		err := unix.Close(s.homeFd)
 		s.homeFd = -1
 		return err
 	}
 	return nil
-}
-
-func (s *Session) isClosed() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closed
 }
 
 // Home returns the session's home directory.
@@ -162,7 +163,9 @@ func (s *Session) Authorize(rule Rule, path string) Decision {
 	if lx.done {
 		return lx.d
 	}
-	if s.isClosed() {
+	s.life.RLock()
+	defer s.life.RUnlock()
+	if s.closed {
 		return refuse(ReasonInvalidEnv)
 	}
 	if s.homeFail != "" {
@@ -194,7 +197,9 @@ func (s *Session) Open(path string) (Entry, error) {
 	if !strings.HasPrefix(path, home+"/") {
 		return Entry{}, &RefusedError{Path: path, Reason: ReasonOutsideHome}
 	}
-	if s.isClosed() {
+	s.life.RLock()
+	defer s.life.RUnlock()
+	if s.closed {
 		return Entry{}, &RefusedError{Path: path, Reason: ReasonInvalidEnv}
 	}
 	if s.homeFail != "" {

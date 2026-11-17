@@ -260,3 +260,35 @@ func BenchmarkAuthorizeSession(b *testing.B) {
 		}
 	}
 }
+
+// Close waits for in-flight walks, and walks after Close refuse.
+func TestSessionCloseDuringWalks(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Caches/a/b", Content: "x"}}})
+	s, err := NewSession(Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	for g := 0; g < 8; g++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < 200; i++ {
+				d := s.Authorize(cachesRule, home+"/Library/Caches/a")
+				if !d.Allowed && d.Reason != ReasonInvalidEnv {
+					t.Errorf("walk raced Close: %+v", d)
+					return
+				}
+				if e, err := s.Open(home + "/Library/Caches/a"); err == nil {
+					_ = e.Dir.Close()
+				}
+			}
+		}()
+	}
+	_ = s.Close()
+	for g := 0; g < 8; g++ {
+		<-done
+	}
+	if d := s.Authorize(cachesRule, home+"/Library/Caches/a"); d.Reason != ReasonInvalidEnv {
+		t.Fatalf("after Close: %+v", d)
+	}
+}
