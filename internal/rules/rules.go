@@ -133,6 +133,15 @@ func (r Rule) Movable() bool { return r.Tier != TierInfo }
 // RuleMovable implements policy.Rule: info rules are never authorised.
 func (r Rule) RuleMovable() bool { return r.Movable() }
 
+// RuleMatchKind implements policy.Rule.
+func (r Rule) RuleMatchKind() string { return string(r.Match.Kind) }
+
+// RuleMatchExtensions implements policy.Rule.
+func (r Rule) RuleMatchExtensions() []string { return r.Match.Extensions }
+
+// RuleMatchNames implements policy.Rule.
+func (r Rule) RuleMatchNames() []string { return r.Match.Names }
+
 // agentProcesses are the agent CLIs whose working directory blocks a project
 // artifact (reason tool_running).
 var agentProcesses = []string{"claude", "codex", "cursor-agent"}

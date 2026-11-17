@@ -77,7 +77,7 @@ func TestUnicodeFoldAliasesRefused(t *testing.T) {
 				t.Skipf("this volume does not resolve %q to %q", tc.alias, tc.real)
 			}
 			comps := strings.Split(tc.alias, "/")
-			if got := checkFilesystem(home, comps, collectProtectedIDs(home, nil)); got.Reason != ReasonDenylisted {
+			if got := checkFilesystem(home, comps, anyType, collectProtectedIDs(home, nil)); got.Reason != ReasonDenylisted {
 				t.Fatalf("identity check alone: want %q, got %+v", ReasonDenylisted, got)
 			}
 		})
@@ -92,13 +92,13 @@ func TestIdentityRefusesAncestorAlias(t *testing.T) {
 		if !sameObject(home+"/"+alias, home+"/"+real) {
 			continue // not an alias on this volume
 		}
-		got := checkFilesystem(home, strings.Split(alias, "/"), collectProtectedIDs(home, nil))
+		got := checkFilesystem(home, strings.Split(alias, "/"), anyType, collectProtectedIDs(home, nil))
 		if got.Reason != ReasonDenylisted {
 			t.Errorf("%s: want %q from the identity check, got %+v", alias, ReasonDenylisted, got)
 		}
 	}
 	// A sibling that is not protected passes the identity check.
-	if got := checkFilesystem(home, []string{"Library", "Caches", "plain"}, collectProtectedIDs(home, nil)); !got.Allowed {
+	if got := checkFilesystem(home, []string{"Library", "Caches", "plain"}, anyType, collectProtectedIDs(home, nil)); !got.Allowed {
 		t.Errorf("unprotected sibling refused: %+v", got)
 	}
 }

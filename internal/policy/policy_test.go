@@ -24,6 +24,9 @@ var (
 	libraryRule     = StaticRule{ID: "hypothetical.library", Roots: []string{"Library"}}
 	claudeRule      = StaticRule{ID: "hypothetical.claude", Roots: []string{".claude"}}
 	anyRule         = StaticRule{ID: "hypothetical.any", Roots: []string{"Library/Caches", "dev", "Library/Logs"}}
+	downloadsRule   = StaticRule{ID: "downloads.installers", Roots: []string{"Downloads"}, Kind: MatchExtensions, Extensions: []string{".dmg", ".pkg", ".iso"}}
+	nodeModulesRule = StaticRule{ID: "project.node-modules", Roots: []string{"dev", "code"}, Kind: MatchProjectArtifact, Names: []string{"node_modules"}}
+	venvRule        = StaticRule{ID: "project.venv", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{".venv", "venv"}}
 )
 
 func fixture(t *testing.T) string {
@@ -44,6 +47,21 @@ func fixture(t *testing.T) string {
 			{Path: "dev/app/.env", Content: "SECRET=1"},
 			{Path: "dev/app/node_modules/x/index.js", Content: "x"},
 			{Path: "realdir/child/f", Content: "x"},
+			{Path: "Downloads/taxes-2025.pdf", Content: "x"},
+			{Path: "Downloads/thesis/chapter1.docx", Content: "x"},
+			{Path: "Downloads/old.dmg", Content: "x"},
+			{Path: "Downloads/OLD2.DMG", Content: "x"},
+			{Path: "Downloads/dir.dmg/f", Content: "x"},
+			{Path: "Downloads/sub/x.dmg", Content: "x"},
+			{Path: "Downloads/.dmg", Content: "x"},
+			{Path: "dev/proj/package.json", Content: "{}"},
+			{Path: "dev/proj/src/main.go", Content: "package main"},
+			{Path: "dev/proj/.git/HEAD", Content: "ref: refs/heads/main"},
+			{Path: "dev/proj/node_modules/x/node_modules/y/index.js", Content: "x"},
+			{Path: "dev/org/proj/node_modules/x/index.js", Content: "x"},
+			{Path: "dev/fileproj/node_modules", Content: "not a directory"},
+			{Path: "dev/node_modules/x/index.js", Content: "x"},
+			{Path: "dev/proj/venv/bin/python", Content: "x"},
 		},
 		Symlinks: []testutil.Symlink{
 			{Path: "Library/Caches/foo", Target: "~/Documents/important"},
@@ -66,7 +84,6 @@ func TestAuthorize(t *testing.T) {
 	}{
 		// Allowed baselines.
 		{"Allowed cache directory", Env{Home: home}, cachesRule, p("Library/Caches/com.example.app"), ""},
-		{"Allowed file inside a cache child", Env{Home: home}, cachesRule, p("Library/Caches/com.example.app/blob"), ""},
 		{"Allowed regular file as the item", Env{Home: home}, cachesRule, p("Library/Caches/plain.txt"), ""},
 		{"Allowed under one-level glob root", Env{Home: home}, editorRule, p("Library/Application Support/Cursor/Cache/Cache_Data"), ""},
 
@@ -79,7 +96,7 @@ func TestAuthorize(t *testing.T) {
 		// Requirement: No symlink traversal.
 		{"Symlinked cache directory", Env{Home: home}, cachesRule, p("Library/Caches/foo"), ReasonSymlinkInPath},
 		{"Symlink as the item itself", Env{Home: home}, cachesRule, p("Library/Caches/link-to-file"), ReasonSymlinkInPath},
-		{"Symlink in the middle of the path", Env{Home: home}, cachesRule, p("Library/Caches/mid/child"), ReasonSymlinkInPath},
+		{"Symlink in the middle of the path", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches/mid"}}, p("Library/Caches/mid/child"), ReasonSymlinkInPath},
 
 		// Canonical form.
 		{"Relative path", Env{Home: home}, cachesRule, "Library/Caches/com.example.app", ReasonNotAbsolute},
@@ -136,10 +153,38 @@ func TestAuthorize(t *testing.T) {
 		{"Two glob segments authorise nothing", Env{Home: home}, StaticRule{ID: "g2", Roots: []string{"Library/*/*"}}, p("Library/Caches/com.example.app/blob"), ReasonOutsideRuleRoots},
 		{"Double-star root authorises nothing", Env{Home: home}, StaticRule{ID: "gg", Roots: []string{"Library/**"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
 		{"Dot root authorises nothing", Env{Home: home}, StaticRule{ID: "dot", Roots: []string{"."}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Malformed exclusion excludes everything", Env{Home: home}, StaticRule{ID: "bad", Roots: []string{"Library/Caches"}, Exclude: []string{"["}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Unknown match kind authorises nothing", Env{Home: home}, StaticRule{ID: "k", Roots: []string{"Library/Caches"}, Kind: "everything"}, p("Library/Caches/com.example.app"), ReasonNotRuleItem},
+
+		// Item shape: children rules offer direct children only.
+		{"File inside a cache child is not an item", Env{Home: home}, cachesRule, p("Library/Caches/com.example.app/blob"), ReasonNotRuleItem},
+
+		// Item shape: extension rules offer direct regular files with a listed extension.
+		{"Installer in Downloads", Env{Home: home}, downloadsRule, p("Downloads/old.dmg"), ""},
+		{"Installer extension in upper case", Env{Home: home}, downloadsRule, p("Downloads/OLD2.DMG"), ""},
+		{"Document in Downloads is not an installer", Env{Home: home}, downloadsRule, p("Downloads/taxes-2025.pdf"), ReasonNotRuleItem},
+		{"Nested document in Downloads", Env{Home: home}, downloadsRule, p("Downloads/thesis/chapter1.docx"), ReasonNotRuleItem},
+		{"Nested folder in Downloads", Env{Home: home}, downloadsRule, p("Downloads/thesis"), ReasonNotRuleItem},
+		{"Installer below a subfolder", Env{Home: home}, downloadsRule, p("Downloads/sub/x.dmg"), ReasonNotRuleItem},
+		{"Directory named like an installer", Env{Home: home}, downloadsRule, p("Downloads/dir.dmg"), ReasonNotRuleItem},
+		{"Bare extension is not a file name", Env{Home: home}, downloadsRule, p("Downloads/.dmg"), ReasonNotRuleItem},
+
+		// Item shape: project artifact rules offer named directories inside a project.
+		{"node_modules inside a project", Env{Home: home}, nodeModulesRule, p("dev/proj/node_modules"), ""},
+		{"node_modules inside a nested project", Env{Home: home}, nodeModulesRule, p("dev/org/proj/node_modules"), ""},
+		{"Second artifact name of a rule", Env{Home: home}, venvRule, p("dev/proj/venv"), ""},
+		{"Project folder itself", Env{Home: home}, nodeModulesRule, p("dev/proj"), ReasonNotRuleItem},
+		{"Project source folder", Env{Home: home}, nodeModulesRule, p("dev/proj/src"), ReasonNotRuleItem},
+		{"Project source file", Env{Home: home}, nodeModulesRule, p("dev/proj/src/main.go"), ReasonNotRuleItem},
+		{"Project git folder", Env{Home: home}, nodeModulesRule, p("dev/proj/.git"), ReasonNotRuleItem},
+		{"Artifact directly in the project root", Env{Home: home}, nodeModulesRule, p("dev/node_modules"), ReasonNotRuleItem},
+		{"Artifact inside another artifact", Env{Home: home}, nodeModulesRule, p("dev/proj/node_modules/x/node_modules"), ReasonNotRuleItem},
+		{"Artifact name on a regular file", Env{Home: home}, nodeModulesRule, p("dev/fileproj/node_modules"), ReasonNotRuleItem},
+		{"Artifact name from another rule", Env{Home: home}, nodeModulesRule, p("dev/proj/venv"), ReasonNotRuleItem},
 
 		// Filesystem state.
 		{"Missing path", Env{Home: home}, cachesRule, p("Library/Caches/never-created"), ReasonMissing},
-		{"Path through a regular file", Env{Home: home}, cachesRule, p("Library/Caches/plain.txt/child"), ReasonMissing},
+		{"Path through a regular file", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches/plain.txt"}}, p("Library/Caches/plain.txt/child"), ReasonMissing},
 		{"Home does not exist", Env{Home: home + "-missing"}, StaticRule{ID: "x", Roots: []string{"a"}}, home + "-missing/a/b", ReasonMissing},
 	}
 	for _, tc := range cases {
@@ -202,6 +247,7 @@ func TestDifferentDevice(t *testing.T) {
 		},
 	})
 	mount := home + "/Library/Caches/mounted"
+	mountedRule := StaticRule{ID: "x", Roots: []string{"Library/Caches/mounted"}}
 	orig := deviceOf
 	t.Cleanup(func() { deviceOf = orig })
 	// Pretend a volume is mounted at Library/Caches/mounted.
@@ -214,16 +260,17 @@ func TestDifferentDevice(t *testing.T) {
 	}
 	cases := []struct {
 		name string
+		rule Rule
 		path string
 		want string
 	}{
-		{"Different device", mount + "/data", ReasonDifferentDevice},
-		{"Mount point itself", mount, ReasonDifferentDevice},
-		{"Same device sibling", home + "/Library/Caches/local", ""},
+		{"Different device", mountedRule, mount + "/data", ReasonDifferentDevice},
+		{"Mount point itself", cachesRule, mount, ReasonDifferentDevice},
+		{"Same device sibling", cachesRule, home + "/Library/Caches/local", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Authorize(Env{Home: home}, cachesRule, tc.path)
+			got := Authorize(Env{Home: home}, tc.rule, tc.path)
 			if tc.want == "" {
 				if !got.Allowed {
 					t.Fatalf("want allowed, got %+v", got)
@@ -344,7 +391,7 @@ func TestIsDenylisted(t *testing.T) {
 // Reasons is a closed set: every reason produced by the table above is in it.
 func TestReasonsClosedSet(t *testing.T) {
 	want := []string{"not_absolute", "is_home", "outside_home", "denylisted", "user_protected",
-		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device", "info_tier"}
+		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device", "info_tier", "not_rule_item"}
 	got := Reasons()
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Reasons() = %v, want %v", got, want)
@@ -362,6 +409,32 @@ func TestParseRoot(t *testing.T) {
 	for _, r := range invalid {
 		if _, ok := ParseRoot(r); ok {
 			t.Errorf("ParseRoot(%q) accepted an invalid root", r)
+		}
+	}
+}
+
+func TestOverlaps(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"Downloads", "Downloads", true},
+		{"downloads", "Downloads", true},
+		{"go", "go/pkg/mod", true},
+		{"Library/Caches/proj", "Library/Caches", true},
+		{"Library/Developer/Xcode/iOS DeviceSupport/x", "Library/Developer/Xcode/* DeviceSupport", true},
+		{"Library/Developer/Xcode/Archives", "Library/Developer/Xcode/* DeviceSupport", false},
+		{"Documentſ", "Documents", true},
+		{"dev", "Developer", false},
+		{"work", "Library/Caches", false},
+		{"a/[", "a/b", true},
+	}
+	for _, tc := range cases {
+		if got := Overlaps(tc.a, tc.b); got != tc.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+		if got := Overlaps(tc.b, tc.a); got != tc.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", tc.b, tc.a, got, tc.want)
 		}
 	}
 }

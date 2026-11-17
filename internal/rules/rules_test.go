@@ -22,6 +22,20 @@ var update = flag.Bool("update", false, "rewrite testdata golden files")
 // Compile-time: a catalogue rule can be handed straight to the policy.
 var _ policy.Rule = rules.Rule{}
 
+// The policy's match kinds mirror this package's.
+func TestMatchKindsAgreeWithPolicy(t *testing.T) {
+	pairs := map[rules.MatchKind]string{
+		rules.MatchChildren:        policy.MatchChildren,
+		rules.MatchExtensions:      policy.MatchExtensions,
+		rules.MatchProjectArtifact: policy.MatchProjectArtifact,
+	}
+	for k, v := range pairs {
+		if string(k) != v {
+			t.Errorf("rules.%s = %q, policy has %q", k, k, v)
+		}
+	}
+}
+
 var idPattern = regexp.MustCompile(`^[a-z0-9]+(\.[a-z0-9]+(-[a-z0-9]+)*)+$`)
 
 func hasMeta(s string) bool { return strings.ContainsAny(s, `*?[\`) }

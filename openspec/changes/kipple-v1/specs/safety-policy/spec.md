@@ -36,11 +36,15 @@ The policy SHALL inspect every path component from home down to the candidate wi
 - **THEN** it is refused, even though moving a symlink would not follow it
 
 ### Requirement: Hard-coded denylist
-The policy SHALL refuse any path that is, or descends from, a denylisted location. The denylist includes at least: Documents, Desktop, Pictures, Movies, Music, Library/Mobile Documents, Library/CloudStorage, Library/Mail, Library/Messages, Library/Photos, Library/Keychains, Library/Preferences, Library/Containers, Library/Group Containers, Library/Application Support/MobileSync, .ssh, .gnupg, .aws, .config/op, .ark, .claude/projects, .claude/memory, .claude/plans, .claude/skills, .codex/sessions, .codex/memory, any `.env` or `.env.*` component, any `*.keychain*`, any `*.photoslibrary`.
+The policy SHALL refuse any path that is, or descends from, a denylisted location. Names SHALL be compared the way APFS compares them (case and Unicode case folding, such as long s, sharp s and the `ﬀ`..`ﬆ` ligatures), and the policy SHALL also refuse a path whose components share a file identity (device and inode) with an existing denylisted location or user protection, so that no alternative spelling reaches a protected object. The denylist includes at least: Documents, Desktop, Pictures, Movies, Music, Library/Mobile Documents, Library/CloudStorage, Library/Mail, Library/Messages, Library/Photos, Library/Keychains, Library/Preferences, Library/Containers, Library/Group Containers, Library/Application Support/MobileSync, .ssh, .gnupg, .aws, .config/op, .ark, .claude/projects, .claude/memory, .claude/plans, .claude/skills, .codex/sessions, .codex/memory, any `.env` or `.env.*` component, any `*.keychain*`, any `*.photoslibrary`.
 
 #### Scenario: Rule points into denylist
 - **WHEN** a (hypothetical) rule root is `Library/Mail/V10`
 - **THEN** authorisation is refused with reason `denylisted` regardless of the rule
+
+#### Scenario: Unicode alias of a denylisted folder
+- **WHEN** a rule root or candidate is spelled `Documentſ` (long s), which APFS opens as `Documents`
+- **THEN** authorisation is refused with reason `denylisted`, and config rejects such a spelling in `project_roots` or `protect`
 
 #### Scenario: Config cannot shrink the denylist
 - **WHEN** user config lists `Documents` under a key intended to allow it
@@ -54,11 +58,22 @@ The policy SHALL refuse to authorise a rule's root directory itself; only childr
 - **THEN** authorisation is refused with reason `is_rule_root`
 
 ### Requirement: Allowlist descent
-The policy SHALL authorise a path only if it descends from one of the roots of the rule that claims it.
+The policy SHALL authorise a path only if it descends from one of the roots of the rule that claims it, and only if the path has the shape of that rule's items: a direct child of a root for `children` rules; a direct child that is a regular file with one of the rule's extensions for `extensions` rules; and for project artifact rules a directory named one of the rule's artifact names, inside a project folder below a project root and not inside another artifact directory. Marker-file adjacency and git state are checked by scan and apply, not by the policy.
 
 #### Scenario: Path not under rule root
 - **WHEN** rule `xcode.deriveddata` claims `~/Library/Logs/foo`
 - **THEN** authorisation is refused with reason `outside_rule_roots`
+
+#### Scenario: Path is not an item of the rule
+- **WHEN** rule `downloads.installers` claims `~/Downloads/taxes-2025.pdf`, or rule `project.node-modules` claims `~/dev/proj/src`
+- **THEN** authorisation is refused with reason `not_rule_item`
+
+### Requirement: Info rules are never authorised
+The policy SHALL refuse every path claimed by an `info` tier rule with reason `info_tier`, before any other rule or filesystem check.
+
+#### Scenario: Info rule item
+- **WHEN** rule `ollama.models` claims `~/.ollama/models/blobs`
+- **THEN** authorisation is refused with reason `info_tier`
 
 ### Requirement: Never as root
 kipple SHALL refuse to run when the effective user ID is 0 and SHALL never invoke sudo.

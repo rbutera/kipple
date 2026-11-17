@@ -10,8 +10,9 @@
 //	project_roots = ["~/work"]                              # replaces the default project roots
 //	level         = "safe"                                  # or "review"
 //
-// Any other key is an error that names the key. A project root on, inside or
-// containing a denylisted location is an error naming project_roots.
+// Any other key is an error that names the key. A project root must be a
+// folder inside home; one on, inside or containing a denylisted location, or
+// a root of any other catalogue rule, is an error naming project_roots.
 package config
 
 import (
@@ -183,6 +184,16 @@ func projectRoot(home, p string) (string, error) {
 	}
 	if policy.IsDenylisted(rel) {
 		return "", fmt.Errorf("%q is on, inside, or contains a location on the built-in denylist; config can only add protections", p)
+	}
+	for _, r := range rules.Catalogue() {
+		if r.Match.Kind == rules.MatchProjectArtifact {
+			continue
+		}
+		for _, root := range r.Roots {
+			if policy.Overlaps(rel, root) {
+				return "", fmt.Errorf("%q is on, inside, or contains %q, the folder of rule %s; project roots must be separate from the folders other rules clean", p, root, r.ID)
+			}
+		}
 	}
 	return rel, nil
 }
