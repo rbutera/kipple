@@ -97,3 +97,6 @@ goreleaser: `darwin/arm64` and `darwin/amd64` plus a universal binary via `unive
 
 - Whether to expose a public `pkg/kipple` facade in v0.1.0 or wait for v0.2.0 (deferred; does not change v1 behaviour).
 - Homebrew tap naming (`rbutera/homebrew-tap`), after v0.1.0.
+
+### D16. Amortised, race-free gate walks (added after Wave 1 review)
+Wave 1 review found a race-only bypass: a same-user process swapping a directory two levels above the item mid-call could make a later `lstat` follow a symlink, and each `Authorize` call costs about 60 lstats plus one readdir per component. Wave 2 adds `policy.Session`: open home once with `O_DIRECTORY|O_NOFOLLOW`; collect protected identities once per session; cache each directory's stored-name set keyed by `(dev, ino)` and validated by `fstat` mtime/ctime before reuse; walk candidates with `openat(parentfd, name, O_NOFOLLOW|O_DIRECTORY)` and `fstat` each fd for type, device and identity, so every step resolves relative to an already-verified descriptor. A session never outlives one scan. Wave 3 apply runs the same walk fresh with no cache and moves with `renameat` (or `renameatx_np` with `RENAME_EXCL`) from the verified parent fd into a verified Trash fd, closing the check-then-move gap. This needs `golang.org/x/sys/unix` (approved).

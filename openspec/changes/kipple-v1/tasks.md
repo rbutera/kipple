@@ -4,14 +4,14 @@ Waves for the /wave skill. Each wave ends with `make check` green (lint, vet, ra
 
 ## 1. Wave 1: scaffold, policy, catalogue, fixtures, CI
 
-- [ ] 1.1 Initialise `go.mod` (`github.com/rbutera/kipple`, Go 1.23), `Makefile` (`build`, `test`, `lint`, `check`, `check-no-real-home`), `.golangci.yml`, `.gitignore`, `.editorconfig`; verify `make check` passes on an empty tree
-- [ ] 1.2 Add `LICENSE` (MIT, Rai Butera 2026), stub `README.md`, `SECURITY.md`; verify files exist and licence text is the OSI MIT text
-- [ ] 1.3 Implement `internal/testutil`: `NewHome(t, Spec)` building files with size and mtime, symlinks, `git init` repos with commits and optional bare upstream; `DirTrasher`; `GuardRealHome(t)`; verify with `testutil` self-tests that a spec round-trips and the guard fails when `KIPPLE_HOME` equals the real home
-- [ ] 1.4 Implement `internal/policy` (`Env`, `Decision`, `Authorize`) with the full denylist from design D3, home-only, different-device, symlink chain, rule-root and allowlist-descent checks, euid-0 refusal helper; verify with table tests covering every refusal reason in `specs/safety-policy` (one test case per scenario, plus symlink-in-middle, symlink-as-item, `..` segments, trailing slash)
-- [ ] 1.5 Implement `internal/rules` types and the full v1 catalogue from `specs/rule-catalogue` with explanations and owners; verify with `TestCatalogueInvariants` (roots under home, not denylisted, no duplicate roots, non-empty explanations) and a golden `rules.json`
-- [ ] 1.6 Implement `internal/config` (TOML at `~/.config/kipple/config.toml`, keys `protect`, `project_roots`, `level`), additive-only; verify a test that an attempt to allow a denylisted path errors and that `protect` entries are refused by `policy.Authorize` with `user_protected`
-- [ ] 1.7 Add `.github/workflows/ci.yml` (macos-latest: golangci-lint, vet, `go test -race ./...`, no-real-home check, `go build ./...`, `go build -tags gui ./...` as a separate job); verify the workflow file passes `actionlint` locally
-- [ ] 1.8 Add `make check-no-real-home` script that fails if `os.UserHomeDir` appears outside `cmd/` or if any test lacks the guard; verify by introducing a violation in a temp copy and seeing it fail
+- [x] 1.1 Initialise `go.mod` (`github.com/rbutera/kipple`, Go 1.23), `Makefile` (`build`, `test`, `lint`, `check`, `check-no-real-home`), `.golangci.yml`, `.gitignore`, `.editorconfig`; verify `make check` passes on an empty tree
+- [x] 1.2 Add `LICENSE` (MIT, Rai Butera 2026), stub `README.md`, `SECURITY.md`; verify files exist and licence text is the OSI MIT text
+- [x] 1.3 Implement `internal/testutil`: `NewHome(t, Spec)` building files with size and mtime, symlinks, `git init` repos with commits and optional bare upstream; `DirTrasher`; `GuardRealHome(t)`; verify with `testutil` self-tests that a spec round-trips and the guard fails when `KIPPLE_HOME` equals the real home
+- [x] 1.4 Implement `internal/policy` (`Env`, `Decision`, `Authorize`) with the full denylist from design D3, home-only, different-device, symlink chain, rule-root and allowlist-descent checks, euid-0 refusal helper; verify with table tests covering every refusal reason in `specs/safety-policy` (one test case per scenario, plus symlink-in-middle, symlink-as-item, `..` segments, trailing slash)
+- [x] 1.5 Implement `internal/rules` types and the full v1 catalogue from `specs/rule-catalogue` with explanations and owners; verify with `TestCatalogueInvariants` (roots under home, not denylisted, no duplicate roots, non-empty explanations) and a golden `rules.json`
+- [x] 1.6 Implement `internal/config` (TOML at `~/.config/kipple/config.toml`, keys `protect`, `project_roots`, `level`), additive-only; verify a test that an attempt to allow a denylisted path errors and that `protect` entries are refused by `policy.Authorize` with `user_protected`
+- [x] 1.7 Add `.github/workflows/ci.yml` (macos-latest: golangci-lint, vet, `go test -race ./...`, no-real-home check, `go build ./...`, `go build -tags gui ./...` as a separate job); verify the workflow file passes `actionlint` locally
+- [x] 1.8 Add `make check-no-real-home` script that fails if `os.UserHomeDir` appears outside `cmd/` or if any test lacks the guard; verify by introducing a violation in a temp copy and seeing it fail
 
 ## 2. Wave 2: scan, plan, sizing, read-only CLI
 
