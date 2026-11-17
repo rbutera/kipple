@@ -57,8 +57,9 @@ const (
 	// Match.Extensions (case-insensitive) are items.
 	MatchExtensions MatchKind = "extensions"
 	// MatchProjectArtifact: directories named one of Match.Names that sit
-	// beside a file matching one of Match.Markers, found by a bounded walk
-	// under the project roots.
+	// beside a regular file named exactly one of Match.Markers (plain names,
+	// no globs; policy.Authorize checks this), found by a bounded walk under
+	// the project roots.
 	MatchProjectArtifact MatchKind = "project_artifact"
 )
 
@@ -143,6 +144,9 @@ func (r Rule) RuleMatchExtensions() []string { return r.Match.Extensions }
 
 // RuleMatchNames implements policy.Rule.
 func (r Rule) RuleMatchNames() []string { return r.Match.Names }
+
+// RuleMatchMarkers implements policy.Rule.
+func (r Rule) RuleMatchMarkers() []string { return r.Match.Markers }
 
 // agentProcesses are the agent CLIs whose working directory blocks a project
 // artifact (reason tool_running).

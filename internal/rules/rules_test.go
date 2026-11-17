@@ -102,6 +102,11 @@ func TestValidate(t *testing.T) {
 			r.Match = rules.Match{Kind: rules.MatchExtensions, Extensions: []string{"dmg"}}
 		})}, "bad.ext:", "should look like .ext"},
 		{"Project rule without markers", []rules.Rule{func() rules.Rule { r := goodProject("project.nomarker", "x"); r.Match.Markers = nil; return r }()}, "project.nomarker:", "needs names and markers"},
+		{"Glob marker", []rules.Rule{func() rules.Rule {
+			r := goodProject("project.globmarker", "x")
+			r.Match.Markers = []string{"next.config.*"}
+			return r
+		}()}, "project.globmarker:", "plain file name"},
 		{"Project rule in safe tier", []rules.Rule{func() rules.Rule { r := goodProject("project.safe", "x"); r.Tier = rules.TierSafe; return r }()}, "project.safe:", "review tier"},
 		{"Malformed exclusion", []rules.Rule{mod("bad.exclude", "Library/Caches", func(r *rules.Rule) { r.Exclude = []string{"["} })}, "bad.exclude:", "malformed exclusion"},
 		{"No roots", []rules.Rule{mod("no.roots", "x", func(r *rules.Rule) { r.Roots = nil })}, "no.roots:", "no roots"},
@@ -222,7 +227,7 @@ func TestCatalogueCount(t *testing.T) {
 		"project.node-modules": {{"node_modules"}, {"package.json"}},
 		"project.target":       {{"target"}, {"Cargo.toml"}},
 		"project.venv":         {{".venv", "venv"}, {"pyproject.toml", "requirements.txt"}},
-		"project.next":         {{".next"}, {"next.config.*"}},
+		"project.next":         {{".next"}, {"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"}},
 	}
 	for id, nm := range projects {
 		r := got[id]
@@ -270,7 +275,7 @@ func TestPolicyAgreesWithCatalogue(t *testing.T) {
 			case rules.MatchProjectArtifact:
 				proj := cr + "/app-" + strings.TrimPrefix(r.ID, "project.")
 				item = proj + "/" + r.Match.Names[0]
-				marker := strings.ReplaceAll(r.Match.Markers[0], "*", "js")
+				marker := r.Match.Markers[0]
 				spec.Files = append(spec.Files,
 					testutil.File{Path: proj + "/" + marker, Content: "{}"},
 					testutil.File{Path: item + "/f", Size: 16})

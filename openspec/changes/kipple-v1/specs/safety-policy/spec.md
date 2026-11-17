@@ -58,14 +58,14 @@ The policy SHALL refuse to authorise a rule's root directory itself; only childr
 - **THEN** authorisation is refused with reason `is_rule_root`
 
 ### Requirement: Allowlist descent
-The policy SHALL authorise a path only if it descends from one of the roots of the rule that claims it, and only if the path has the shape of that rule's items: a direct child of a root for `children` rules; a direct child that is a regular file with one of the rule's extensions for `extensions` rules; and for project artifact rules a directory named one of the rule's artifact names, inside a project folder below a project root and not inside another artifact directory. Marker-file adjacency and git state are checked by scan and apply, not by the policy.
+The policy SHALL authorise a path only if it descends from one of the roots of the rule that claims it, and only if the path has the shape of that rule's items: a direct child of a root for `children` rules; a direct child that is a regular file with one of the rule's extensions for `extensions` rules; and for project artifact rules a directory named one of the rule's artifact names, inside a project folder below a project root, not inside another artifact directory, and beside at least one of the rule's marker files (a regular file, not a symlink, whose name on disk matches the marker exactly). Marker adjacency is enforced by the policy; scan and apply still re-check the idle and git conditions.
 
 #### Scenario: Path not under rule root
 - **WHEN** rule `xcode.deriveddata` claims `~/Library/Logs/foo`
 - **THEN** authorisation is refused with reason `outside_rule_roots`
 
 #### Scenario: Path is not an item of the rule
-- **WHEN** rule `downloads.installers` claims `~/Downloads/taxes-2025.pdf`, or rule `project.node-modules` claims `~/dev/proj/src`
+- **WHEN** rule `downloads.installers` claims `~/Downloads/taxes-2025.pdf`, rule `project.node-modules` claims `~/dev/proj/src`, or rule `project.target` claims `~/dev/notes/target` with no `Cargo.toml` file beside it
 - **THEN** authorisation is refused with reason `not_rule_item`
 
 ### Requirement: Info rules are never authorised

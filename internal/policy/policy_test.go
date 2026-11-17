@@ -25,8 +25,9 @@ var (
 	claudeRule      = StaticRule{ID: "hypothetical.claude", Roots: []string{".claude"}}
 	anyRule         = StaticRule{ID: "hypothetical.any", Roots: []string{"Library/Caches", "dev", "Library/Logs"}}
 	downloadsRule   = StaticRule{ID: "downloads.installers", Roots: []string{"Downloads"}, Kind: MatchExtensions, Extensions: []string{".dmg", ".pkg", ".iso"}}
-	nodeModulesRule = StaticRule{ID: "project.node-modules", Roots: []string{"dev", "code"}, Kind: MatchProjectArtifact, Names: []string{"node_modules"}}
-	venvRule        = StaticRule{ID: "project.venv", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{".venv", "venv"}}
+	nodeModulesRule = StaticRule{ID: "project.node-modules", Roots: []string{"dev", "code"}, Kind: MatchProjectArtifact, Names: []string{"node_modules"}, Markers: []string{"package.json"}}
+	venvRule        = StaticRule{ID: "project.venv", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{".venv", "venv"}, Markers: []string{"pyproject.toml", "requirements.txt"}}
+	targetRule      = StaticRule{ID: "project.target", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{"target"}, Markers: []string{"Cargo.toml"}}
 )
 
 func fixture(t *testing.T) string {
@@ -62,11 +63,23 @@ func fixture(t *testing.T) string {
 			{Path: "dev/fileproj/node_modules", Content: "not a directory"},
 			{Path: "dev/node_modules/x/index.js", Content: "x"},
 			{Path: "dev/proj/venv/bin/python", Content: "x"},
+			{Path: "dev/proj/requirements.txt", Content: "x"},
+			{Path: "dev/org/proj/package.json", Content: "{}"},
+			{Path: "dev/notes/target/f", Content: "x"},
+			{Path: "dev/rust/Cargo.toml", Content: "[package]"},
+			{Path: "dev/rust/target/f", Content: "x"},
+			{Path: "dev/dirmarker/Cargo.toml/f", Content: "x"},
+			{Path: "dev/dirmarker/target/f", Content: "x"},
+			{Path: "dev/real/Cargo.toml", Content: "[package]"},
+			{Path: "dev/linkmarker/target/f", Content: "x"},
+			{Path: "dev/casemarker/cargo.toml", Content: "[package]"},
+			{Path: "dev/casemarker/target/f", Content: "x"},
 		},
 		Symlinks: []testutil.Symlink{
 			{Path: "Library/Caches/foo", Target: "~/Documents/important"},
 			{Path: "Library/Caches/mid", Target: "~/realdir"},
 			{Path: "Library/Caches/link-to-file", Target: "~/Library/Caches/plain.txt"},
+			{Path: "dev/linkmarker/Cargo.toml", Target: "~/dev/real/Cargo.toml"},
 		},
 	})
 }
@@ -189,6 +202,14 @@ func TestAuthorize(t *testing.T) {
 		{"Artifact inside another artifact", Env{Home: home}, nodeModulesRule, p("dev/proj/node_modules/x/node_modules"), ReasonNotRuleItem},
 		{"Artifact name on a regular file", Env{Home: home}, nodeModulesRule, p("dev/fileproj/node_modules"), ReasonNotRuleItem},
 		{"Artifact name from another rule", Env{Home: home}, nodeModulesRule, p("dev/proj/venv"), ReasonNotRuleItem},
+		{"target without Cargo.toml beside it", Env{Home: home}, targetRule, p("dev/notes/target"), ReasonNotRuleItem},
+		{"target with Cargo.toml beside it", Env{Home: home}, targetRule, p("dev/rust/target"), ""},
+		{"Marker that is a directory", Env{Home: home}, targetRule, p("dev/dirmarker/target"), ReasonNotRuleItem},
+		{"Marker that is a symlink", Env{Home: home}, targetRule, p("dev/linkmarker/target"), ReasonNotRuleItem},
+		{"Marker stored in a different case", Env{Home: home}, targetRule, p("dev/casemarker/target"), ReasonNotRuleItem},
+		{"Second marker of a rule", Env{Home: home}, venvRule, p("dev/proj/venv"), ""},
+		{"Rule without markers authorises no artifact", Env{Home: home}, StaticRule{ID: "p", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{"target"}}, p("dev/rust/target"), ReasonNotRuleItem},
+		{"Glob marker never matches", Env{Home: home}, StaticRule{ID: "p", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{"target"}, Markers: []string{"Cargo.*"}}, p("dev/rust/target"), ReasonNotRuleItem},
 
 		// Filesystem state.
 		{"Missing path", Env{Home: home}, cachesRule, p("Library/Caches/never-created"), ReasonMissing},

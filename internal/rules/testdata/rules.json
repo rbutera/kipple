@@ -648,7 +648,10 @@
         ".next"
       ],
       "markers": [
-        "next.config.*"
+        "next.config.js",
+        "next.config.mjs",
+        "next.config.ts",
+        "next.config.cjs"
       ]
     },
     "conditions": {

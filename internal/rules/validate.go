@@ -73,6 +73,11 @@ func Validate(rs []Rule) []error {
 			if len(r.Match.Names) == 0 || len(r.Match.Markers) == 0 {
 				fail("%s: project artifact rule needs names and markers", r.ID)
 			}
+			for _, m := range append(append([]string(nil), r.Match.Names...), r.Match.Markers...) {
+				if m == "" || m == "." || m == ".." || strings.ContainsAny(m, `/*?[\`) {
+					fail("%s: artifact name or marker %q must be a plain file name", r.ID, m)
+				}
+			}
 			c := r.Conditions
 			if r.Tier != TierReview || !c.RequiresIdleProject || c.IdleDays < 30 || !c.RequiresCleanGit || !c.SkipIfAgentInProject {
 				fail("%s: project artifact rules must be review tier with idle (30d), clean git and agent checks", r.ID)

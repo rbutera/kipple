@@ -26,12 +26,16 @@
 //     a direct child of the root for MatchChildren; a direct child with one
 //     of the rule's extensions for MatchExtensions; for MatchProjectArtifact,
 //     a directory named one of the rule's names, at least two levels below
-//     the root (root/project/name) and not inside another such directory.
+//     the root (root/project/name) and not inside another such directory,
+//     with at least one of the rule's markers beside it (checked in 8).
 //  8. Every component from home down to the path exists (ReasonMissing), is
 //     not a symlink (ReasonSymlinkInPath), and is on home's device
 //     (ReasonDifferentDevice). Every component above the path must be a
 //     directory. Symlinks are never followed. An extensions item must be a
 //     regular file and a project artifact a directory (ReasonNotRuleItem).
+//     A project artifact also needs a marker file beside it: a regular file
+//     (lstat, not a symlink) in the same parent whose stored name is
+//     byte-identical to one of RuleMatchMarkers (ReasonNotRuleItem).
 //  9. Identity: no component of the path, nor the path itself, has the same
 //     (dev, ino) as an existing denylist location or Env.Protect entry, and
 //     the path is not a directory containing one (ReasonDenylisted,
@@ -124,8 +128,9 @@ type Env struct {
 //
 // RuleMovable is false for info-tier rules, which Authorize always refuses
 // with ReasonInfoTier. RuleMatchKind is one of the Match* constants (any
-// other value authorises nothing); RuleMatchExtensions and RuleMatchNames
-// give the item shape for MatchExtensions and MatchProjectArtifact.
+// other value authorises nothing); RuleMatchExtensions, RuleMatchNames and
+// RuleMatchMarkers give the item shape for MatchExtensions and
+// MatchProjectArtifact. Markers are plain file names (no globs).
 type Rule interface {
 	RuleID() string
 	RuleRoots() []string
@@ -134,6 +139,7 @@ type Rule interface {
 	RuleMatchKind() string
 	RuleMatchExtensions() []string
 	RuleMatchNames() []string
+	RuleMatchMarkers() []string
 }
 
 // StaticRule is a value implementation of Rule. Info marks an info-tier
@@ -146,6 +152,7 @@ type StaticRule struct {
 	Kind       string
 	Extensions []string
 	Names      []string
+	Markers    []string
 }
 
 func (r StaticRule) RuleID() string                { return r.ID }
@@ -154,6 +161,7 @@ func (r StaticRule) RuleExcludes() []string        { return r.Exclude }
 func (r StaticRule) RuleMovable() bool             { return !r.Info }
 func (r StaticRule) RuleMatchExtensions() []string { return r.Extensions }
 func (r StaticRule) RuleMatchNames() []string      { return r.Names }
+func (r StaticRule) RuleMatchMarkers() []string    { return r.Markers }
 func (r StaticRule) RuleMatchKind() string {
 	if r.Kind == "" {
 		return MatchChildren
@@ -220,7 +228,33 @@ func Authorize(env Env, rule Rule, path string) Decision {
 	if !d.Allowed {
 		return d
 	}
-	return checkFilesystem(home, comps, want, collectIDs(home, env.Protect))
+	if fd := checkFilesystem(home, comps, want, collectIDs(home, env.Protect)); !fd.Allowed {
+		return fd
+	}
+	if want == directory {
+		return checkMarkers(home+"/"+strings.Join(comps[:len(comps)-1], "/"), rule.RuleMatchMarkers())
+	}
+	return Decision{Allowed: true}
+}
+
+// checkMarkers requires a project marker beside the artifact: a regular file
+// (lstat, never a symlink) in dir, already verified by checkFilesystem,
+// whose stored name is byte-identical to one of markers. Markers that are not
+// plain file names never match.
+func checkMarkers(dir string, markers []string) Decision {
+	for _, m := range markers {
+		if m == "" || m == "." || m == ".." || strings.Contains(m, "/") || hasMeta(m) {
+			continue
+		}
+		fi, err := lstat(dir + "/" + m)
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		if stored, err := hasStored(dir, m); err == nil && stored {
+			return Decision{Allowed: true}
+		}
+	}
+	return refuse(ReasonNotRuleItem)
 }
 
 // itemType is the file type an item must have, checked with lstat.

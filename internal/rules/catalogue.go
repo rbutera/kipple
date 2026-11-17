@@ -332,7 +332,7 @@ var catalogue = []Rule{
 		"A Python virtual environment inside a project you have not touched for 30 days and whose git state is committed and pushed.",
 		"The project needs its virtual environment recreated and packages reinstalled before it runs again."),
 	projectArtifact("project.next", "Project Next.js build",
-		[]string{".next"}, []string{"next.config.*"},
+		[]string{".next"}, []string{"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"},
 		"Next.js build output and cache inside a project you have not touched for 30 days and whose git state is committed and pushed.",
 		"The next dev server start or build of that project is slower while Next.js rebuilds it."),
 
