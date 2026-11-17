@@ -45,7 +45,11 @@ type runtimeEnv struct {
 	getenv   func(string) string
 	geteuid  func() int
 	userHome func() (string, error)
-	isTTY    func(io.Writer) bool
+	// realHomes lists the real home folder's possible locations; with
+	// KIPPLE_HOME set, kipple refuses a KIPPLE_HOME that is, is inside, or
+	// contains any of them.
+	realHomes func() ([]string, error)
+	isTTY     func(io.Writer) bool
 }
 
 // cliError carries an exit code and a machine-readable code.
@@ -285,7 +289,52 @@ func resolveHome(rt runtimeEnv) (string, bool, error) {
 	if err != nil || !fi.IsDir() {
 		return "", fromEnv, fail(codeHome, "home %q is not a directory", h)
 	}
+	if fromEnv {
+		if err := guardRealHome(rt, resolved); err != nil {
+			return "", fromEnv, err
+		}
+	}
 	return onDiskCase(filepath.Clean(resolved)), fromEnv, nil
+}
+
+// guardRealHome refuses a KIPPLE_HOME that is the real home folder, lies
+// inside it, or contains it. KIPPLE_HOME exists for fixtures and agents'
+// sandboxes; pointed into the real home (say ~/Documents/OldMac), it would
+// sidestep the denylist, which is relative to home. It fails closed when the
+// real home cannot be determined.
+func guardRealHome(rt runtimeEnv, home string) error {
+	reals, err := rt.realHomes()
+	if err != nil || len(reals) == 0 {
+		return fail(codeHome, "KIPPLE_HOME is set but the real home folder cannot be determined to guard against it: %v", err)
+	}
+	for _, r := range reals {
+		if within(home, r) || within(r, home) {
+			return fail(codeHome, "KIPPLE_HOME %q is the real home folder, inside it, or contains it (%s); point it at a separate fixture folder", home, r)
+		}
+	}
+	return nil
+}
+
+// within reports whether p is root or below it, comparing the given and the
+// symlink-resolved forms case-insensitively (APFS is case-insensitive by
+// default).
+func within(p, root string) bool {
+	forms := func(x string) []string {
+		out := []string{filepath.Clean(x)}
+		if r, err := filepath.EvalSymlinks(x); err == nil {
+			out = append(out, r)
+		}
+		return out
+	}
+	for _, a := range forms(p) {
+		for _, b := range forms(root) {
+			al, bl := strings.ToLower(a), strings.ToLower(strings.TrimSuffix(b, "/"))
+			if al == bl || bl == "" || strings.HasPrefix(al, bl+"/") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // onDiskCase respells each component of an existing absolute path as it is

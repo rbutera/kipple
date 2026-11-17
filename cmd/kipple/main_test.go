@@ -29,8 +29,24 @@ func testEnv(t *testing.T) runtimeEnv {
 			t.Error("the real home was requested in a test")
 			return "", errors.New("no real home in tests")
 		},
-		isTTY: func(io.Writer) bool { return false },
+		// A stand-in real home in its own temp folder, never the machine's.
+		realHomes: func() ([]string, error) { return []string{fakeRealHome(t)}, nil },
+		isTTY:     func(io.Writer) bool { return false },
 	}
+}
+
+// fakeRealHome creates a stand-in for the real home in a temp folder.
+func fakeRealHome(t *testing.T) string {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := filepath.Join(base, "Users", "me")
+	if err := os.MkdirAll(h, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return h
 }
 
 func cli(t *testing.T, args ...string) (int, string, string) {
@@ -483,3 +499,61 @@ func TestHumanScan(t *testing.T) { t.Run("Dry-run footer", scenarioHumanScan) }
 func TestVersion(t *testing.T) { t.Run("Version JSON", scenarioVersion) }
 
 func TestEmptyHomeScan(t *testing.T) { t.Run("No Xcode installed", scenarioEmptyHomeScan) }
+
+// Red-team finding: KIPPLE_HOME pointed at, into, or above the real home
+// is refused (exit 1, code home); a separate temp fixture is accepted.
+func TestKippleHomeInsideRealHomeRefused(t *testing.T) {
+	fixture(t) // sets KIPPLE_HOME and KIPPLE_STATE_DIR to a fixture
+	real := fakeRealHome(t)
+	old := filepath.Join(real, "Documents", "OldMac")
+	if err := os.MkdirAll(filepath.Join(old, "Library", "Caches", "com.example.app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "Library", "Caches", "com.example.app", "blob"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(filepath.Dir(real)), "link-to-oldmac")
+	if err := os.Symlink(old, link); err != nil {
+		t.Fatal(err)
+	}
+	rt := testEnv(t)
+	rt.realHomes = func() ([]string, error) { return []string{real}, nil }
+	cases := []struct{ name, home string }{
+		{"Real home itself", real},
+		{"Inside the real home", old},
+		{"Inside the real home through a symlink", link},
+		{"Inside the real home with different case", strings.ToUpper(old[:len(old)-len("OldMac")]) + "OldMac"},
+		{"Ancestor of the real home", filepath.Dir(real)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := os.Stat(tc.home); err != nil {
+				t.Skipf("spelling does not resolve on this volume: %v", err)
+			}
+			t.Setenv("KIPPLE_HOME", tc.home)
+			code, out, errOut := cliWith(t, rt, "scan", "--json")
+			var env errorEnvelope
+			exactlyOneJSON(t, out, &env)
+			if code != exitError || env.Error.Code != codeHome || !strings.Contains(errOut, "real home") {
+				t.Fatalf("exit %d %+v stderr %q", code, env, errOut)
+			}
+		})
+	}
+	t.Run("Separate temp fixture", func(t *testing.T) {
+		home := fixture(t)
+		code, out, _ := cliWith(t, rt, "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if code != exitOK || p.Home != home {
+			t.Fatalf("exit %d home %q", code, p.Home)
+		}
+	})
+	t.Run("Real home unknown fails closed", func(t *testing.T) {
+		fixture(t)
+		rt := testEnv(t)
+		rt.realHomes = func() ([]string, error) { return nil, errors.New("unknown") }
+		if code, _, _ := cliWith(t, rt, "scan"); code != exitError {
+			t.Fatalf("exit %d", code)
+		}
+	})
+}
