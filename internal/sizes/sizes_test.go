@@ -152,3 +152,22 @@ func TestCancelled(t *testing.T) {
 		t.Fatal("want cancellation error")
 	}
 }
+
+func TestSkipDirAndNewestFile(t *testing.T) {
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+	home := testutil.NewHome(t, testutil.Spec{
+		Files: []testutil.File{
+			{Path: "p/src/a.go", Content: "x", MTime: old},
+			{Path: "p/node_modules/x/i.js", Content: "x", MTime: recent},
+		},
+		Dirs: []testutil.Dir{{Path: "p/src", MTime: recent}},
+	})
+	r := measure(t, home+"/p", Options{SkipDir: func(_, name string) bool { return name == "node_modules" }})
+	if !r.NewestFileMtime.Equal(old) || r.FileCount != 1 {
+		t.Fatalf("newest file = %v files = %d, want %v and 1", r.NewestFileMtime, r.FileCount, old)
+	}
+	if !r.NewestMtime.After(old) {
+		t.Fatalf("newest (dirs included) = %v, want the recent directory time", r.NewestMtime)
+	}
+}

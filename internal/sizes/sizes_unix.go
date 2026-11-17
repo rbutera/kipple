@@ -56,7 +56,7 @@ func measureStat(st *unix.Stat_t) Result {
 	} else {
 		r.ReclaimableBytes = alloc
 	}
-	r.newer(time.Unix(st.Mtim.Unix()))
+	r.newerFile(time.Unix(st.Mtim.Unix()))
 	return r
 }
 
@@ -162,8 +162,11 @@ func (w *walker) entry(fd int, rel, name string, depth int, inProtected bool) er
 		}
 	}
 	alloc := st.Blocks * 512
-	w.r.newer(time.Unix(st.Mtim.Unix()))
 	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+		if w.opts.SkipDir != nil && w.opts.SkipDir(p, name) {
+			return nil
+		}
+		w.r.newer(time.Unix(st.Mtim.Unix()))
 		w.r.AllocatedBytes += alloc
 		w.r.ReclaimableBytes += alloc
 		cfd, err := openDir(fd, name)
@@ -180,6 +183,7 @@ func (w *walker) entry(fd int, rel, name string, depth int, inProtected bool) er
 		return w.dir(cfd, p, depth+1, protected)
 	}
 	// Files, symlinks (never followed) and other entries.
+	w.r.newerFile(time.Unix(st.Mtim.Unix()))
 	w.r.FileCount++
 	if st.Nlink > 1 {
 		id := Inode{dev, st.Ino}

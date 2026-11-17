@@ -45,6 +45,9 @@ type Options struct {
 	Protected func(rel, name string, dev, ino uint64) bool
 	// MaxProtected caps Result.Protected (DefaultMaxProtected when zero).
 	MaxProtected int
+	// SkipDir, when set, is called for every directory below the root;
+	// returning true leaves it out of the walk entirely (not measured).
+	SkipDir func(rel, name string) bool
 }
 
 // Result is the measurement of one item.
@@ -53,9 +56,13 @@ type Result struct {
 	AllocatedBytes   int64
 	ReclaimableBytes int64
 	FileCount        int64
-	NewestMtime      time.Time
-	Status           string
-	Warnings         []string
+	// NewestMtime is the newest modification time of any entry, including
+	// the root and directories; NewestFileMtime considers non-directories
+	// only (zero when there are none).
+	NewestMtime     time.Time
+	NewestFileMtime time.Time
+	Status          string
+	Warnings        []string
 	// Protected lists up to Options.MaxProtected root-relative paths of
 	// protected entries; ProtectedCount counts all of them.
 	Protected      []string
@@ -72,6 +79,13 @@ func (r *Result) warn(format string, args ...any) {
 		r.Warnings = append(r.Warnings, fmt.Sprintf(format, args...))
 	case len(r.Warnings) == maxWarnings:
 		r.Warnings = append(r.Warnings, "further warnings omitted")
+	}
+}
+
+func (r *Result) newerFile(t time.Time) {
+	r.newer(t)
+	if t.After(r.NewestFileMtime) {
+		r.NewestFileMtime = t
 	}
 }
 
