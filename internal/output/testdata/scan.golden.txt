@@ -1,0 +1,23 @@
+Home:  /tmp/fx/home
+Level: safe
+
+App caches (caches.user, safe)  1.5 MB in 3 items
+  [x]     1.5 MB  2sqzl6oahyvx  /tmp/fx/home/Library/Caches/com.example.app
+  [x]     4.1 kB  kf7cqu3dqyot  /tmp/fx/home/Library/Caches/partial  [partial]
+  [ ]     8.2 kB  vq3rwvutxlnk  /tmp/fx/home/Library/Caches/withenv  (contains_protected)
+      protected inside: .env
+
+Project node_modules (project.node-modules, review)  120.0 MB in 1 item
+  [ ]   120.0 MB  ukeacnnziynv  /tmp/fx/home/dev/app/node_modules  (tier_review, git_unchecked)
+
+Ollama models (ollama.models, info)  4.2 GB in 1 item
+  [ ]     4.2 GB  xpkwypbdgoao  /tmp/fx/home/.ollama/models/blobs  (tier_info)
+      to clean, use: ollama rm <model>
+
+Warnings:
+  rule logs.user: root Library/Logs cannot be scanned: symlink_in_path
+
+Nothing found for 1 rule (not installed or empty).
+
+Listed 5 items, 4.3 GB. Selected 2 items, 1.5 MB (1.5 MB reclaimable).
+Selected total 1.5 MB. Nothing was moved (dry run). Next step: kipple clean --apply

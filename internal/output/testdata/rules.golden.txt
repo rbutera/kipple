@@ -1,0 +1,255 @@
+SAFE: regenerates by itself; selected at every level
+
+  caches.user  App caches
+    What:       Files that apps keep in your Caches folder to start and load faster, which Apple requires apps to rebuild when missing.
+    If removed: Apps may start a little slower the first time while they rebuild or re-download what they need, and no documents or settings are lost.
+    Roots:      ~/Library/Caches
+    Excludes:   com.apple.bird, CloudKit, com.apple.cloudkit, com.apple.icloud*, JetBrains, Homebrew, org.swift.swiftpm, Yarn, pip, pypoetry, go-build, CocoaPods
+    Owner:      macOS apps
+
+  logs.user  App logs
+    What:       Diagnostic and activity logs that apps write to your Logs folder.
+    If removed: You lose old log history that is only useful for troubleshooting, and apps simply start new logs.
+    Roots:      ~/Library/Logs
+    Owner:      macOS apps
+
+  xcode.deriveddata  Xcode DerivedData
+    What:       Build products, indexes and intermediate files Xcode keeps for every project you have opened.
+    If removed: The next build of each project starts from scratch and Xcode re-indexes it, which can take a few minutes.
+    Roots:      ~/Library/Developer/Xcode/DerivedData
+    Conditions: owner not running
+    Owner:      Xcode
+
+  simulator.caches  iOS Simulator caches
+    What:       Cached system files the iOS Simulator builds for each runtime so devices boot faster.
+    If removed: The Simulator rebuilds them the next time it boots a device, so that first boot is slower.
+    Roots:      ~/Library/Developer/CoreSimulator/Caches
+    Conditions: owner not running
+    Owner:      iOS Simulator
+
+  swiftpm.cache  Swift Package Manager cache
+    What:       Downloaded Swift packages and their metadata, shared by Xcode and the swift command.
+    If removed: Packages are downloaded again the next time a project resolves its dependencies.
+    Roots:      ~/Library/Caches/org.swift.swiftpm
+    Owner:      Swift Package Manager
+
+  homebrew.cache  Homebrew download cache
+    What:       Bottles, source archives and index files that Homebrew downloaded while installing or upgrading packages.
+    If removed: Installed packages keep working, and Homebrew downloads files again only when you reinstall or upgrade.
+    Roots:      ~/Library/Caches/Homebrew
+    Owner:      Homebrew
+
+  npm.cache  npm cache
+    What:       npm's cache of every package archive it has downloaded.
+    If removed: The next install fetches packages from the registry again, so it is slower and needs a network connection.
+    Roots:      ~/.npm/_cacache
+    Owner:      npm
+
+  pnpm.store  pnpm store
+    What:       The shared store that pnpm copies or links every project's packages from.
+    If removed: Existing node_modules folders keep working, and the next install downloads packages into a fresh store.
+    Roots:      ~/Library/pnpm/store
+    Owner:      pnpm
+
+  yarn.cache  Yarn classic cache
+    What:       Yarn 1's offline copy of every package it has downloaded.
+    If removed: The next yarn install downloads packages again from the registry.
+    Roots:      ~/Library/Caches/Yarn
+    Owner:      Yarn
+
+  bun.cache  Bun install cache
+    What:       Packages that bun install has downloaded and keeps for reuse across projects.
+    If removed: The next bun install downloads packages again.
+    Roots:      ~/.bun/install/cache
+    Owner:      Bun
+
+  pip.cache  pip cache
+    What:       Python packages and built wheels that pip downloaded or compiled.
+    If removed: pip downloads or rebuilds packages again the next time you install them.
+    Roots:      ~/Library/Caches/pip
+    Owner:      pip
+
+  uv.cache  uv cache
+    What:       Python packages, wheels and source builds that uv keeps to make environments fast to create.
+    If removed: Existing environments keep working, and uv downloads or rebuilds packages the next time it needs them.
+    Roots:      ~/.cache/uv
+    Owner:      uv
+
+  poetry.cache  Poetry cache
+    What:       Package metadata and downloaded archives that Poetry caches, not including its virtual environments.
+    If removed: Poetry downloads package information and archives again on the next install or lock.
+    Roots:      ~/Library/Caches/pypoetry/cache, ~/Library/Caches/pypoetry/artifacts
+    Owner:      Poetry
+
+  cargo.registry  Cargo registry cache and sources
+    What:       Downloaded Rust crate archives and the unpacked source Cargo builds them from.
+    If removed: Cargo downloads and unpacks crates again the next time a project builds.
+    Roots:      ~/.cargo/registry/cache, ~/.cargo/registry/src
+    Owner:      Cargo
+
+  go.build-cache  Go build cache
+    What:       Compiled packages and test results the Go toolchain reuses to make builds fast.
+    If removed: The next go build or go test recompiles everything once, so it is slower that time.
+    Roots:      ~/Library/Caches/go-build
+    Owner:      Go
+
+  gradle.caches  Gradle caches
+    What:       Dependencies, build outputs and transformed files that Gradle shares across projects.
+    If removed: The next Gradle build downloads dependencies and rebuilds outputs again, which can take a while.
+    Roots:      ~/.gradle/caches
+    Owner:      Gradle
+
+  cocoapods.cache  CocoaPods cache
+    What:       Pod source code and specs that CocoaPods downloaded.
+    If removed: The next pod install downloads pods again.
+    Roots:      ~/Library/Caches/CocoaPods
+    Owner:      CocoaPods
+
+  editor.cursor  Cursor caches
+    What:       Web, code and graphics caches the Cursor editor keeps to open windows and extensions faster.
+    If removed: Cursor rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched.
+    Roots:      ~/Library/Application Support/Cursor/Cache, ~/Library/Application Support/Cursor/CachedData, ~/Library/Application Support/Cursor/Code Cache, ~/Library/Application Support/Cursor/GPUCache
+    Conditions: owner not running
+    Owner:      Cursor
+
+  editor.vscode  VS Code caches
+    What:       Web, code and graphics caches VS Code keeps to open windows and extensions faster.
+    If removed: VS Code rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched.
+    Roots:      ~/Library/Application Support/Code/Cache, ~/Library/Application Support/Code/CachedData, ~/Library/Application Support/Code/Code Cache, ~/Library/Application Support/Code/GPUCache
+    Conditions: owner not running
+    Owner:      Visual Studio Code
+
+  editor.windsurf  Windsurf caches
+    What:       Web, code and graphics caches the Windsurf editor keeps to open windows and extensions faster.
+    If removed: Windsurf rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched.
+    Roots:      ~/Library/Application Support/Windsurf/Cache, ~/Library/Application Support/Windsurf/CachedData, ~/Library/Application Support/Windsurf/Code Cache, ~/Library/Application Support/Windsurf/GPUCache
+    Conditions: owner not running
+    Owner:      Windsurf
+
+  claude.shell-snapshots  Claude Code shell snapshots
+    What:       Copies of your shell setup that Claude Code saves when a session starts so its commands run in a familiar environment.
+    If removed: New sessions save a fresh snapshot, and snapshots older than a week belong to sessions that have ended.
+    Roots:      ~/.claude/shell-snapshots
+    Conditions: older than 7 days; owner not running
+    Owner:      Claude Code
+
+  claude.debug  Claude Code debug logs
+    What:       Debug logs Claude Code writes for each session.
+    If removed: You lose old debug output that is only useful when reporting a Claude Code bug.
+    Roots:      ~/.claude/debug
+    Conditions: older than 7 days
+    Owner:      Claude Code
+
+  codex.log  Codex logs
+    What:       Log files the Codex CLI and app write while they run.
+    If removed: You lose old log output that is only useful when reporting a Codex bug.
+    Roots:      ~/.codex/log
+    Conditions: older than 7 days
+    Owner:      Codex
+
+REVIEW: regenerates but costs time or needs a condition; selected with --level review
+
+  go.mod-cache  Go module cache
+    What:       Source code of every Go module your projects have downloaded, the same folder go clean -modcache empties.
+    If removed: Every Go project downloads its dependencies again on the next build, which needs a network connection and can take a while.
+    Roots:      ~/go/pkg/mod
+    Owner:      Go
+
+  xcode.devicesupport  Xcode device support files
+    What:       Debug symbols Xcode copies from each iPhone, iPad or Watch OS version you have connected, kept here when unused for 90 days.
+    If removed: Xcode copies the symbols again the next time you connect a device on that OS version, which takes several minutes.
+    Roots:      ~/Library/Developer/Xcode/* DeviceSupport
+    Conditions: older than 90 days; owner not running
+    Owner:      Xcode
+
+  project.node-modules  Project node_modules
+    What:       Installed JavaScript packages inside a project you have not touched for 30 days and whose git state is committed and pushed.
+    If removed: The project needs npm, pnpm, Yarn or Bun install before it runs or builds again.
+    Roots:      ~/dev, ~/code, ~/projects, ~/src, ~/Developer, ~/repos
+    Conditions: project idle for 30 days; git committed and pushed; no agent working in the project; node_modules beside package.json
+    Owner:      Project build tools
+
+  project.target  Project Rust target
+    What:       Rust build output inside a project you have not touched for 30 days and whose git state is committed and pushed.
+    If removed: The next cargo build of that project compiles everything from scratch.
+    Roots:      ~/dev, ~/code, ~/projects, ~/src, ~/Developer, ~/repos
+    Conditions: project idle for 30 days; git committed and pushed; no agent working in the project; target beside Cargo.toml
+    Owner:      Project build tools
+
+  project.venv  Project Python virtualenv
+    What:       A Python virtual environment inside a project you have not touched for 30 days and whose git state is committed and pushed.
+    If removed: The project needs its virtual environment recreated and packages reinstalled before it runs again.
+    Roots:      ~/dev, ~/code, ~/projects, ~/src, ~/Developer, ~/repos
+    Conditions: project idle for 30 days; git committed and pushed; no agent working in the project; .venv or venv beside pyproject.toml or requirements.txt
+    Owner:      Project build tools
+
+  project.next  Project Next.js build
+    What:       Next.js build output and cache inside a project you have not touched for 30 days and whose git state is committed and pushed.
+    If removed: The next dev server start or build of that project is slower while Next.js rebuilds it.
+    Roots:      ~/dev, ~/code, ~/projects, ~/src, ~/Developer, ~/repos
+    Conditions: project idle for 30 days; git committed and pushed; no agent working in the project; .next beside next.config.js or next.config.mjs or next.config.ts or next.config.cjs
+    Owner:      Project build tools
+
+MANUAL: never selected; cleaned only by naming the item ID
+
+  xcode.archives  Xcode Archives
+    What:       App archives Xcode keeps for every build you exported or submitted, including the debug symbols for crash reports.
+    If removed: You can no longer re-export those builds or read their crash reports unless you kept the debug symbols elsewhere.
+    Roots:      ~/Library/Developer/Xcode/Archives
+    Owner:      Xcode
+
+  huggingface.hub  Hugging Face hub cache
+    What:       Model weights and datasets downloaded by Hugging Face libraries such as transformers and diffusers.
+    If removed: Each model downloads again, often several gigabytes, the next time code loads it.
+    Roots:      ~/.cache/huggingface/hub
+    Owner:      Hugging Face libraries
+
+  codex.worktrees  Codex worktrees
+    What:       Separate git checkouts that Codex creates so tasks can run in parallel without touching your main checkout.
+    If removed: Any uncommitted or unpushed work in that checkout leaves your disk with it, and git keeps listing the worktree until you run git worktree prune.
+    Roots:      ~/.codex/worktrees
+    Owner:      Codex
+
+  downloads.installers  Old installers in Downloads
+    What:       Disk images and installer packages in your Downloads folder that are more than two weeks old.
+    If removed: You would need to download an installer again to reinstall that app.
+    Roots:      ~/Downloads
+    Conditions: older than 14 days; files ending .dmg, .pkg, .iso
+    Owner:      You
+
+INFO: measured only; kipple never moves it
+
+  ollama.models  Ollama models
+    What:       Local language models that Ollama downloaded, often several gigabytes each.
+    If removed: Ollama has to download a model again before you can run it, so remove models with Ollama itself.
+    Roots:      ~/.ollama/models
+    Owner:      Ollama
+    To clean:   ollama rm <model>
+
+  claude.projects  Claude Code session history
+    What:       Transcripts of your Claude Code conversations, grouped by project, which also hold the context for resuming a session.
+    If removed: You can no longer resume or search those conversations, so let Claude Code expire them itself.
+    Roots:      ~/.claude/projects
+    Owner:      Claude Code
+    To clean:   set cleanupPeriodDays in ~/.claude/settings.json
+
+  codex.sessions  Codex session history
+    What:       Recorded Codex sessions, which Codex uses to resume and review past work.
+    If removed: You can no longer resume or review those sessions, so manage them from Codex itself.
+    Roots:      ~/.codex/sessions
+    Owner:      Codex
+    To clean:   archive or delete old sessions from within Codex
+
+  docker.raw  Docker Desktop disk image
+    What:       The single disk image file that holds all of Docker Desktop's images, containers and volumes.
+    If removed: Every image, container and volume is lost at once, so reclaim space with Docker's own prune commands instead.
+    Roots:      ~/Library/Containers/com.docker.docker/Data/vms/0/data
+    Owner:      Docker Desktop
+    To clean:   docker system prune
+
+  simulator.runtimes  iOS Simulator devices
+    What:       The simulated iPhones, iPads and watches Xcode has created, each holding its installed apps and their data for one OS version.
+    If removed: Those simulators and every app and file inside them disappear, so let simctl remove the ones whose OS version is no longer installed.
+    Roots:      ~/Library/Developer/CoreSimulator/Devices
+    Owner:      iOS Simulator
+    To clean:   xcrun simctl delete unavailable

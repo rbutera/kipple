@@ -1,0 +1,162 @@
+package output
+
+import (
+	"bytes"
+	"flag"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/rules"
+	"github.com/rbutera/kipple/internal/testutil"
+)
+
+var update = flag.Bool("update", false, "rewrite golden files")
+
+func TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }
+
+func TestBytes(t *testing.T) {
+	for n, want := range map[int64]string{
+		0: "0 B", 999: "999 B", 1000: "1.0 kB", 1500: "1.5 kB", 999_949: "999.9 kB",
+		1_000_000: "1.0 MB", 2_500_000_000: "2.5 GB", 3_000_000_000_000: "3.0 TB", -2000: "-2.0 kB",
+	} {
+		if got := Bytes(n); got != want {
+			t.Errorf("Bytes(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func fixturePlan(level string) plan.Plan {
+	mt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	home := "/tmp/fx/home"
+	item := func(rule, tier, rel string, alloc int64, selected bool, reasons ...string) plan.Item {
+		return plan.Item{ID: plan.ID(rule, rel), Rule: rule, Tier: tier, Path: home + "/" + rel, SizeBytes: alloc - 100,
+			AllocatedBytes: alloc, ReclaimableBytes: alloc, FileCount: 3, NewestMtime: mt, ScanStatus: plan.ScanComplete,
+			Selected: selected, Reasons: append([]string{}, reasons...)}
+	}
+	partial := item("caches.user", "safe", "Library/Caches/partial", 4096, true)
+	partial.ScanStatus = plan.ScanPartial
+	env := item("caches.user", "safe", "Library/Caches/withenv", 8192, false, plan.ReasonContainsProtected)
+	env.ProtectedPaths = []string{".env"}
+	info := item("ollama.models", "info", ".ollama/models/blobs", 4_200_000_000, false, plan.ReasonTierInfo)
+	info.OwnerCommand = "ollama rm <model>"
+	nm := item("project.node-modules", "review", "dev/app/node_modules", 120_000_000, false, plan.ReasonTierReview, plan.ReasonGitUnchecked)
+	nm.Git = &plan.Git{State: plan.GitUnchecked}
+	return plan.Plan{
+		SchemaVersion: 1, GeneratedAt: mt, KippleVersion: "test", Home: home, Level: level,
+		Totals: plan.Totals{ListedCount: 5, ListedBytes: 4_320_120_000 + 12288, SelectedCount: 2, SelectedBytes: 1_504_096, ReclaimableBytes: 1_504_096},
+		Rules: []plan.RuleStatus{
+			{ID: "caches.user", Tier: "safe", Status: plan.RulePresent, ItemCount: 3, Bytes: 1_512_288},
+			{ID: "xcode.deriveddata", Tier: "safe", Status: plan.RuleAbsent},
+			{ID: "logs.user", Tier: "safe", Status: plan.RuleError},
+			{ID: "project.node-modules", Tier: "review", Status: plan.RulePresent, ItemCount: 1, Bytes: 120_000_000},
+			{ID: "ollama.models", Tier: "info", Status: plan.RulePresent, ItemCount: 1, Bytes: 4_200_000_000},
+		},
+		Items: []plan.Item{
+			item("caches.user", "safe", "Library/Caches/com.example.app", 1_500_000, true), partial, env, nm, info,
+		},
+		Warnings: []string{"rule logs.user: root Library/Logs cannot be scanned: symlink_in_path"},
+	}
+}
+
+func titles() map[string]string {
+	out := map[string]string{}
+	for _, r := range rules.Catalogue() {
+		out[r.ID] = r.Title
+	}
+	return out
+}
+
+func golden(t *testing.T, name string, got []byte) {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if *update {
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s differs (go test ./internal/output -update):\n%s", path, got)
+	}
+}
+
+// Spec scenario "Dry-run footer" and "Human output shows paths and sizes".
+func TestPlanGolden(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Plan(&buf, fixturePlan(rules.LevelSafe), titles()); err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "scan.golden.txt", buf.Bytes())
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	last := lines[len(lines)-1]
+	for _, want := range []string{"Selected total 1.5 MB", "Nothing was moved (dry run).", "kipple clean --apply"} {
+		if !strings.Contains(last, want) {
+			t.Errorf("last line %q lacks %q", last, want)
+		}
+	}
+	for _, it := range fixturePlan(rules.LevelSafe).Items {
+		if !strings.Contains(out, it.Path) || !strings.Contains(out, Bytes(it.AllocatedBytes)) {
+			t.Errorf("item %s missing path or size", it.Path)
+		}
+	}
+}
+
+func TestReviewNextStep(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Plan(&buf, fixturePlan(rules.LevelReview), titles()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(buf.String(), "Next step: kipple clean --level review --apply\n") {
+		t.Fatalf("footer: %q", buf.String())
+	}
+}
+
+// Spec scenario "Human listing".
+func TestRulesGolden(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Rules(&buf, rules.Catalogue()); err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "rules.golden.txt", buf.Bytes())
+	out := buf.String()
+	prev := -1
+	for _, tier := range rules.Tiers() {
+		i := strings.Index(out, strings.ToUpper(string(tier))+":")
+		if i <= prev {
+			t.Fatalf("tier %s out of order", tier)
+		}
+		prev = i
+	}
+}
+
+func TestExplain(t *testing.T) {
+	r, _ := rules.Lookup("xcode.deriveddata")
+	var buf bytes.Buffer
+	if err := ExplainRule(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{r.What, r.IfRemoved, "~/Library/Developer/Xcode/DerivedData", "Tier:       safe"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("explain lacks %q", want)
+		}
+	}
+	buf.Reset()
+	p := fixturePlan(rules.LevelSafe)
+	cr, _ := rules.Lookup("caches.user")
+	if err := ExplainItem(&buf, p.Items[2], cr); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{p.Items[2].Path, "contains_protected", "Protected:  .env", cr.What} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("explain item lacks %q", want)
+		}
+	}
+}
