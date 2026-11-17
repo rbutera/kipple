@@ -127,6 +127,7 @@ func TestAuthorize(t *testing.T) {
 
 		// Requirement: Hard-coded denylist.
 		{"Rule points into denylist", Env{Home: home}, mailRule, p("Library/Mail/V10/MailData"), ReasonDenylisted},
+		{"Unicode alias of a denylisted folder", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Documentſ"}}, p("Documentſ/important"), ReasonDenylisted},
 		{"Denylisted rule root itself is denylisted, not is_rule_root", Env{Home: home}, mailRule, p("Library/Mail/V10"), ReasonDenylisted},
 		{"Denylist matches regardless of case", Env{Home: home}, anyRule, p("documents/important"), ReasonDenylisted},
 		{"Ancestor of a denylisted path", Env{Home: home}, libraryRule, p("Library/Application Support"), ReasonDenylisted},
@@ -166,6 +167,7 @@ func TestAuthorize(t *testing.T) {
 		{"Nil rule", Env{Home: home}, nil, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
 
 		// Requirement: Tier semantics (info rules are never movable).
+		{"Info rule item", Env{Home: home}, StaticRule{ID: "ollama.models", Roots: []string{".ollama/models"}, Info: true}, p(".ollama/models/blobs"), ReasonInfoTier},
 		{"Info rule never authorised", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true}, p("Library/Caches/com.example.app"), ReasonInfoTier},
 		{"Info rule refused before filesystem checks", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true}, p("Library/Caches/never-created"), ReasonInfoTier},
 		{"Rule without roots", Env{Home: home}, StaticRule{ID: "empty"}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
@@ -183,7 +185,7 @@ func TestAuthorize(t *testing.T) {
 		// Item shape: extension rules offer direct regular files with a listed extension.
 		{"Installer in Downloads", Env{Home: home}, downloadsRule, p("Downloads/old.dmg"), ""},
 		{"Installer extension in upper case", Env{Home: home}, downloadsRule, p("Downloads/OLD2.DMG"), ""},
-		{"Document in Downloads is not an installer", Env{Home: home}, downloadsRule, p("Downloads/taxes-2025.pdf"), ReasonNotRuleItem},
+		{"Path is not an item of the rule", Env{Home: home}, downloadsRule, p("Downloads/taxes-2025.pdf"), ReasonNotRuleItem},
 		{"Nested document in Downloads", Env{Home: home}, downloadsRule, p("Downloads/thesis/chapter1.docx"), ReasonNotRuleItem},
 		{"Nested folder in Downloads", Env{Home: home}, downloadsRule, p("Downloads/thesis"), ReasonNotRuleItem},
 		{"Installer below a subfolder", Env{Home: home}, downloadsRule, p("Downloads/sub/x.dmg"), ReasonNotRuleItem},

@@ -45,9 +45,10 @@ func sameObject(a, b string) bool {
 	return okA && okB && ia == ib
 }
 
-// Unicode case-fold aliases of denylisted locations are refused, whether the
-// rule root itself is spelled with the alias or a glob covers it.
-func TestUnicodeFoldAliasesRefused(t *testing.T) {
+// Spec scenario "Unicode alias of a denylisted folder": case-fold aliases of
+// denylisted locations are refused, whether the rule root itself is spelled
+// with the alias or a glob covers it.
+func TestUnicodeAliasOfADenylistedFolder(t *testing.T) {
 	home := unicodeFixture(t)
 	star := StaticRule{ID: "hypothetical.star", Roots: []string{"*"}}
 	cases := []struct {
@@ -57,7 +58,7 @@ func TestUnicodeFoldAliasesRefused(t *testing.T) {
 		real  string
 	}{
 		{"Long s in Documents", StaticRule{ID: "x", Roots: []string{"Documentſ"}}, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
-		{"Long s in Documents under a glob root", star, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
+		{"Long s in Documents under a bare glob root (itself invalid)", star, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
 		{"Long s in .ssh", StaticRule{ID: "x", Roots: []string{".ſſh"}}, ".ſſh/id_ed25519", ".ssh/id_ed25519"},
 		{"Long s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/Meſſages"}}, "Library/Meſſages/chat.db", "Library/Messages/chat.db"},
 		{"St ligature in Library/CloudStorage", StaticRule{ID: "x", Roots: []string{"Library/Cloudﬆorage"}}, "Library/Cloudﬆorage/x", "Library/CloudStorage/x"},
