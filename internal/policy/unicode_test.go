@@ -221,3 +221,52 @@ func TestStoredNameMismatch(t *testing.T) {
 		t.Fatalf("unlistable parent: want %q, got %+v", ReasonMissing, got)
 	}
 }
+
+// With the inode identity check switched off, the stored-name check alone
+// refuses every alias spelling with name_mismatch: case, long s and both
+// NFC/NFD directions, including aliases of a user-protected folder that the
+// lexical protect check does not match.
+func TestStoredNameWithoutIdentityCheck(t *testing.T) {
+	home := unicodeFixture(t)
+	orig := collectIDs
+	t.Cleanup(func() { collectIDs = orig })
+	collectIDs = func(string, []string) *protectedIDs {
+		return &protectedIDs{objects: map[fileID]string{}, ancestors: map[fileID]string{}, stats: map[string]statResult{}}
+	}
+	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}}
+	cases := []struct {
+		name    string
+		protect string // home-relative, "" for none
+		alias   string
+		real    string
+	}{
+		{"Case variant", "", "Library/Caches/SAMPLE", "Library/Caches/sample"},
+		{"Long s variant", "", "Library/Caches/ſample", "Library/Caches/sample"},
+		{"NFC spelling of an NFD-stored folder", "", "Library/Caches/" + nfcCafe, "Library/Caches/" + nfdCafe},
+		{"NFD spelling of an NFC-stored folder", "", "Library/Caches/nfc-" + nfdCafe, "Library/Caches/nfc-" + nfcCafe},
+		{"Protected folder stored NFD, typed NFD, candidate NFC", "Library/Caches/" + nfdCafe, "Library/Caches/" + nfcCafe, "Library/Caches/" + nfdCafe},
+		{"Protected folder stored NFC, typed NFC, candidate NFD", "Library/Caches/nfc-" + nfcCafe, "Library/Caches/nfc-" + nfdCafe, "Library/Caches/nfc-" + nfcCafe},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !sameObject(home+"/"+tc.alias, home+"/"+tc.real) {
+				t.Skip("this volume does not alias the spelling")
+			}
+			env := Env{Home: home}
+			if tc.protect != "" {
+				env.Protect = []string{home + "/" + tc.protect}
+			}
+			if got := Authorize(env, caches, home+"/"+tc.alias); got.Reason != ReasonNameMismatch {
+				t.Fatalf("want %q, got %+v", ReasonNameMismatch, got)
+			}
+			// The stored spelling itself is still decided normally.
+			want := ""
+			if tc.protect != "" {
+				want = ReasonUserProtected
+			}
+			if got := Authorize(env, caches, home+"/"+tc.real); got.Reason != want {
+				t.Fatalf("stored spelling: want %q, got %+v", want, got)
+			}
+		})
+	}
+}

@@ -175,6 +175,9 @@ var (
 	lstat     = os.Lstat
 	deviceOf  = func(_ string, fi fs.FileInfo) (uint64, bool) { return device(fi) }
 	hasStored = storedName
+	// collectIDs gathers protected identities; tests replace it to show the
+	// stored-name check refuses aliases on its own.
+	collectIDs = collectProtectedIDs
 )
 
 // Authorize decides whether rule may move path. See the package comment for
@@ -217,7 +220,7 @@ func Authorize(env Env, rule Rule, path string) Decision {
 	if !d.Allowed {
 		return d
 	}
-	return checkFilesystem(home, comps, want, collectProtectedIDs(home, env.Protect))
+	return checkFilesystem(home, comps, want, collectIDs(home, env.Protect))
 }
 
 // itemType is the file type an item must have, checked with lstat.
