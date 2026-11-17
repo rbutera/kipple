@@ -24,12 +24,47 @@ var denyPrefixes = [...]string{
 	"Library/Messages",
 	"Library/Photos",
 	"Library/Application Support/MobileSync",
+	"Library/Application Support/CloudDocs",
+	"Library/Application Support/AddressBook",
+	"Library/Calendars",
+	"Library/Autosave Information",
 
-	// System state and sandboxed app data.
+	// System state, accounts and sandboxed app data.
 	"Library/Keychains",
 	"Library/Preferences",
 	"Library/Containers",
 	"Library/Group Containers",
+	"Library/Accounts",
+	"Library/IdentityServices",
+	"Library/Application Support/com.apple.TCC",
+
+	// Browser profiles, cookies and web storage.
+	"Library/Safari",
+	"Library/Cookies",
+	"Library/HTTPStorages",
+	"Library/Application Support/Google/Chrome",
+	"Library/Application Support/BraveSoftware",
+	"Library/Application Support/Microsoft Edge",
+	"Library/Application Support/Arc",
+	"Library/Application Support/Firefox",
+
+	// Password managers.
+	"Library/Application Support/1Password",
+	"Library/Application Support/Bitwarden",
+	".password-store",
+
+	// Editor and app settings (their Cache folders stay cleanable).
+	"Library/Application Support/Code/User",
+	"Library/Application Support/Cursor/User",
+	"Library/Application Support/Windsurf/User",
+	"Library/Application Support/Claude",
+
+	// Developer identity and device state. CoreSimulator Devices and
+	// Runtimes are info-tier: measured, never moved.
+	"Library/Developer/Xcode/UserData",
+	"Library/MobileDevice/Provisioning Profiles",
+	"Library/Developer/CoreSimulator/Devices",
+	"Library/Developer/CoreSimulator/Profiles/Runtimes",
 
 	// Credentials.
 	".ssh",
@@ -40,7 +75,20 @@ var denyPrefixes = [...]string{
 	".kube",
 	".netrc",
 	".npmrc",
-	".docker/config.json",
+	".docker",
+	".config/gcloud",
+	".azure",
+	".terraform.d",
+	".git-credentials",
+	".pgpass",
+	".vault-token",
+	".pypirc",
+	".gem/credentials",
+	".cargo/credentials*",
+
+	// Shell history.
+	".zsh_history",
+	".bash_history",
 
 	// Agent state that is not a cache.
 	".ark",
@@ -48,6 +96,9 @@ var denyPrefixes = [...]string{
 	".claude/memory",
 	".claude/plans",
 	".claude/skills",
+	".claude/agents",
+	".claude/commands",
+	".claude/CLAUDE.md",
 	".claude/settings*.json",
 	".claude/.credentials.json",
 	".claude.json",
@@ -55,14 +106,26 @@ var denyPrefixes = [...]string{
 	".codex/memory",
 	".codex/memories",
 	".codex/auth.json",
+	".codex/config.toml",
+	".codex/prompts",
+
+	// Models are info-tier: measured, never moved.
+	".ollama",
 }
 
 // denyComponents refuse a path if any single component matches, at any depth.
 var denyComponents = [...]string{
 	".env",
 	".env.*",
+	".envrc",
+	".git",
 	"*.keychain*",
 	"*.photoslibrary",
+	"*.kdbx",
+	"*.pem",
+	"*.p12",
+	"id_rsa*",
+	"id_ed25519*",
 }
 
 // Denylist returns the built-in denylist for documentation and tests:

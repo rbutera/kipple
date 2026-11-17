@@ -184,7 +184,7 @@ func TestAuthorize(t *testing.T) {
 		{"Project folder itself", Env{Home: home}, nodeModulesRule, p("dev/proj"), ReasonNotRuleItem},
 		{"Project source folder", Env{Home: home}, nodeModulesRule, p("dev/proj/src"), ReasonNotRuleItem},
 		{"Project source file", Env{Home: home}, nodeModulesRule, p("dev/proj/src/main.go"), ReasonNotRuleItem},
-		{"Project git folder", Env{Home: home}, nodeModulesRule, p("dev/proj/.git"), ReasonNotRuleItem},
+		{"Project git folder", Env{Home: home}, nodeModulesRule, p("dev/proj/.git"), ReasonDenylisted},
 		{"Artifact directly in the project root", Env{Home: home}, nodeModulesRule, p("dev/node_modules"), ReasonNotRuleItem},
 		{"Artifact inside another artifact", Env{Home: home}, nodeModulesRule, p("dev/proj/node_modules/x/node_modules"), ReasonNotRuleItem},
 		{"Artifact name on a regular file", Env{Home: home}, nodeModulesRule, p("dev/fileproj/node_modules"), ReasonNotRuleItem},
@@ -326,7 +326,9 @@ func TestRunAsRoot(t *testing.T) {
 func TestDenylistContainsSpecMinimum(t *testing.T) {
 	// From specs/safety-policy "Hard-coded denylist" and design D3.
 	required := []string{
-		"Documents", "Desktop", "Pictures", "Movies", "Music",
+		"Documents", "Desktop", "Pictures", "Movies", "Music", ".docker", ".ollama",
+		"Library/Safari", "Library/Cookies", "Library/Application Support/Code/User",
+		"**/.git", "**/.envrc", "**/*.pem", "**/id_rsa*", "**/id_ed25519*", "**/*.kdbx", "**/*.p12",
 		"Library/Mobile Documents", "Library/CloudStorage", "Library/Mail", "Library/Messages",
 		"Library/Photos", "Pictures/Photos Library.photoslibrary", "Library/Keychains", "Library/Preferences",
 		"Library/Containers", "Library/Group Containers", "Library/Application Support/MobileSync",
@@ -370,24 +372,53 @@ func TestEveryDenylistEntryRefused(t *testing.T) {
 
 func TestIsDenylisted(t *testing.T) {
 	cases := map[string]bool{
-		"Documents":                   true,
-		"Documents/x":                 true,
-		"documents/x":                 true,
-		"Library":                     true, // contains Library/Mail and others
-		".claude":                     true, // contains .claude/projects
-		".claude/settings.json":       true,
-		".claude/settings.local.json": true,
-		".claude/debug":               false,
-		".claude/shell-snapshots":     false,
-		".claude.json":                true,
-		"Library/Caches":              false,
-		"Library/Caches/com.x":        false,
-		"Library/Logs":                false,
-		"dev/app/.env.production":     true,
-		"dev/app/.envrc":              false,
-		"dev/app/.venv":               false,
-		"dev/app/node_modules":        false,
-		"":                            false,
+		"Documents":                             true,
+		"Documents/x":                           true,
+		"documents/x":                           true,
+		"Library":                               true, // contains Library/Mail and others
+		".claude":                               true, // contains .claude/projects
+		".claude/settings.json":                 true,
+		".claude/settings.local.json":           true,
+		".claude/debug":                         false,
+		".claude/shell-snapshots":               false,
+		".claude.json":                          true,
+		"Library/Caches":                        false,
+		"Library/Caches/com.x":                  false,
+		"Library/Logs":                          false,
+		"dev/app/.env.production":               true,
+		"dev/app/.envrc":                        true,
+		"dev/app/.git":                          true,
+		"dev/app/.git/objects":                  true,
+		"dev/app/.github":                       false,
+		"dev/app/.gitignore":                    false,
+		"Library/Caches/x/server.pem":           true,
+		"Library/Caches/x/id_rsa.pub":           true,
+		"Library/Caches/x/vault.kdbx":           true,
+		"Library/Caches/x/cert.p12":             true,
+		".docker":                               true,
+		".docker/machine":                       true,
+		".ollama/models":                        true,
+		".cargo/credentials.toml":               true,
+		".cargo/registry/cache":                 false,
+		".cargo":                                true, // contains .cargo/credentials*
+		".zsh_history":                          true,
+		".codex/config.toml":                    true,
+		".codex/log":                            false,
+		".claude/agents/x.md":                   true,
+		".claude/CLAUDE.md":                     true,
+		"Library/Application Support/Code/User": true,
+		"Library/Application Support/Code/User/settings.json": true,
+		"Library/Application Support/Code/Cache":              false,
+		"Library/Application Support/Cursor/Cache":            false,
+		"Library/Application Support/Google/Chrome/Default":   true,
+		"Library/Safari": true,
+		"Library/Developer/CoreSimulator/Devices": true,
+		"Library/Developer/CoreSimulator/Caches":  false,
+		"Library/Developer/Xcode/DerivedData":     false,
+		"Library/Developer/Xcode/UserData":        true,
+		"dev/app/.venv":                           false,
+		"dev/app/node_modules":                    false,
+		"":                                        false,
 	}
 	for rel, want := range cases {
 		if got := IsDenylisted(rel); got != want {
@@ -408,7 +439,7 @@ func TestReasonsClosedSet(t *testing.T) {
 
 func TestParseRoot(t *testing.T) {
 	valid := []string{"Library/Caches", "Library/Application Support/*/Cache", ".npm/_cacache", "dev"}
-	invalid := []string{"", "/abs", "~/x", "a/../b", "a//b", "a/", "./a", ".", "..", "a/*/*", "a/**", "a/[", "a/b\\"}
+	invalid := []string{"", "/abs", "~/x", "a/../b", "a//b", "a/", "./a", ".", "..", "a/*/*", "a/**", "a/[", "a/b\\", "*", "*/Cache", "Lib*/Caches", "[L]ibrary/Caches"}
 	for _, r := range valid {
 		if _, ok := ParseRoot(r); !ok {
 			t.Errorf("ParseRoot(%q) rejected a valid root", r)

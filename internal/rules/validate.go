@@ -15,10 +15,10 @@ var idPattern = regexp.MustCompile(`^[a-z0-9]+(\.[a-z0-9]+(-[a-z0-9]+)*)+$`)
 // invariants") and returns one error per violation. Every error starts with
 // the offending rule's ID (or both IDs for a conflict between two rules).
 //
-// Exemptions, as the spec states: info rule roots may be denylisted (the
-// policy refuses info rules with info_tier), and project artifact rules may
-// share roots with each other (they must have disjoint artifact names, and
-// their roots must not overlap any other rule's root).
+// Info rule roots must be denylisted (so no other rule can move them; the
+// policy also refuses info rules with info_tier), and project artifact rules
+// may share roots with each other (they must have disjoint artifact names,
+// and their roots must not overlap any other rule's root).
 func Validate(rs []Rule) []error {
 	var errs []error
 	fail := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
@@ -92,11 +92,14 @@ func Validate(rs []Rule) []error {
 		for _, root := range r.Roots {
 			segs, ok := policy.ParseRoot(root)
 			if !ok {
-				fail("%s: root %q is not a valid home-relative root (absolute, .., confusable letters, or more than one glob)", r.ID, root)
+				fail("%s: root %q is not a valid home-relative root (absolute, .., confusable letters, a glob in the first segment, or more than one glob)", r.ID, root)
 				continue
 			}
 			if r.Tier != TierInfo && policy.IsDenylisted(root) {
 				fail("%s: root %q is on, under, or contains a denylisted path", r.ID, root)
+			}
+			if r.Tier == TierInfo && !policy.IsDenylisted(root) {
+				fail("%s: info root %q is not on the denylist, so another rule could move it", r.ID, root)
 			}
 			all = append(all, ownedRoot{r, segs})
 		}

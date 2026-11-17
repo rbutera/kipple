@@ -349,7 +349,9 @@ func contains(list []string, s string) bool {
 // ParseRoot validates a rule root and splits it into segments. A valid root
 // is home-relative, clean, slash-separated, valid UTF-8 without confusable
 // runes (see ConfusableRune), has no "." or ".." segment, and has at most one
-// segment containing glob metacharacters (and never "**").
+// segment containing glob metacharacters (and never "**"), which is not the
+// first segment: a root such as "*" or "*/Cache" would reach into every
+// top-level folder of home.
 func ParseRoot(root string) ([]string, bool) {
 	if root == "" || strings.HasPrefix(root, "/") || strings.HasPrefix(root, "~") || strings.Contains(root, "**") {
 		return nil, false
@@ -373,7 +375,7 @@ func ParseRoot(root string) ([]string, bool) {
 			globs++
 		}
 	}
-	if globs > 1 {
+	if globs > 1 || hasMeta(segs[0]) {
 		return nil, false
 	}
 	return segs, true
