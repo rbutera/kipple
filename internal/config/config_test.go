@@ -165,6 +165,9 @@ level = "review"
 		{"Project root with ligature aliasing Library/CloudStorage", `project_roots = ["Library/Cloudﬆorage"]`, "project_roots"},
 		{"Project root with sharp s", `project_roots = ["Library/Meßages"]`, "project_roots"},
 		{"Protect with long s", `protect = ["~/Library/Caches/ſensitive"]`, "protect"},
+		{"Protect filesystem root", `protect = ["/"]`, "protect"},
+		{"Protect filesystem root via dot-dot", `protect = ["/opt/.."]`, "protect"},
+		{"Protect with a glob", `protect = ["~/Library/Caches/sens*"]`, "protect"},
 		{"Protect with ligature", `protect = ["~/Library/Caches/ﬁle"]`, "protect"},
 	}
 	for _, tc := range errCases {

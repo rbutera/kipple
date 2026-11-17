@@ -96,7 +96,7 @@ func Parse(home string, data []byte) (Config, error) {
 
 	cfg := Default()
 	for _, p := range raw.Protect {
-		abs, err := expand(home, p)
+		abs, err := protectEntry(home, p)
 		if err != nil {
 			return Config{}, &Error{Key: "protect", Msg: err.Error()}
 		}
@@ -161,6 +161,23 @@ func expand(home, p string) (string, error) {
 	default:
 		return filepath.Join(home, p), nil
 	}
+}
+
+// protectEntry validates a protect entry and returns it absolute. Globs are
+// rejected rather than matched literally, so a pattern never looks like a
+// protection it is not; "/" is rejected because it would refuse everything.
+func protectEntry(home, p string) (string, error) {
+	if strings.ContainsAny(p, "*?[") {
+		return "", fmt.Errorf("%q: patterns are not supported; list each folder or file to protect", p)
+	}
+	abs, err := expand(home, p)
+	if err != nil {
+		return "", err
+	}
+	if abs == "/" {
+		return "", fmt.Errorf("%q would protect the whole disk and leave kipple nothing to do; list the folders to protect", p)
+	}
+	return abs, nil
 }
 
 // projectRoot validates a project root and returns it home-relative.

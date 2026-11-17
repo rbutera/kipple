@@ -129,6 +129,9 @@ func TestAuthorize(t *testing.T) {
 		{"Extra protection covers descendants", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.keep/blob"), ReasonUserProtected},
 		{"Extra protection covers ancestors", Env{Home: home, Protect: []string{p("Library/Caches/com.example.app/blob")}}, cachesRule, p("Library/Caches/com.example.app"), ReasonUserProtected},
 		{"Extra protection matches regardless of case", Env{Home: home, Protect: []string{p("library/caches/COM.EXAMPLE.KEEP")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
+		{"Relative protection is home-relative", Env{Home: home, Protect: []string{"Library/Caches/com.example.keep"}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
+		{"Protection of the filesystem root refuses everything", Env{Home: home, Protect: []string{"/"}}, cachesRule, p("Library/Caches/com.example.app"), ReasonUserProtected},
+		{"Protection matches with Unicode folding", Env{Home: home, Protect: []string{p("Library/Cacheſ/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
 		{"Unrelated protection does not refuse", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.app"), ""},
 
 		// Requirement: Rule roots are kept.
