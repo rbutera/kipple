@@ -1,0 +1,302 @@
+package testutil
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestMain(m *testing.M) { os.Exit(GuardedMain(m)) }
+
+// fakeTB records Fatalf instead of stopping the test, so the guard's failure
+// path can be asserted.
+type fakeTB struct {
+	testing.TB
+	failed bool
+	msg    string
+}
+
+func (f *fakeTB) Helper() {}
+func (f *fakeTB) Fatalf(format string, args ...any) {
+	f.failed = true
+	f.msg = format
+	_ = args
+}
+
+var old = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+
+func TestNewHomeRoundTrip(t *testing.T) {
+	spec := Spec{
+		Dirs: []Dir{
+			{Path: "Library/Caches/empty", MTime: old},
+		},
+		Files: []File{
+			{Path: "Library/Caches/com.example/blob.bin", Size: 4096, MTime: old},
+			{Path: "Library/Logs/app.log", Content: "hello\n", MTime: old.Add(time.Hour)},
+			{Path: "Documents/important.txt", Content: "keep me"},
+			{Path: "Downloads/x.dmg", Size: 1 << 20, Mode: 0o600},
+		},
+		Symlinks: []Symlink{
+			{Path: "Library/Caches/foo", Target: "~/Documents"},
+			{Path: "Library/Caches/rel", Target: "../Logs"},
+		},
+		Hardlinks: []Hardlink{
+			{Path: "Library/Caches/com.example/blob-link.bin", Target: "Library/Caches/com.example/blob.bin"},
+		},
+	}
+	home := NewHome(t, spec)
+	GuardRealHome(t)
+
+	if got := os.Getenv("KIPPLE_HOME"); got != home {
+		t.Fatalf("KIPPLE_HOME = %q, want %q", got, home)
+	}
+	if got := os.Getenv("KIPPLE_STATE_DIR"); got != StateDir(home) {
+		t.Fatalf("KIPPLE_STATE_DIR = %q, want %q", got, StateDir(home))
+	}
+	if strings.HasPrefix(StateDir(home), home+string(filepath.Separator)) {
+		t.Fatalf("state dir %q must be outside the fixture home", StateDir(home))
+	}
+
+	byPath := map[string]Entry{}
+	for _, e := range Snapshot(t, home) {
+		byPath[e.Path] = e
+	}
+	for _, f := range spec.Files {
+		e, ok := byPath[f.Path]
+		if !ok || e.Type != "file" {
+			t.Fatalf("file %s missing or wrong type: %+v", f.Path, e)
+		}
+		want := f.Size
+		if f.Content != "" {
+			want = int64(len(f.Content))
+		}
+		if e.Size != want {
+			t.Errorf("%s size = %d, want %d", f.Path, e.Size, want)
+		}
+		if !f.MTime.IsZero() && !e.MTime.Equal(f.MTime) {
+			t.Errorf("%s mtime = %v, want %v", f.Path, e.MTime, f.MTime)
+		}
+		if f.Mode != 0 && e.Mode.Perm() != f.Mode {
+			t.Errorf("%s mode = %v, want %v", f.Path, e.Mode.Perm(), f.Mode)
+		}
+	}
+	if e := byPath["Library/Caches/empty"]; e.Type != "dir" || !e.MTime.Equal(old) {
+		t.Errorf("dir round trip: %+v", e)
+	}
+	if e := byPath["Library/Caches/foo"]; e.Type != "symlink" || e.Target != filepath.Join(home, "Documents") {
+		t.Errorf("absolute symlink round trip: %+v", e)
+	}
+	if e := byPath["Library/Caches/rel"]; e.Type != "symlink" || e.Target != "../Logs" {
+		t.Errorf("relative symlink round trip: %+v", e)
+	}
+
+	a, err := os.Stat(Abs(home, "Library/Caches/com.example/blob.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.Stat(Abs(home, "Library/Caches/com.example/blob-link.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(a, b) {
+		t.Error("hardlink does not share an inode with its target")
+	}
+}
+
+func TestChecksumStableAndSensitive(t *testing.T) {
+	home := NewHome(t, Spec{Files: []File{{Path: "a/b.txt", Content: "x", MTime: old}}})
+	first := Checksum(t, home)
+	if again := Checksum(t, home); again != first {
+		t.Fatal("checksum changed without any modification")
+	}
+	if err := os.WriteFile(Abs(home, "a/b.txt"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if Checksum(t, home) == first {
+		t.Fatal("checksum did not change after content change")
+	}
+}
+
+func TestNewHomeGitRepos(t *testing.T) {
+	home := NewHome(t, Spec{
+		Repos: []Repo{
+			{Path: "dev/pushed", Upstream: true, Pushed: true, MTime: old,
+				Commits: []Commit{{Message: "init", Files: []File{{Path: "package.json", Content: "{}"}}}}},
+			{Path: "dev/ahead", Upstream: true, Pushed: true,
+				Commits:      []Commit{{Files: []File{{Path: "Cargo.toml", Content: "[package]"}}}},
+				LocalCommits: []Commit{{Message: "local", Files: []File{{Path: "src/main.rs", Content: "fn main(){}"}}}}},
+			{Path: "dev/dirty", Commits: []Commit{{Files: []File{{Path: "a.txt", Content: "a"}}}}},
+		},
+		Files: []File{{Path: "dev/dirty/b.txt", Content: "uncommitted"}},
+	})
+
+	pushed := Abs(home, "dev/pushed")
+	if out := Git(t, pushed, "status", "--porcelain"); out != "" {
+		t.Errorf("pushed repo not clean: %q", out)
+	}
+	if out := Git(t, pushed, "rev-list", "--count", "@{upstream}..HEAD"); out != "0" {
+		t.Errorf("pushed repo ahead of upstream by %s", out)
+	}
+	if local, up := Git(t, pushed, "rev-parse", "HEAD"), Git(t, UpstreamDir(home, "dev/pushed"), "rev-parse", "main"); local != up {
+		t.Errorf("upstream main %s != local HEAD %s", up, local)
+	}
+	if strings.HasPrefix(UpstreamDir(home, "dev/pushed"), home+string(filepath.Separator)) {
+		t.Error("upstream must live outside the fixture home")
+	}
+	fi, err := os.Stat(filepath.Join(pushed, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.ModTime().Equal(old) {
+		t.Errorf("Repo.MTime not applied: %v", fi.ModTime())
+	}
+
+	if out := Git(t, Abs(home, "dev/ahead"), "rev-list", "--count", "@{upstream}..HEAD"); out != "1" {
+		t.Errorf("ahead repo: want 1 unpushed commit, got %s", out)
+	}
+	if out := Git(t, Abs(home, "dev/dirty"), "status", "--porcelain"); !strings.Contains(out, "b.txt") {
+		t.Errorf("dirty repo should show b.txt untracked, got %q", out)
+	}
+}
+
+func TestBuildRejectsEscapingPaths(t *testing.T) {
+	home := NewHome(t, Spec{})
+	cases := []struct {
+		name string
+		spec Spec
+	}{
+		{"dotdot", Spec{Files: []File{{Path: "../escape.txt", Content: "x"}}}},
+		{"absolute", Spec{Files: []File{{Path: "/tmp/escape.txt", Content: "x"}}}},
+		{"tilde", Spec{Dirs: []Dir{{Path: "~/x"}}}},
+		{"unclean", Spec{Dirs: []Dir{{Path: "a//b"}}}},
+		{"symlink path escapes", Spec{Symlinks: []Symlink{{Path: "a/../../b", Target: "x"}}}},
+		{"size disagrees", Spec{Files: []File{{Path: "f", Content: "abc", Size: 10}}}},
+		{"pushed without upstream", Spec{Repos: []Repo{{Path: "r", Pushed: true, Commits: []Commit{{}}}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			restore, err := build(home, tc.spec)
+			restore()
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(home), "escape.txt")); err == nil {
+		t.Fatal("a spec path escaped the fixture home")
+	}
+}
+
+func TestUnreadableDirRestoredForCleanup(t *testing.T) {
+	home := NewHome(t, Spec{
+		Files: []File{{Path: "Library/Caches/x/locked/f", Content: "x"}},
+		Dirs:  []Dir{{Path: "Library/Caches/x/locked", Unreadable: true}},
+	})
+	if _, err := os.ReadDir(Abs(home, "Library/Caches/x/locked")); err == nil {
+		t.Fatal("expected the directory to be unreadable")
+	}
+	// t.TempDir cleanup would fail the test if permissions were not restored.
+}
+
+func TestGuardRealHome(t *testing.T) {
+	realHome, err := realHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := NewHome(t, Spec{})
+	aliasDir := t.TempDir()
+	alias := filepath.Join(aliasDir, "alias")
+	// A symlink in the temp dir pointing at the real home: creating it does
+	// not touch the real home, and the guard must see through it.
+	if err := os.Symlink(realHome, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name     string
+		home     string
+		state    string
+		wantFail bool
+	}{
+		{"fixture home passes", fixture, StateDir(fixture), false},
+		{"KIPPLE_HOME equals real home", realHome, StateDir(fixture), true},
+		{"KIPPLE_HOME equals real home with trailing slash", realHome + "/", StateDir(fixture), true},
+		{"KIPPLE_HOME equals real home in other case", strings.ToUpper(realHome), StateDir(fixture), true},
+		{"KIPPLE_HOME inside real home", filepath.Join(realHome, "fixture"), StateDir(fixture), true},
+		{"KIPPLE_HOME symlink to real home", alias, StateDir(fixture), true},
+		{"KIPPLE_HOME empty", "", StateDir(fixture), true},
+		{"KIPPLE_HOME relative", "relative/home", StateDir(fixture), true},
+		{"KIPPLE_STATE_DIR empty", fixture, "", true},
+		{"KIPPLE_STATE_DIR inside real home", fixture, filepath.Join(realHome, "Library/Application Support/kipple"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KIPPLE_HOME", tc.home)
+			t.Setenv("KIPPLE_STATE_DIR", tc.state)
+			f := &fakeTB{TB: t}
+			GuardRealHome(f)
+			if f.failed != tc.wantFail {
+				t.Fatalf("guard failed=%v, want %v (%s)", f.failed, tc.wantFail, f.msg)
+			}
+		})
+	}
+}
+
+func TestDirTrasher(t *testing.T) {
+	home := NewHome(t, Spec{
+		Files: []File{
+			{Path: "Downloads/a.dmg", Content: "1"},
+			{Path: "x/a.dmg", Content: "2"},
+			{Path: "y/a.dmg", Content: "3"},
+			{Path: "Library/Caches/one/cache/f", Content: "d1"},
+			{Path: "Library/Caches/two/cache/f", Content: "d2"},
+			{Path: "Library/Caches/three/cache/f", Content: "d3"},
+			{Path: "Documents/secret", Content: "s"},
+			{Path: "x/.hidden", Content: "h"},
+		},
+		Symlinks: []Symlink{{Path: "Library/Caches/link", Target: "~/Documents"}},
+	})
+	trash := filepath.Join(filepath.Dir(home), "trash")
+	tr := DirTrasher{Dir: trash}
+
+	cases := []struct {
+		name, src, want string
+	}{
+		{"first file keeps its name", "Downloads/a.dmg", "a.dmg"},
+		{"second file gets 2 before the extension", "x/a.dmg", "a 2.dmg"},
+		{"third file gets 3", "y/a.dmg", "a 3.dmg"},
+		{"first dir", "Library/Caches/one/cache", "cache"},
+		{"second dir gets 2", "Library/Caches/two/cache", "cache 2"},
+		{"third dir gets 3", "Library/Caches/three/cache", "cache 3"},
+		{"dotfile has no extension", "x/.hidden", ".hidden"},
+		{"symlink is moved as itself", "Library/Caches/link", "link"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dest, err := tr.Trash(Abs(home, tc.src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dest != filepath.Join(trash, tc.want) {
+				t.Fatalf("dest = %q, want %q", dest, filepath.Join(trash, tc.want))
+			}
+			if _, err := os.Lstat(Abs(home, tc.src)); !os.IsNotExist(err) {
+				t.Fatalf("source still present: %v", err)
+			}
+		})
+	}
+	if _, err := os.Stat(Abs(home, "Documents/secret")); err != nil {
+		t.Fatalf("symlink target was disturbed: %v", err)
+	}
+	if fi, err := os.Lstat(filepath.Join(trash, "link")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("trashed symlink is not a symlink: %v", err)
+	}
+	if _, err := (DirTrasher{}).Trash(Abs(home, "x")); err == nil {
+		t.Fatal("empty Dir must error")
+	}
+	if _, err := tr.Trash(Abs(home, "missing")); err == nil {
+		t.Fatal("missing source must error")
+	}
+}
