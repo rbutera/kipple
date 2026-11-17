@@ -27,11 +27,24 @@ var foldExpansions = map[rune]string{
 	'ﬆ': "st",
 }
 
-// foldRune returns the canonical folded form of r: its full-folding expansion
-// if it has one, otherwise the smallest lower-case form in its simple case
+// normSingletons are runes whose canonical decomposition is a single ASCII
+// rune, so APFS (normalisation-insensitive) opens them as that ASCII name.
+// A probe of every rune on APFS found exactly four single runes aliasing
+// ASCII: U+017F long s and U+212A Kelvin sign (handled by case folding) and
+// these two normalisation singletons.
+var normSingletons = map[rune]string{
+	'\u037E': ";", // GREEK QUESTION MARK
+	'\u1FEF': "`", // GREEK VARIA
+}
+
+// foldRune returns the canonical folded form of r: its normalisation
+// singleton or full-folding expansion if it has one, otherwise the smallest lower-case form in its simple case
 // folding orbit (so 's', 'S' and 'ſ' all fold to "s", and 'K', 'k' and the
 // Kelvin sign all fold to "k").
 func foldRune(r rune) string {
+	if e, ok := normSingletons[r]; ok {
+		return e
+	}
 	if e, ok := foldExpansions[r]; ok {
 		return e
 	}
@@ -83,7 +96,8 @@ func isConfusable(r rune) bool {
 
 // ConfusableRune returns the first rune in s that APFS case folding maps to
 // a different name than strings.ToLower would (for example U+017F long s,
-// U+00DF sharp s, U+212A Kelvin sign, or the U+FB00..U+FB06 ligatures), and
+// U+00DF sharp s, U+212A Kelvin sign, the U+FB00..U+FB06 ligatures, or the
+// normalisation singletons U+037E and U+1FEF), and
 // true; or 0 and false when s has none. Invalid UTF-8 is reported as
 // utf8.RuneError. Rule roots and config paths containing one are rejected.
 func ConfusableRune(s string) (rune, bool) {

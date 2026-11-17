@@ -148,6 +148,8 @@ func TestConfusableRune(t *testing.T) {
 		"ﬀ":                   'ﬀ',
 		"Kube":                'K',
 		"bad\xffutf8":         '�',
+		"a;b":                 ';',
+		"a`b":                 '`',
 	}
 	for s, want := range bad {
 		if r, ok := ConfusableRune(s); !ok || r != want {
@@ -166,6 +168,7 @@ func TestConfusableRune(t *testing.T) {
 	for alias, real := range map[string]string{
 		"Documentſ": "documents", "Meßages": "messages", "Cloudﬆorage": "cloudstorage",
 		"Keychains": "keychains", "MEẞAGES": "messages", "ﬁle": "file",
+		"a;b": "a;b", "a`b": "a`b",
 	} {
 		if got := foldName(alias); got != real {
 			t.Errorf("foldName(%q) = %q, want %q", alias, got, real)
