@@ -6,7 +6,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -36,35 +35,7 @@ func TestMatchKindsAgreeWithPolicy(t *testing.T) {
 	}
 }
 
-var idPattern = regexp.MustCompile(`^[a-z0-9]+(\.[a-z0-9]+(-[a-z0-9]+)*)+$`)
-
 func hasMeta(s string) bool { return strings.ContainsAny(s, `*?[\`) }
-
-func segMatch(a, b string) bool {
-	if a == b {
-		return true
-	}
-	if hasMeta(a) {
-		if ok, _ := filepath.Match(a, b); ok {
-			return true
-		}
-	}
-	if hasMeta(b) {
-		if ok, _ := filepath.Match(b, a); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func excludes(r rules.Rule, name string) bool {
-	for _, p := range r.Exclude {
-		if ok, _ := filepath.Match(strings.ToLower(p), strings.ToLower(name)); ok {
-			return true
-		}
-	}
-	return false
-}
 
 // TestCatalogueInvariants is the spec scenario "Invariant test": every failure
 // names the rule.
@@ -73,137 +44,103 @@ func TestCatalogueInvariants(t *testing.T) {
 	if len(cat) == 0 {
 		t.Fatal("catalogue is empty")
 	}
-	ids := map[string]bool{}
-	type ownedRoot struct {
-		rule rules.Rule
-		segs []string
+	for _, err := range rules.Validate(cat) {
+		t.Error(err)
 	}
-	var all []ownedRoot
-
 	for _, r := range cat {
-		if !idPattern.MatchString(r.ID) {
-			t.Errorf("%s: ID does not match %s", r.ID, idPattern)
-		}
-		if ids[r.ID] {
-			t.Errorf("%s: duplicate rule ID", r.ID)
-		}
-		ids[r.ID] = true
-		if !r.Tier.Valid() {
-			t.Errorf("%s: invalid tier %q", r.ID, r.Tier)
-		}
-		if strings.TrimSpace(r.Title) == "" || strings.TrimSpace(r.Owner.Name) == "" {
-			t.Errorf("%s: empty title or owner name", r.ID)
-		}
-		for field, s := range map[string]string{"what": r.What, "if_removed": r.IfRemoved} {
-			s = strings.TrimSpace(s)
-			switch {
-			case s == "":
-				t.Errorf("%s: empty %s", r.ID, field)
-			case !strings.HasSuffix(s, "."):
-				t.Errorf("%s: %s should be one sentence ending in a full stop: %q", r.ID, field, s)
-			case strings.Contains(strings.TrimSuffix(s, "."), ". "):
-				t.Errorf("%s: %s should be a single sentence: %q", r.ID, field, s)
-			}
-		}
-		if r.Tier == rules.TierInfo {
-			if r.OwnerCommand == "" {
-				t.Errorf("%s: info rules must name the owner's own command", r.ID)
-			}
-			if r.Movable() {
-				t.Errorf("%s: info rule reports movable", r.ID)
-			}
-		}
-		switch r.Match.Kind {
-		case rules.MatchChildren:
-		case rules.MatchExtensions:
-			if len(r.Match.Extensions) == 0 {
-				t.Errorf("%s: extensions match without extensions", r.ID)
-			}
-		case rules.MatchProjectArtifact:
-			if len(r.Match.Names) == 0 || len(r.Match.Markers) == 0 {
-				t.Errorf("%s: project artifact rule needs names and markers", r.ID)
-			}
-			c := r.Conditions
-			if r.Tier != rules.TierReview || !c.RequiresIdleProject || c.IdleDays < 30 || !c.RequiresCleanGit || !c.SkipIfAgentInProject {
-				t.Errorf("%s: project artifact rules must be review tier with idle (30d), clean git and agent checks", r.ID)
-			}
-		default:
-			t.Errorf("%s: unknown match kind %q", r.ID, r.Match.Kind)
-		}
-
-		if len(r.Roots) == 0 {
-			t.Errorf("%s: no roots", r.ID)
-		}
-		for _, root := range r.Roots {
-			segs, ok := policy.ParseRoot(root)
-			if !ok {
-				t.Errorf("%s: root %q is not a valid home-relative root (absolute, .., or more than one glob)", r.ID, root)
-				continue
-			}
-			if r.Tier != rules.TierInfo && policy.IsDenylisted(root) {
-				t.Errorf("%s: root %q is on, under, or contains a denylisted path", r.ID, root)
-			}
-			all = append(all, ownedRoot{r, segs})
-		}
-	}
-
-	// No two rules claim the same root, and a root nested inside another
-	// rule's root must be excluded by that outer rule (so no path is offered
-	// twice). Project artifact rules share the project roots by design and
-	// must have disjoint artifact names instead.
-	for i, a := range all {
-		for j, b := range all {
-			if i == j {
-				continue
-			}
-			sameRule := a.rule.ID == b.rule.ID
-			bothProjects := a.rule.Match.Kind == rules.MatchProjectArtifact && b.rule.Match.Kind == rules.MatchProjectArtifact
-			if len(a.segs) == len(b.segs) && segsMatch(a.segs, b.segs) {
-				if bothProjects && !sameRule {
-					continue
-				}
-				if i < j {
-					t.Errorf("%s and %s: both claim root %q", a.rule.ID, b.rule.ID, strings.Join(a.segs, "/"))
-				}
-				continue
-			}
-			if len(a.segs) < len(b.segs) && segsMatch(a.segs, b.segs[:len(a.segs)]) {
-				child := b.segs[len(a.segs)]
-				if sameRule {
-					t.Errorf("%s: root %q is nested inside its own root %q", a.rule.ID, strings.Join(b.segs, "/"), strings.Join(a.segs, "/"))
-				} else if !excludes(a.rule, child) && !(bothProjects) {
-					t.Errorf("%s: root %q lies inside root %q of %s, which does not exclude %q", b.rule.ID, strings.Join(b.segs, "/"), strings.Join(a.segs, "/"), a.rule.ID, child)
-				}
-			}
-		}
-	}
-
-	projectNames := map[string]string{}
-	for _, r := range cat {
-		if r.Match.Kind != rules.MatchProjectArtifact {
-			continue
-		}
-		for _, n := range r.Match.Names {
-			if other, dup := projectNames[n]; dup {
-				t.Errorf("%s and %s: both claim artifact name %q", other, r.ID, n)
-			}
-			projectNames[n] = r.ID
+		if (r.Tier == rules.TierInfo) == r.Movable() {
+			t.Errorf("%s: Movable() = %v for tier %s", r.ID, r.Movable(), r.Tier)
 		}
 	}
 }
 
-func segsMatch(a, b []string) bool {
-	for i := range a {
-		if !segMatch(a[i], b[i]) {
-			return false
-		}
+// goodRule is a valid rule that each TestValidate case breaks in one way.
+func goodRule(id, root string) rules.Rule {
+	return rules.Rule{
+		ID: id, Title: "Title", Tier: rules.TierSafe, Roots: []string{root},
+		Match: rules.Match{Kind: rules.MatchChildren}, Owner: rules.Owner{Name: "Owner"},
+		What: "One sentence.", IfRemoved: "Another sentence.",
 	}
-	return true
 }
 
-// TestCatalogueContents is the spec scenario "Catalogue count": every rule
+func goodProject(id string, names ...string) rules.Rule {
+	r := goodRule(id, "dev")
+	r.Tier = rules.TierReview
+	r.Match = rules.Match{Kind: rules.MatchProjectArtifact, Names: names, Markers: []string{"marker"}}
+	r.Conditions = rules.Conditions{RequiresIdleProject: true, IdleDays: 30, RequiresCleanGit: true, SkipIfAgentInProject: true}
+	return r
+}
+
+// TestValidate feeds synthetic bad rules to Validate; each must produce an
+// error that starts with the offending rule's ID.
+func TestValidate(t *testing.T) {
+	if errs := rules.Validate([]rules.Rule{goodRule("good.one", "Library/Caches"), goodProject("project.a", "a"), goodProject("project.b", "b")}); len(errs) != 0 {
+		t.Fatalf("valid rules rejected: %v", errs)
+	}
+	mod := func(id, root string, f func(*rules.Rule)) rules.Rule {
+		r := goodRule(id, root)
+		f(&r)
+		return r
+	}
+	cases := []struct {
+		name  string
+		rules []rules.Rule
+		want  string // the error must start with this and contain the rest
+		frag  string
+	}{
+		{"Bad ID", []rules.Rule{goodRule("BadID", "Library/Caches")}, "BadID:", "ID does not match"},
+		{"Duplicate ID", []rules.Rule{goodRule("dup.id", "Library/Caches"), goodRule("dup.id", "Library/Logs")}, "dup.id:", "duplicate rule ID"},
+		{"Invalid tier", []rules.Rule{mod("bad.tier", "Library/Caches", func(r *rules.Rule) { r.Tier = "bogus" })}, "bad.tier:", "invalid tier"},
+		{"Empty title", []rules.Rule{mod("no.title", "Library/Caches", func(r *rules.Rule) { r.Title = " " })}, "no.title:", "empty title"},
+		{"Empty what", []rules.Rule{mod("no.what", "Library/Caches", func(r *rules.Rule) { r.What = "" })}, "no.what:", "empty what"},
+		{"Two sentences", []rules.Rule{mod("two.sentences", "Library/Caches", func(r *rules.Rule) { r.IfRemoved = "One. Two." })}, "two.sentences:", "single sentence"},
+		{"No full stop", []rules.Rule{mod("no.stop", "Library/Caches", func(r *rules.Rule) { r.What = "No stop" })}, "no.stop:", "full stop"},
+		{"Info without owner command", []rules.Rule{mod("info.nocmd", "Library/Caches", func(r *rules.Rule) { r.Tier = rules.TierInfo })}, "info.nocmd:", "owner's own command"},
+		{"Unknown match kind", []rules.Rule{mod("bad.kind", "Library/Caches", func(r *rules.Rule) { r.Match.Kind = "everything" })}, "bad.kind:", "unknown match kind"},
+		{"Extensions without extensions", []rules.Rule{mod("no.ext", "Downloads", func(r *rules.Rule) { r.Match.Kind = rules.MatchExtensions })}, "no.ext:", "without extensions"},
+		{"Malformed extension", []rules.Rule{mod("bad.ext", "Downloads", func(r *rules.Rule) {
+			r.Match = rules.Match{Kind: rules.MatchExtensions, Extensions: []string{"dmg"}}
+		})}, "bad.ext:", "should look like .ext"},
+		{"Project rule without markers", []rules.Rule{func() rules.Rule { r := goodProject("project.nomarker", "x"); r.Match.Markers = nil; return r }()}, "project.nomarker:", "needs names and markers"},
+		{"Project rule in safe tier", []rules.Rule{func() rules.Rule { r := goodProject("project.safe", "x"); r.Tier = rules.TierSafe; return r }()}, "project.safe:", "review tier"},
+		{"Malformed exclusion", []rules.Rule{mod("bad.exclude", "Library/Caches", func(r *rules.Rule) { r.Exclude = []string{"["} })}, "bad.exclude:", "malformed exclusion"},
+		{"No roots", []rules.Rule{mod("no.roots", "x", func(r *rules.Rule) { r.Roots = nil })}, "no.roots:", "no roots"},
+		{"Absolute root", []rules.Rule{goodRule("abs.root", "/Library/Caches")}, "abs.root:", "not a valid home-relative root"},
+		{"Confusable root", []rules.Rule{goodRule("long.s", "Documentſ")}, "long.s:", "not a valid home-relative root"},
+		{"Denylisted root", []rules.Rule{goodRule("deny.root", "Library/Mail/V10")}, "deny.root:", "denylisted"},
+		{"Root containing a denylisted path", []rules.Rule{goodRule("deny.ancestor", "Library")}, "deny.ancestor:", "denylisted"},
+		{"Same root twice", []rules.Rule{goodRule("a.one", "Library/Logs"), goodRule("b.two", "Library/Logs")}, "a.one and b.two:", "both claim root"},
+		{"Same root in another case", []rules.Rule{goodRule("a.one", "Library/Logs"), goodRule("b.two", "Library/logs")}, "a.one and b.two:", "both claim root"},
+		{"Nested root not excluded", []rules.Rule{goodRule("outer.rule", "Library/Caches"), goodRule("inner.rule", "Library/Caches/inner")}, "inner.rule:", "does not exclude"},
+		{"Root nested in its own root", []rules.Rule{mod("self.nest", "Library/Caches", func(r *rules.Rule) { r.Roots = append(r.Roots, "Library/Caches/x") })}, "self.nest:", "nested inside its own root"},
+		{"Project names overlap", []rules.Rule{goodProject("project.a", "node_modules"), goodProject("project.b", "node_modules")}, "project.a and project.b:", "artifact name"},
+		{"Project root overlaps another rule's root", []rules.Rule{goodRule("go.thing", "dev/cache"), goodProject("project.a", "x")}, "go.thing and project.a:", "overlaps root"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := rules.Validate(tc.rules)
+			if len(errs) == 0 {
+				t.Fatal("want an error, got none")
+			}
+			for _, err := range errs {
+				if strings.HasPrefix(err.Error(), tc.want) && strings.Contains(err.Error(), tc.frag) {
+					return
+				}
+			}
+			t.Fatalf("no error starts with %q and contains %q: %v", tc.want, tc.frag, errs)
+		})
+	}
+
+	// Exemptions the spec allows.
+	info := mod("info.ok", ".claude/projects", func(r *rules.Rule) { r.Tier = rules.TierInfo; r.OwnerCommand = "tool clean" })
+	if errs := rules.Validate([]rules.Rule{info}); len(errs) != 0 {
+		t.Errorf("info rule on a denylisted root rejected: %v", errs)
+	}
+}
+
+// TestCatalogueCount is the spec scenario "Catalogue count": every rule
 // named in "v1 catalogue contents" is present with the stated tier.
-func TestCatalogueContents(t *testing.T) {
+func TestCatalogueCount(t *testing.T) {
 	want := map[string]rules.Tier{
 		"caches.user": rules.TierSafe, "logs.user": rules.TierSafe, "xcode.deriveddata": rules.TierSafe,
 		"simulator.caches": rules.TierSafe, "swiftpm.cache": rules.TierSafe, "homebrew.cache": rules.TierSafe,

@@ -2,9 +2,10 @@
 // how to clean, each with a risk tier and plain-language explanations.
 //
 // Rules are Go values, not runtime configuration, so the allowlist cannot be
-// extended by a file on disk. This package must not import internal/policy
-// (policy is the gate; rules only describe). Rule implements policy.Rule by
-// method set, so a Rule can be passed to policy.Authorize directly.
+// extended by a file on disk. Rules only describe; internal/policy is the
+// gate. This package imports policy only so Validate can check roots against
+// the gate's root grammar and denylist; policy never imports rules. Rule
+// implements policy.Rule, so a Rule can be passed to policy.Authorize.
 package rules
 
 // Tier is a rule's risk tier.
