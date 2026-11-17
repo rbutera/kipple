@@ -129,7 +129,10 @@ func TestAuthorize(t *testing.T) {
 		{"Extra protection covers descendants", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.keep/blob"), ReasonUserProtected},
 		{"Extra protection covers ancestors", Env{Home: home, Protect: []string{p("Library/Caches/com.example.app/blob")}}, cachesRule, p("Library/Caches/com.example.app"), ReasonUserProtected},
 		{"Extra protection matches regardless of case", Env{Home: home, Protect: []string{p("library/caches/COM.EXAMPLE.KEEP")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
-		{"Relative protection is home-relative", Env{Home: home, Protect: []string{"Library/Caches/com.example.keep"}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
+		{"Relative protection fails closed", Env{Home: home, Protect: []string{"Library/Caches/com.example.keep"}}, cachesRule, p("Library/Caches/com.example.app"), ReasonInvalidEnv},
+		{"Empty protection fails closed", Env{Home: home, Protect: []string{""}}, cachesRule, p("Library/Caches/com.example.app"), ReasonInvalidEnv},
+		{"Unclean protection fails closed", Env{Home: home, Protect: []string{p("Library/x/../Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.app"), ReasonInvalidEnv},
+		{"Protection with trailing slash fails closed", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep") + "/"}}, cachesRule, p("Library/Caches/com.example.app"), ReasonInvalidEnv},
 		{"Protection of the filesystem root refuses everything", Env{Home: home, Protect: []string{"/"}}, cachesRule, p("Library/Caches/com.example.app"), ReasonUserProtected},
 		{"Protection matches with Unicode folding", Env{Home: home, Protect: []string{p("Library/Cacheſ/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
 		{"Pattern in a caller-built protection is matched", Env{Home: home, Protect: []string{p("Library/Caches/com.example.k*")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
@@ -396,7 +399,7 @@ func TestIsDenylisted(t *testing.T) {
 // Reasons is a closed set: every reason produced by the table above is in it.
 func TestReasonsClosedSet(t *testing.T) {
 	want := []string{"not_absolute", "is_home", "outside_home", "denylisted", "user_protected",
-		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device", "info_tier", "not_rule_item", "name_mismatch"}
+		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device", "info_tier", "not_rule_item", "name_mismatch", "invalid_env"}
 	got := Reasons()
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Reasons() = %v, want %v", got, want)

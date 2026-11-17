@@ -7,6 +7,7 @@
 // protection. Recognised keys:
 //
 //	protect       = ["~/Library/Caches/com.example.keep"]  # refused with user_protected
+//	                                                        # (inside home; relative = home-relative; no patterns)
 //	project_roots = ["~/work"]                              # replaces the default project roots
 //	level         = "safe"                                  # or "review"
 //
@@ -176,6 +177,9 @@ func protectEntry(home, p string) (string, error) {
 	}
 	if abs == "/" {
 		return "", fmt.Errorf("%q would protect the whole disk and leave kipple nothing to do; list the folders to protect", p)
+	}
+	if abs != home && !strings.HasPrefix(abs, home+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q is outside the home folder, where kipple never acts; list folders inside it", p)
 	}
 	return abs, nil
 }

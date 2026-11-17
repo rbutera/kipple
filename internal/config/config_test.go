@@ -103,7 +103,7 @@ func TestLoad(t *testing.T) {
 
 	t.Run("All keys parse and normalise", func(t *testing.T) {
 		home := homeWithConfig(t, `
-protect = ["~/Library/Caches/a", "Library/Caches/b", "/opt/elsewhere", "~/Library/Caches/c/../d"]
+protect = ["~/Library/Caches/a", "Library/Caches/b", "~/Library/Caches/c/../d"]
 project_roots = ["~/work", "clients/acme", "~/dev/"]
 level = "review"
 `)
@@ -111,7 +111,7 @@ level = "review"
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantProtect := []string{home + "/Library/Caches/a", home + "/Library/Caches/b", "/opt/elsewhere", home + "/Library/Caches/d"}
+		wantProtect := []string{home + "/Library/Caches/a", home + "/Library/Caches/b", home + "/Library/Caches/d"}
 		if strings.Join(cfg.Protect, "|") != strings.Join(wantProtect, "|") {
 			t.Errorf("protect = %v, want %v", cfg.Protect, wantProtect)
 		}
@@ -121,7 +121,7 @@ level = "review"
 		if cfg.Level != rules.LevelReview {
 			t.Errorf("level = %q", cfg.Level)
 		}
-		if env := cfg.PolicyEnv(home); env.Home != home || len(env.Protect) != 4 {
+		if env := cfg.PolicyEnv(home); env.Home != home || len(env.Protect) != 3 {
 			t.Errorf("env = %+v", env)
 		}
 	})
@@ -168,6 +168,9 @@ level = "review"
 		{"Protect filesystem root", `protect = ["/"]`, "protect"},
 		{"Protect filesystem root via dot-dot", `protect = ["/opt/.."]`, "protect"},
 		{"Protect with a glob", `protect = ["~/Library/Caches/sens*"]`, "protect"},
+		{"Protect with a trailing glob", `protect = ["~/Library/Caches/com.example.*"]`, "protect"},
+		{"Protect outside home", `protect = ["/opt/elsewhere"]`, "protect"},
+		{"Protect escaping home", `protect = ["~/../other"]`, "protect"},
 		{"Protect with ligature", `protect = ["~/Library/Caches/ﬁle"]`, "protect"},
 	}
 	for _, tc := range errCases {

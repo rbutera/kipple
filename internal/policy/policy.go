@@ -8,7 +8,9 @@
 // Authorize checks, in order:
 //
 //  1. Env.Home and the path are absolute and clean (no "..", no "//", no
-//     trailing slash): otherwise ReasonNotAbsolute.
+//     trailing slash): otherwise ReasonNotAbsolute. Every Env.Protect entry
+//     is absolute and clean too: otherwise everything is refused with
+//     ReasonInvalidEnv, so a caller that builds a bad Env fails closed.
 //  2. The path is not home itself (ReasonIsHome) and descends from home,
 //     compared case-sensitively (ReasonOutsideHome).
 //  3. The rule is movable: info-tier rules are measured only and never
@@ -17,7 +19,7 @@
 //     location, compared with APFS-style Unicode case folding (see fold.go)
 //     (ReasonDenylisted).
 //  5. Likewise for Env.Protect entries from user config (ReasonUserProtected).
-//     Relative entries are home-relative; "/" protects everything.
+//     "/" protects everything; a glob segment is matched as a pattern.
 //  6. The path is not one of the rule's roots (ReasonIsRuleRoot) and descends
 //     from one of them, outside the rule's exclusions (ReasonOutsideRuleRoots).
 //  7. The path has the shape of one of the rule's items (ReasonNotRuleItem):
@@ -73,6 +75,7 @@ const (
 	ReasonInfoTier         = "info_tier"
 	ReasonNotRuleItem      = "not_rule_item"
 	ReasonNameMismatch     = "name_mismatch"
+	ReasonInvalidEnv       = "invalid_env"
 )
 
 // Reasons returns every refusal reason Authorize can produce.
@@ -91,6 +94,7 @@ func Reasons() []string {
 		ReasonInfoTier,
 		ReasonNotRuleItem,
 		ReasonNameMismatch,
+		ReasonInvalidEnv,
 	}
 }
 
@@ -103,7 +107,8 @@ const (
 
 // Env is the context for a decision. Home is injected by cmd/ (from
 // KIPPLE_HOME or the real home); the library never resolves it. Protect holds
-// absolute paths from user config that are refused like denylist entries.
+// absolute, clean paths from user config that are refused like denylist
+// entries; any other entry makes Authorize refuse everything.
 type Env struct {
 	Home    string
 	Protect []string
@@ -179,6 +184,11 @@ func Authorize(env Env, rule Rule, path string) Decision {
 	if !isCanonicalAbs(home) || home == "/" {
 		return refuse(ReasonNotAbsolute)
 	}
+	for _, p := range env.Protect {
+		if !isCanonicalAbs(p) {
+			return refuse(ReasonInvalidEnv)
+		}
+	}
 	if !isCanonicalAbs(path) {
 		return refuse(ReasonNotAbsolute)
 	}
@@ -200,7 +210,7 @@ func Authorize(env Env, rule Rule, path string) Decision {
 	if isDenylisted(comps) {
 		return refuse(ReasonDenylisted)
 	}
-	if isProtected(home, env.Protect, path) {
+	if isProtected(env.Protect, path) {
 		return refuse(ReasonUserProtected)
 	}
 	d, want := checkRule(rule, comps)
@@ -224,29 +234,13 @@ func isCanonicalAbs(p string) bool {
 	return p != "" && filepath.IsAbs(p) && filepath.Clean(p) == p && !strings.ContainsRune(p, 0)
 }
 
-// protectPath returns the absolute, clean form of an Env.Protect entry:
-// absolute entries are cleaned and relative ones are joined onto home.
-func protectPath(home, p string) (string, bool) {
-	if p == "" {
-		return "", false
-	}
-	if filepath.IsAbs(p) {
-		return filepath.Clean(p), true
-	}
-	return filepath.Join(home, p), true
-}
-
 // isProtected: the path equals, descends from, or contains a protected path,
 // compared segment by segment with foldName. Config rejects patterns, but a
 // caller-built Env may hold one, so a segment with glob metacharacters is
 // matched as a pattern, and a malformed pattern matches everything.
-func isProtected(home string, protect []string, path string) bool {
+func isProtected(protect []string, path string) bool {
 	psegs := strings.Split(path[1:], "/")
-	for _, p := range protect {
-		abs, ok := protectPath(home, p)
-		if !ok {
-			continue
-		}
+	for _, abs := range protect {
 		if abs == "/" {
 			return true
 		}

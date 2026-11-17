@@ -29,10 +29,9 @@ func collectProtectedIDs(home string, protect []string) *protectedIDs {
 	for _, entry := range denyPrefixes {
 		ids.addChain(home, strings.Split(entry, "/"), ReasonDenylisted, true)
 	}
-	for _, p := range protect {
-		abs, ok := protectPath(home, p)
-		if !ok || abs == "/" {
-			continue
+	for _, abs := range protect {
+		if abs == "/" {
+			continue // already refused lexically; Authorize checked entries are clean
 		}
 		ids.addChain("", strings.Split(abs[1:], "/"), ReasonUserProtected, true)
 	}
