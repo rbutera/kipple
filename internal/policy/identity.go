@@ -15,6 +15,14 @@ type fileID struct{ dev, ino uint64 }
 type protectedIDs struct {
 	objects   map[fileID]string // the protected path itself
 	ancestors map[fileID]string // directories that contain a protected path
+	stats     map[string]statResult
+}
+
+// statResult memoises one lstat within a single Authorize call, since many
+// denylist prefixes share parents such as Library/Application Support.
+type statResult struct {
+	fi  fs.FileInfo
+	err error
 }
 
 // collectProtectedIDs lstats every non-glob denylist prefix under home and
@@ -24,6 +32,7 @@ func collectProtectedIDs(home string, protect []string) *protectedIDs {
 	ids := &protectedIDs{
 		objects:   map[fileID]string{},
 		ancestors: map[fileID]string{},
+		stats:     map[string]statResult{},
 	}
 	// Denylist first, so a path that is both is reported as denylisted.
 	for _, entry := range denyPrefixes {
@@ -48,8 +57,13 @@ func (ids *protectedIDs) addChain(base string, segs []string, reason string, glo
 			return
 		}
 		cur += "/" + seg
-		fi, err := lstat(cur)
-		if err != nil {
+		st, cached := ids.stats[cur]
+		if !cached {
+			st.fi, st.err = lstat(cur)
+			ids.stats[cur] = st
+		}
+		fi := st.fi
+		if st.err != nil {
 			return
 		}
 		id, ok := identityOf(fi)
