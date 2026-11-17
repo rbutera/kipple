@@ -21,3 +21,9 @@ kipple is an MIT macOS disk cleaner for AI-tool and developer junk. Go module `g
 - Small commits with descriptive messages after each logical unit. Do not push; the orchestrator pushes.
 - Dependencies: cobra, Bubble Tea + bubbles + lipgloss, `invopop/jsonschema`, `santhosh-tekuri/jsonschema` (tests), `BurntSushi/toml`, Fyne (gui tag only). Ask before adding anything else.
 - Do not spawn review or verification subagents. Implement, run the gates, commit, report facts. The orchestrator owns review.
+
+## Toolchain gotchas
+
+- Always run `GOTOOLCHAIN=local go mod tidy` / `go get`. Without it Go downloads 1.24 and silently bumps `go.mod`. The module stays on `go 1.23`.
+- The interactive shell on this machine wraps `golangci-lint` and hides its exit code. Call `/opt/homebrew/bin/golangci-lint` or `command golangci-lint` directly when you need the real status; `make` already does.
+- Use `command make check` if your shell reports `make: function definition file not found`.
