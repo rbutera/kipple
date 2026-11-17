@@ -49,6 +49,9 @@ const (
 	ReasonGitUnchecked = "git_unchecked"
 	// ReasonOwnerRunning: the owning app or process is running (wave 3).
 	ReasonOwnerRunning = "owner_running"
+	// ReasonScanPartial: part of the item could not be read or sat on another
+	// volume, so its contents were not fully inspected. Never pre-selected.
+	ReasonScanPartial = "scan_partial"
 	// ReasonContainsProtected: something inside the item is denylisted or
 	// user-protected (listed in protected_paths).
 	ReasonContainsProtected = "contains_protected"
@@ -65,7 +68,7 @@ var baseReasons = []string{
 	ReasonTierReview, ReasonTierManual, ReasonTierInfo, ReasonTooRecent,
 	ReasonProjectActive, ReasonGitDirty, ReasonGitUnpushed, ReasonGitNoUpstream,
 	ReasonGitNotARepo, ReasonGitUnavailable, ReasonGitUnchecked,
-	ReasonOwnerRunning, ReasonContainsProtected,
+	ReasonOwnerRunning, ReasonScanPartial, ReasonContainsProtected,
 }
 
 // Reasons returns every item reason, including "refused:" plus each policy

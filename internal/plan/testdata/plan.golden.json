@@ -90,6 +90,7 @@
       "selected": false,
       "reasons": [
         "tier_info",
+        "scan_partial",
         "contains_protected"
       ],
       "protected_paths": [

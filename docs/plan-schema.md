@@ -65,7 +65,7 @@ hard-linked file counted once across the whole plan.
 | `reclaimable_bytes` | Allocated bytes excluding files with other hard links. |
 | `file_count` | Files, symlinks and other non-directory entries. |
 | `newest_mtime` | Newest modification time inside the item; age conditions use it. |
-| `scan_status` | `complete`, or `partial` when part of the item could not be read or sat on another volume. Sizes then cover only what was readable, and `warnings` says what was skipped. |
+| `scan_status` | `complete`, or `partial` when part of the item could not be read or sat on another volume. Sizes then cover only what was readable, `warnings` says what was skipped, and the item carries reason `scan_partial`. |
 | `selected` | Whether `kipple clean --apply` would move it at this level. |
 | `reasons` | Why it is not selected (empty when selected). See below. |
 | `protected_paths` | Present only when something inside the item is protected: up to five item-relative paths. |
@@ -93,7 +93,8 @@ when it carries none.
 | `git_unavailable` | `git` could not be run. |
 | `git_unchecked` | The git condition was not evaluated. Builds without git checking (the wave 2 read-only CLI) put it on every project artifact, which is therefore never selected. |
 | `owner_running` | The app or tool that owns the item is running. |
-| `contains_protected` | Something inside the item is denylisted or protected by your config, such as a `.env` file, a key, or a `.git` folder inside `node_modules`. See `protected_paths`. |
+| `scan_partial` | Part of the item could not be read, or sat on another volume, so kipple could not inspect everything inside it. Such items are never pre-selected, since an unread folder could hide something protected. See the item's `warnings`. |
+| `contains_protected` | Something inside the item cannot be regenerated or is protected by your config: a `.env` or `.env.*` file, a keychain, a Photos library, a KeePass `.kdbx` file, anything under a denylisted location, the same file as a protected one through a hard link, or a `.git` folder inside a project artifact such as `node_modules`. See `protected_paths`. Regenerable files that are only refused as item paths, such as `cacert.pem` in a virtualenv or a worktree's `.git` file, do not count. |
 | `refused:<reason>` | The safety policy refused the path itself. `<reason>` is a policy reason: `symlink_in_path`, `different_device`, `name_mismatch` and the rest of the list in the policy package. Such items are shown so you can see what kipple declined to touch; they have no sizes. |
 
 Paths the policy refuses because they are denylisted, protected by config,

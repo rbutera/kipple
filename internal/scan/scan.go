@@ -421,6 +421,10 @@ func (s *scanner) decide(c *candidate, idle map[string]bool) {
 				reasons = append(reasons, plan.ReasonGitUnchecked)
 			}
 		}
+		// An item that was not fully inspected may hide something protected.
+		if it.ScanStatus == plan.ScanPartial {
+			reasons = append(reasons, plan.ReasonScanPartial)
+		}
 		if res.ProtectedCount > 0 && r.Tier != rules.TierInfo {
 			reasons = append(reasons, plan.ReasonContainsProtected)
 		}

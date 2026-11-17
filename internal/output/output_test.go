@@ -37,7 +37,7 @@ func fixturePlan(level string) plan.Plan {
 			AllocatedBytes: alloc, ReclaimableBytes: alloc, FileCount: 3, NewestMtime: mt, ScanStatus: plan.ScanComplete,
 			Selected: selected, Reasons: append([]string{}, reasons...)}
 	}
-	partial := item("caches.user", "safe", "Library/Caches/partial", 4096, true)
+	partial := item("caches.user", "safe", "Library/Caches/partial", 4096, false, plan.ReasonScanPartial)
 	partial.ScanStatus = plan.ScanPartial
 	env := item("caches.user", "safe", "Library/Caches/withenv", 8192, false, plan.ReasonContainsProtected)
 	env.ProtectedPaths = []string{".env"}
@@ -47,7 +47,7 @@ func fixturePlan(level string) plan.Plan {
 	nm.Git = &plan.Git{State: plan.GitUnchecked}
 	return plan.Plan{
 		SchemaVersion: 1, GeneratedAt: mt, KippleVersion: "test", Home: home, Level: level,
-		Totals: plan.Totals{ListedCount: 5, ListedBytes: 4_320_120_000 + 12288, SelectedCount: 2, SelectedBytes: 1_504_096, ReclaimableBytes: 1_504_096},
+		Totals: plan.Totals{ListedCount: 5, ListedBytes: 4_320_120_000 + 12288, SelectedCount: 1, SelectedBytes: 1_500_000, ReclaimableBytes: 1_500_000},
 		Rules: []plan.RuleStatus{
 			{ID: "caches.user", Tier: "safe", Status: plan.RulePresent, ItemCount: 3, Bytes: 1_512_288},
 			{ID: "xcode.deriveddata", Tier: "safe", Status: plan.RuleAbsent},

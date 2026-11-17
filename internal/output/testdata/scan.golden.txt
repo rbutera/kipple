@@ -3,7 +3,7 @@ Level: safe
 
 App caches (caches.user, safe)  1.5 MB in 3 items
   [x]     1.5 MB  2sqzl6oahyvx  /tmp/fx/home/Library/Caches/com.example.app
-  [x]     4.1 kB  kf7cqu3dqyot  /tmp/fx/home/Library/Caches/partial  [partial]
+  [ ]     4.1 kB  kf7cqu3dqyot  /tmp/fx/home/Library/Caches/partial  (scan_partial)  [partial]
   [ ]     8.2 kB  vq3rwvutxlnk  /tmp/fx/home/Library/Caches/withenv  (contains_protected)
       protected inside: .env
 
@@ -19,5 +19,5 @@ Warnings:
 
 Nothing found for 1 rule (not installed or empty).
 
-Listed 5 items, 4.3 GB. Selected 2 items, 1.5 MB (1.5 MB reclaimable).
+Listed 5 items, 4.3 GB. Selected 1 item, 1.5 MB (1.5 MB reclaimable).
 Selected total 1.5 MB. Nothing was moved (dry run). Next step: kipple clean --apply

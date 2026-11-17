@@ -307,6 +307,9 @@ func TestPartialItem(t *testing.T) {
 	if it.ScanStatus != plan.ScanPartial || it.SizeBytes != 2*kib || len(it.Warnings) == 0 {
 		t.Fatalf("partial item: %+v", it)
 	}
+	if it.Selected || !slices.Equal(it.Reasons, []string{plan.ReasonScanPartial}) {
+		t.Fatalf("a partial item must never be pre-selected: selected=%v reasons=%v", it.Selected, it.Reasons)
+	}
 }
 
 // Spec scenario "Hard-linked store", across two items.
