@@ -840,10 +840,10 @@
   },
   {
     "id": "simulator.runtimes",
-    "title": "iOS Simulator runtimes",
+    "title": "iOS Simulator devices",
     "tier": "info",
     "roots": [
-      "Library/Developer/CoreSimulator/Profiles/Runtimes"
+      "Library/Developer/CoreSimulator/Devices"
     ],
     "match": {
       "kind": "children"
@@ -858,8 +858,8 @@
         "Simulator"
       ]
     },
-    "owner_command": "xcrun simctl runtime delete <runtime-id>",
-    "what": "Simulator operating system images installed for your user, several gigabytes per iOS version.",
-    "if_removed": "Simulators for that OS version stop working until you download the runtime again, so remove runtimes with Xcode or simctl."
+    "owner_command": "xcrun simctl delete unavailable",
+    "what": "The simulated iPhones, iPads and watches Xcode has created, each holding its installed apps and their data for one OS version.",
+    "if_removed": "Those simulators and every app and file inside them disappear, so let simctl remove the ones whose OS version is no longer installed."
   }
 ]

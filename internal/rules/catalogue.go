@@ -422,13 +422,13 @@ var catalogue = []Rule{
 	},
 	{
 		ID:           "simulator.runtimes",
-		Title:        "iOS Simulator runtimes",
+		Title:        "iOS Simulator devices",
 		Tier:         TierInfo,
-		Roots:        []string{"Library/Developer/CoreSimulator/Profiles/Runtimes"},
+		Roots:        []string{"Library/Developer/CoreSimulator/Devices"},
 		Match:        children,
 		Owner:        ownerSimulator,
-		OwnerCommand: "xcrun simctl runtime delete <runtime-id>",
-		What:         "Simulator operating system images installed for your user, several gigabytes per iOS version.",
-		IfRemoved:    "Simulators for that OS version stop working until you download the runtime again, so remove runtimes with Xcode or simctl.",
+		OwnerCommand: "xcrun simctl delete unavailable",
+		What:         "The simulated iPhones, iPads and watches Xcode has created, each holding its installed apps and their data for one OS version.",
+		IfRemoved:    "Those simulators and every app and file inside them disappear, so let simctl remove the ones whose OS version is no longer installed.",
 	},
 }
