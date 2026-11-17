@@ -201,12 +201,13 @@ func expand(home, p string) (string, error) {
 	}
 }
 
-// protectEntry validates a protect entry and returns it absolute. Globs are
-// rejected rather than matched literally, so a pattern never looks like a
-// protection it is not; "/" is rejected because it would refuse everything.
+// protectEntry validates a protect entry and returns it absolute. Glob
+// metacharacters, including the backslash escape, are rejected rather than
+// matched literally, so a pattern never looks like a protection it is not;
+// "/" is rejected because it would refuse everything.
 func protectEntry(home, p string) (string, error) {
-	if strings.ContainsAny(p, "*?[") {
-		return "", fmt.Errorf("%q: patterns are not supported; list each folder or file to protect", p)
+	if strings.ContainsAny(p, `*?[\`) {
+		return "", fmt.Errorf("%q: patterns and backslashes are not supported; list each folder or file to protect", p)
 	}
 	abs, err := expand(home, p)
 	if err != nil {
