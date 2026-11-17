@@ -175,6 +175,11 @@ func unknownKeyMsg(key string) string {
 // expand turns "~", "~/x", an absolute path or a home-relative path into a
 // clean absolute path.
 func expand(home, p string) (string, error) {
+	for _, r := range p {
+		if r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F) {
+			return "", fmt.Errorf("%q contains the control character %U; write the path without it", p, r)
+		}
+	}
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return "", errors.New("empty path")
