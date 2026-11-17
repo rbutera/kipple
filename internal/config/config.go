@@ -11,6 +11,11 @@
 //	project_roots = ["~/work"]                              # replaces the default project roots
 //	level         = "safe"                                  # or "review"
 //
+// The file must be a regular file of at most 64 KiB. A symlinked
+// config.toml is refused (it is opened with O_NOFOLLOW), as is a FIFO,
+// device or directory at that path, so loading can never hang or read
+// without bound.
+//
 // Any other key is an error that names the key. A project root must be a
 // folder inside home; one on, inside or containing a denylisted location, or
 // a root of any other catalogue rule, is an error naming project_roots.
@@ -19,8 +24,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -68,9 +73,12 @@ func Path(home string) string {
 	return filepath.Join(home, ".config", "kipple", "config.toml")
 }
 
+// MaxSize is the largest config file Load reads.
+const MaxSize = 64 << 10
+
 // Load reads and validates Path(home). A missing file yields Default().
 func Load(home string) (Config, error) {
-	data, err := os.ReadFile(Path(home))
+	data, err := readConfig(Path(home))
 	if errors.Is(err, fs.ErrNotExist) {
 		return Default(), nil
 	}
@@ -78,6 +86,30 @@ func Load(home string) (Config, error) {
 		return Config{}, &Error{Msg: err.Error()}
 	}
 	return Parse(home, data)
+}
+
+// readConfig reads a regular, non-symlinked file of at most MaxSize bytes.
+func readConfig(path string) ([]byte, error) {
+	f, err := openConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (%s); kipple only reads a regular config file", path, fi.Mode().Type())
+	}
+	data, err := io.ReadAll(io.LimitReader(f, MaxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxSize {
+		return nil, fmt.Errorf("%s is larger than %d KiB", path, MaxSize>>10)
+	}
+	return data, nil
 }
 
 // Parse validates TOML config data for home.

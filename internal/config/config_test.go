@@ -3,8 +3,11 @@ package config_test
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/rbutera/kipple/internal/config"
 	"github.com/rbutera/kipple/internal/policy"
@@ -186,4 +189,63 @@ level = "review"
 			}
 		})
 	}
+}
+
+// Load never follows a symlinked config, never blocks on a FIFO, and never
+// reads more than MaxSize bytes.
+func TestLoadRefusesUnsafeFiles(t *testing.T) {
+	cfgRel := ".config/kipple/config.toml"
+	cases := []struct {
+		name  string
+		spec  testutil.Spec
+		setup func(t *testing.T, path string)
+		want  string
+	}{
+		{"Symlinked config", testutil.Spec{
+			Files:    []testutil.File{{Path: "dotfiles/kipple.toml", Content: `level = "review"`}},
+			Symlinks: []testutil.Symlink{{Path: cfgRel, Target: "~/dotfiles/kipple.toml"}},
+		}, nil, "symbolic link"},
+		{"Config symlinked to an endless device", testutil.Spec{
+			Symlinks: []testutil.Symlink{{Path: cfgRel, Target: "/dev/zero"}},
+		}, nil, "symbolic link"},
+		{"FIFO at the config path", testutil.Spec{Dirs: []testutil.Dir{{Path: ".config/kipple"}}},
+			func(t *testing.T, path string) {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}, "not a regular file"},
+		{"Directory at the config path", testutil.Spec{Dirs: []testutil.Dir{{Path: cfgRel}}}, nil, "not a regular file"},
+		{"Oversized config", testutil.Spec{Files: []testutil.File{{Path: cfgRel, Content: strings.Repeat("#", config.MaxSize) + "\n"}}}, nil, "larger than 64 KiB"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := testutil.NewHome(t, tc.spec)
+			path := filepath.Join(home, cfgRel)
+			if tc.setup != nil {
+				tc.setup(t, path)
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := config.Load(home)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				var cerr *config.Error
+				if !errors.As(err, &cerr) || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want a config error containing %q, got %v", tc.want, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("config.Load did not return")
+			}
+		})
+	}
+
+	t.Run("Config of exactly the maximum size loads", func(t *testing.T) {
+		home := homeWithConfig(t, `level = "review"`+"\n"+strings.Repeat("#", config.MaxSize-len(`level = "review"`)-1))
+		cfg, err := config.Load(home)
+		if err != nil || cfg.Level != rules.LevelReview {
+			t.Fatalf("got %+v, %v", cfg, err)
+		}
+	})
 }
