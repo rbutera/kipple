@@ -15,12 +15,12 @@ Waves for the /wave skill. Each wave ends with `make check` green (lint, vet, ra
 
 ## 2. Wave 2: scan, plan, sizing, read-only CLI
 
-- [ ] 2.1 Implement `internal/sizes` (lstat walk, logical and allocated bytes, inode dedupe, partial status on permission errors, context cancellation); verify with fixture tests for hardlink dedupe, symlink not followed, unreadable subdir yields `partial`
-- [ ] 2.2 Implement `internal/plan` types (Plan, Item, RuleStatus, Totals, `SchemaVersion = 1`), stable ID function, JSON encode/decode, JSON Schema generation via `invopop/jsonschema`; verify with golden plan JSON, ID determinism test, and a test that a generated plan validates against the generated schema (`santhosh-tekuri/jsonschema`)
-- [ ] 2.3 Implement `internal/scan` (per-rule workers, root globbing one level, exclusions, children-only, age conditions, `absent` status, selection by level, reasons); verify with fixture tests: default level selects only safe, review level selects review items whose conditions pass, info never selected, absent roots exit 0, fixture checksum unchanged after scan
-- [ ] 2.4 Implement `internal/output` (byte formatting, grouped table, dry-run footer naming `kipple clean --apply`); verify with golden text output for a fixture plan
-- [ ] 2.5 Implement `cmd/kipple` with cobra: root (`--json`, `--level`, euid check, `KIPPLE_HOME`/`KIPPLE_STATE_DIR`), `scan`, `rules`, `explain`, `schema`, `version`, exit code mapping (0/1/2/3/4), JSON error envelope, stdout/stderr discipline; verify with CLI tests that `scan --json` parses, `--bogus` exits 2, stdout has nothing but JSON under `--json`, `explain xcode.deriveddata` shows both sentences
-- [ ] 2.6 Document the plan schema and item reasons in `docs/plan-schema.md`; verify the doc's example validates against `kipple schema plan`
+- [x] 2.1 Implement `internal/sizes` (lstat walk, logical and allocated bytes, inode dedupe, partial status on permission errors, context cancellation); verify with fixture tests for hardlink dedupe, symlink not followed, unreadable subdir yields `partial`
+- [x] 2.2 Implement `internal/plan` types (Plan, Item, RuleStatus, Totals, `SchemaVersion = 1`), stable ID function, JSON encode/decode, JSON Schema generation via `invopop/jsonschema`; verify with golden plan JSON, ID determinism test, and a test that a generated plan validates against the generated schema (`santhosh-tekuri/jsonschema`)
+- [x] 2.3 Implement `internal/scan` (per-rule workers, root globbing one level, exclusions, children-only, age conditions, `absent` status, selection by level, reasons); verify with fixture tests: default level selects only safe, review level selects review items whose conditions pass, info never selected, absent roots exit 0, fixture checksum unchanged after scan
+- [x] 2.4 Implement `internal/output` (byte formatting, grouped table, dry-run footer naming `kipple clean --apply`); verify with golden text output for a fixture plan
+- [x] 2.5 Implement `cmd/kipple` with cobra: root (`--json`, `--level`, euid check, `KIPPLE_HOME`/`KIPPLE_STATE_DIR`), `scan`, `rules`, `explain`, `schema`, `version`, exit code mapping (0/1/2/3/4), JSON error envelope, stdout/stderr discipline; verify with CLI tests that `scan --json` parses, `--bogus` exits 2, stdout has nothing but JSON under `--json`, `explain xcode.deriveddata` shows both sentences
+- [x] 2.6 Document the plan schema and item reasons in `docs/plan-schema.md`; verify the doc's example validates against `kipple schema plan`
 
 ## 3. Wave 3: apply, Trash, receipts, restore, git and process conditions
 
