@@ -150,6 +150,13 @@ level = "review"
 		{"Project root is home", `project_roots = ["~"]`, "project_roots"},
 		{"Project root escapes home", `project_roots = ["~/../other"]`, "project_roots"},
 		{"Project root with glob", `project_roots = ["~/dev/*"]`, "project_roots"},
+		{"Project root with long s aliasing Documents", `project_roots = ["Documentſ"]`, "project_roots"},
+		{"Project root with long s aliasing .ssh", `project_roots = ["~/.ſſh"]`, "project_roots"},
+		{"Project root with long s aliasing Library/Messages", `project_roots = ["Library/Meſſages"]`, "project_roots"},
+		{"Project root with ligature aliasing Library/CloudStorage", `project_roots = ["Library/Cloudﬆorage"]`, "project_roots"},
+		{"Project root with sharp s", `project_roots = ["Library/Meßages"]`, "project_roots"},
+		{"Protect with long s", `protect = ["~/Library/Caches/ſensitive"]`, "protect"},
+		{"Protect with ligature", `protect = ["~/Library/Caches/ﬁle"]`, "protect"},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {

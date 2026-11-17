@@ -12,14 +12,21 @@
 //  2. The path is not home itself (ReasonIsHome) and descends from home,
 //     compared case-sensitively (ReasonOutsideHome).
 //  3. The path is not, is not inside, and does not contain a denylisted
-//     location, compared case-insensitively (ReasonDenylisted).
+//     location, compared with APFS-style Unicode case folding (see fold.go)
+//     (ReasonDenylisted).
 //  4. Likewise for Env.Protect entries from user config (ReasonUserProtected).
+//     Relative entries are home-relative; "/" protects everything.
 //  5. The path is not one of the rule's roots (ReasonIsRuleRoot) and descends
 //     from one of them, outside the rule's exclusions (ReasonOutsideRuleRoots).
 //  6. Every component from home down to the path exists (ReasonMissing), is
 //     not a symlink (ReasonSymlinkInPath), and is on home's device
 //     (ReasonDifferentDevice). Every component above the path must be a
 //     directory. Symlinks are never followed.
+//  7. Identity: no component of the path, nor the path itself, has the same
+//     (dev, ino) as an existing denylist location or Env.Protect entry, and
+//     the path is not a directory containing one (ReasonDenylisted,
+//     ReasonUserProtected). This catches spellings that folding misses, such
+//     as NFC/NFD variants, since APFS resolves them to the same object.
 //
 // Lexical refusals (1 to 5) come before filesystem checks so a denylisted path
 // is refused with ReasonDenylisted whether or not it exists.
@@ -134,13 +141,13 @@ func Authorize(env Env, rule Rule, path string) Decision {
 	if isDenylisted(comps) {
 		return refuse(ReasonDenylisted)
 	}
-	if isProtected(env.Protect, path) {
+	if isProtected(home, env.Protect, path) {
 		return refuse(ReasonUserProtected)
 	}
 	if d := checkRule(rule, comps); !d.Allowed {
 		return d
 	}
-	return checkFilesystem(home, comps)
+	return checkFilesystem(home, comps, collectProtectedIDs(home, env.Protect))
 }
 
 // isCanonicalAbs reports whether p is absolute and already clean.
@@ -148,14 +155,31 @@ func isCanonicalAbs(p string) bool {
 	return p != "" && filepath.IsAbs(p) && filepath.Clean(p) == p && !strings.ContainsRune(p, 0)
 }
 
-// isProtected: the path equals, descends from, or contains a protected path.
-func isProtected(protect []string, path string) bool {
-	lp := strings.ToLower(path)
+// protectPath returns the absolute, clean form of an Env.Protect entry:
+// absolute entries are cleaned and relative ones are joined onto home.
+func protectPath(home, p string) (string, bool) {
+	if p == "" {
+		return "", false
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p), true
+	}
+	return filepath.Join(home, p), true
+}
+
+// isProtected: the path equals, descends from, or contains a protected path,
+// compared with foldName.
+func isProtected(home string, protect []string, path string) bool {
+	lp := foldName(path)
 	for _, p := range protect {
-		if p == "" {
+		abs, ok := protectPath(home, p)
+		if !ok {
 			continue
 		}
-		lq := strings.ToLower(filepath.Clean(p))
+		if abs == "/" {
+			return true
+		}
+		lq := foldName(abs)
 		if lp == lq || strings.HasPrefix(lp, lq+"/") || strings.HasPrefix(lq, lp+"/") {
 			return true
 		}
@@ -197,10 +221,14 @@ func checkRule(rule Rule, comps []string) Decision {
 }
 
 // ParseRoot validates a rule root and splits it into segments. A valid root
-// is home-relative, clean, slash-separated, has no "." or ".." segment, and
-// has at most one segment containing glob metacharacters (and never "**").
+// is home-relative, clean, slash-separated, valid UTF-8 without confusable
+// runes (see ConfusableRune), has no "." or ".." segment, and has at most one
+// segment containing glob metacharacters (and never "**").
 func ParseRoot(root string) ([]string, bool) {
 	if root == "" || strings.HasPrefix(root, "/") || strings.HasPrefix(root, "~") || strings.Contains(root, "**") {
+		return nil, false
+	}
+	if _, bad := ConfusableRune(root); bad {
 		return nil, false
 	}
 	if filepath.ToSlash(filepath.Clean(root)) != root {
@@ -228,12 +256,12 @@ func ParseRoot(root string) ([]string, bool) {
 func hasMeta(s string) bool { return strings.ContainsAny(s, `*?[\`) }
 
 // segmentsMatch matches path segments against pattern segments. Allowing
-// checks (rule roots) are case-sensitive; refusing checks fold case.
+// checks (rule roots) are case-sensitive; refusing checks fold with foldName.
 func segmentsMatch(patterns, segs []string, fold bool) bool {
 	for i, p := range patterns {
 		s := segs[i]
 		if fold {
-			p, s = strings.ToLower(p), strings.ToLower(s)
+			p, s = foldName(p), foldName(s)
 		}
 		if hasMeta(p) {
 			if ok, err := filepath.Match(p, s); err != nil || !ok {
@@ -249,17 +277,18 @@ func segmentsMatch(patterns, segs []string, fold bool) bool {
 // excluded matches a child name against a rule's exclusions, folding case
 // (an exclusion refuses, so it errs towards matching).
 func excluded(patterns []string, name string) bool {
-	ln := strings.ToLower(name)
+	ln := foldName(name)
 	for _, p := range patterns {
-		if ok, err := filepath.Match(strings.ToLower(p), ln); err == nil && ok {
+		if ok, err := filepath.Match(foldName(p), ln); err == nil && ok {
 			return true
 		}
 	}
 	return false
 }
 
-// checkFilesystem lstats every component from home down to the path.
-func checkFilesystem(home string, comps []string) Decision {
+// checkFilesystem lstats every component from home down to the path and
+// compares each with the identities of protected objects.
+func checkFilesystem(home string, comps []string, ids *protectedIDs) Decision {
 	hfi, err := lstat(home)
 	if err != nil {
 		return refuse(ReasonMissing)
@@ -289,6 +318,13 @@ func checkFilesystem(home string, comps []string) Decision {
 		dev, ok := deviceOf(cur, fi)
 		if !ok || dev != homeDev {
 			return refuse(ReasonDifferentDevice)
+		}
+		id, ok := identityOf(fi)
+		if !ok {
+			return refuse(ReasonDifferentDevice)
+		}
+		if reason, hit := ids.refusal(id, i == len(comps)-1); hit {
+			return refuse(reason)
 		}
 		if i < len(comps)-1 && !fi.IsDir() {
 			return refuse(ReasonMissing)

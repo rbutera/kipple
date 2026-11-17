@@ -142,9 +142,13 @@ func unknownKeyMsg(key string) string {
 // clean absolute path.
 func expand(home, p string) (string, error) {
 	p = strings.TrimSpace(p)
-	switch {
-	case p == "":
+	if p == "" {
 		return "", errors.New("empty path")
+	}
+	if r, bad := policy.ConfusableRune(p); bad {
+		return "", fmt.Errorf("%q contains %U, which macOS treats as a different letter when comparing names; write the path with plain letters", p, r)
+	}
+	switch {
 	case p == "~":
 		return home, nil
 	case strings.HasPrefix(p, "~/"):

@@ -4,7 +4,8 @@ import "strings"
 
 // denyPrefixes are home-relative locations refused along with everything
 // beneath them and every ancestor that contains them. Segments may use
-// filepath.Match globs. Matching folds case (APFS is case-insensitive).
+// filepath.Match globs. Matching uses foldName (APFS folds case and some
+// Unicode letters), and the filesystem phase also compares identities.
 //
 // This list is a constant of the program. User config can add protections
 // (Env.Protect) but can never remove an entry. docs/safety.md is checked

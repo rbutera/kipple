@@ -7,3 +7,6 @@ import "io/fs"
 // device is unknown on non-unix platforms, so every path is refused with
 // ReasonDifferentDevice. kipple targets macOS.
 func device(fs.FileInfo) (uint64, bool) { return 0, false }
+
+// identityOf is unknown on non-unix platforms.
+func identityOf(fs.FileInfo) (fileID, bool) { return fileID{}, false }
