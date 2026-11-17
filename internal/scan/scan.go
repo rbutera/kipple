@@ -305,6 +305,9 @@ func visibleRefusal(reason string) bool {
 	return false
 }
 
+// measureDir measures an item; tests replace it to simulate a mount.
+var measureDir = sizes.MeasureDir
+
 // measure sizes every listed candidate with a bounded worker pool.
 func (s *scanner) measure(cands []*candidate) error {
 	workers := s.opts.Workers
@@ -369,7 +372,7 @@ func (s *scanner) measureOne(c *candidate) {
 			return hit
 		}
 	}
-	res, err := sizes.MeasureDir(s.ctx, e.Dir, opts)
+	res, err := measureDir(s.ctx, e.Dir, opts)
 	if err != nil && res.Status == "" {
 		res.Status = sizes.StatusPartial
 		res.Warnings = append(res.Warnings, "could not be measured: "+err.Error())
@@ -411,7 +414,9 @@ func (s *scanner) decide(c *candidate, idle map[string]bool) {
 		reasons = append(reasons, plan.ReasonTierInfo) // unknown tier: never selected
 	}
 	if !refused {
-		if days := r.Conditions.MinAgeDays; days > 0 && s.now.Sub(res.NewestMtime) < time.Duration(days)*24*time.Hour {
+		// A partial walk cannot prove the item old enough: the unread part
+		// may hold newer files.
+		if days := r.Conditions.MinAgeDays; days > 0 && (it.ScanStatus == plan.ScanPartial || s.now.Sub(res.NewestMtime) < time.Duration(days)*24*time.Hour) {
 			reasons = append(reasons, plan.ReasonTooRecent)
 		}
 		if r.Match.Kind == rules.MatchProjectArtifact {
@@ -427,6 +432,9 @@ func (s *scanner) decide(c *candidate, idle map[string]bool) {
 		// An item that was not fully inspected may hide something protected.
 		if it.ScanStatus == plan.ScanPartial {
 			reasons = append(reasons, plan.ReasonScanPartial)
+		}
+		if len(res.Mounts) > 0 {
+			reasons = append(reasons, plan.ReasonContainsMount)
 		}
 		if res.ProtectedCount > 0 && r.Tier != rules.TierInfo {
 			reasons = append(reasons, plan.ReasonContainsProtected)

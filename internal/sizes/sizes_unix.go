@@ -150,6 +150,7 @@ func (w *walker) entry(fd int, rel, name string, depth int, inProtected bool) er
 		dev = deviceHook(p, dev)
 	}
 	if dev != w.dev {
+		w.r.Mounts = append(w.r.Mounts, p)
 		w.r.warn("%s: on another volume, not measured", p)
 		return nil
 	}

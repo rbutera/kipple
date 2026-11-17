@@ -110,6 +110,9 @@ func TestStopsAtDeviceChange(t *testing.T) {
 	if r.Status != StatusPartial || r.LogicalBytes != 1024 {
 		t.Fatalf("status=%s logical=%d", r.Status, r.LogicalBytes)
 	}
+	if len(r.Mounts) != 1 || r.Mounts[0] != "mnt" {
+		t.Fatalf("mounts=%v", r.Mounts)
+	}
 	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "another volume") {
 		t.Fatalf("warnings=%v", r.Warnings)
 	}

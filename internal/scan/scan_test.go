@@ -13,6 +13,7 @@ import (
 	"github.com/rbutera/kipple/internal/plan/plantest"
 	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/rules"
+	"github.com/rbutera/kipple/internal/sizes"
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
@@ -45,6 +46,14 @@ func fixtureSpec() testutil.Spec {
 	file("Library/Caches/partial/ok", 2*kib, old) // partial: locked subdir
 	file("Library/Caches/partial/locked/x", kib, old)
 	spec.Dirs = append(spec.Dirs, testutil.Dir{Path: "Library/Caches/partial/locked", Unreadable: true})
+	// An unreadable subfolder hiding a .env, and one inside an aged rule.
+	file("Library/Caches/hiddenenv/ok", kib, old)
+	file("Library/Caches/hiddenenv/locked/.env", 10, old)
+	spec.Dirs = append(spec.Dirs, testutil.Dir{Path: "Library/Caches/hiddenenv/locked", Unreadable: true})
+	file(".claude/debug/partialold/ok.txt", kib, old)
+	file(".claude/debug/partialold/locked/x.txt", kib, old)
+	spec.Dirs = append(spec.Dirs, testutil.Dir{Path: ".claude/debug/partialold/locked", Unreadable: true})
+	dir(".claude/debug/partialold", old)
 	file("Library/Logs/app/log.txt", 3*kib, old)
 	file("elsewhere/big", 256*kib, old)
 	spec.Symlinks = append(spec.Symlinks, testutil.Symlink{Path: "Library/Caches/link", Target: "~/elsewhere"})
@@ -219,10 +228,10 @@ func TestScanIsReadOnly(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	// The locked directory cannot be snapshotted; checksum everything else
 	// plus the locked directory's own metadata.
-	before := testutil.Checksum(t, home+"/dev") + testutil.Checksum(t, home+"/Library/Logs") + testutil.Checksum(t, home+"/.claude")
+	before := testutil.Checksum(t, home+"/dev") + testutil.Checksum(t, home+"/Library/Logs") + testutil.Checksum(t, home+"/.codex")
 	lockedBefore, _ := os.Lstat(home + "/Library/Caches/partial/locked")
 	runScan(t, home, rules.LevelReview)
-	after := testutil.Checksum(t, home+"/dev") + testutil.Checksum(t, home+"/Library/Logs") + testutil.Checksum(t, home+"/.claude")
+	after := testutil.Checksum(t, home+"/dev") + testutil.Checksum(t, home+"/Library/Logs") + testutil.Checksum(t, home+"/.codex")
 	lockedAfter, _ := os.Lstat(home + "/Library/Caches/partial/locked")
 	if before != after || !lockedBefore.ModTime().Equal(lockedAfter.ModTime()) {
 		t.Fatal("scan changed the fixture")
@@ -413,3 +422,39 @@ func TestDefaultLevelSelectsOnlySafe(t *testing.T) {
 }
 
 func TestAbsentRoots(t *testing.T) { t.Run("No Xcode installed", scenarioAbsentRoots) }
+
+// Red-team finding: any partial walk leaves the item unselected, even when
+// the unread part hides a .env, and cannot prove an age condition.
+func TestPartialWalksAreNeverSelected(t *testing.T) {
+	home := testutil.NewHome(t, fixtureSpec())
+	items := byRel(t, runScan(t, home, rules.LevelReview), home)
+	env := items["Library/Caches/hiddenenv"]
+	if env.Selected || env.ScanStatus != plan.ScanPartial || !slices.Equal(env.Reasons, []string{plan.ReasonScanPartial}) {
+		t.Errorf("unreadable folder hiding .env: selected=%v status=%s reasons=%v", env.Selected, env.ScanStatus, env.Reasons)
+	}
+	aged := items[".claude/debug/partialold"]
+	if aged.Selected || !slices.Equal(aged.Reasons, []string{plan.ReasonTooRecent, plan.ReasonScanPartial}) {
+		t.Errorf("partial walk must not satisfy min age: selected=%v reasons=%v", aged.Selected, aged.Reasons)
+	}
+}
+
+// Red-team finding: a volume mounted inside an item gets contains_mount and
+// is never selected. A real mount is impossible in a test, so the measure
+// hook reports one.
+func TestMountInsideItem(t *testing.T) {
+	home := testutil.NewHome(t, fixtureSpec())
+	orig := measureDir
+	t.Cleanup(func() { measureDir = orig })
+	measureDir = func(ctx context.Context, dir *os.File, o sizes.Options) (sizes.Result, error) {
+		r, err := orig(ctx, dir, o)
+		if strings.HasSuffix(dir.Name(), "/Library/Caches/com.example.app") {
+			r.Mounts = append(r.Mounts, "mnt")
+			r.Status = sizes.StatusPartial
+		}
+		return r, err
+	}
+	it := byRel(t, runScan(t, home, ""), home)["Library/Caches/com.example.app"]
+	if it.Selected || !slices.Equal(it.Reasons, []string{plan.ReasonScanPartial, plan.ReasonContainsMount}) {
+		t.Fatalf("item with a mount inside: selected=%v reasons=%v", it.Selected, it.Reasons)
+	}
+}

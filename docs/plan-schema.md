@@ -85,8 +85,8 @@ when it carries none.
 | `tier_review` | A `review` item at level `safe`. Re-scan with `--level review` to select it. |
 | `tier_manual` | A `manual` item. Never selected; moved only when its ID is passed to `--only`. |
 | `tier_info` | An `info` item. Measured only; kipple never moves it. Use `owner_command`. |
-| `too_recent` | Newer than the rule's minimum age (for example 7 days for agent debug logs, 14 for installers in Downloads, 90 for Xcode device support). |
-| `project_active` | A file in the project outside its artifact folders changed within the idle window (30 days). |
+| `too_recent` | Newer than the rule's minimum age (for example 7 days for agent debug logs, 14 for installers in Downloads, 90 for Xcode device support), or the age could not be proven because the scan of the item was partial. |
+| `project_active` | A file in the project outside its artifact folders changed within the idle window (30 days), or the project could not be read completely, so it could not be proven idle. |
 | `git_dirty` | The project has uncommitted changes. |
 | `git_unpushed` | The project has commits its upstream does not. |
 | `git_no_upstream` | The project's branch has no upstream. |
@@ -95,6 +95,7 @@ when it carries none.
 | `git_unchecked` | The git condition was not evaluated. Builds without git checking (the wave 2 read-only CLI) put it on every project artifact, which is therefore never selected. |
 | `owner_running` | The app or tool that owns the item is running. |
 | `scan_partial` | Part of the item could not be read, or sat on another volume, so kipple could not inspect everything inside it. Such items are never pre-selected, since an unread folder could hide something protected. See the item's `warnings`. |
+| `contains_mount` | Another volume is mounted somewhere inside the item. kipple never crosses into it and never selects the item, since moving it would take the mounted volume with it. The item also carries `scan_partial`. |
 | `contains_protected` | Something inside the item cannot be regenerated or is protected by your config: a `.env` or `.env.*` file, a keychain, a Photos library, a KeePass `.kdbx` file, anything under a denylisted location, the same file as a protected one through a hard link, or a `.git` folder inside a project artifact such as `node_modules`. See `protected_paths`. Regenerable files that are only refused as item paths, such as `cacert.pem` in a virtualenv or a worktree's `.git` file, do not count. |
 | `refused:<reason>` | The safety policy refused the path itself. `<reason>` is a policy reason: `symlink_in_path`, `different_device`, `name_mismatch` and the rest of the list in the policy package. Such items are shown so you can see what kipple declined to touch; they have no sizes. |
 

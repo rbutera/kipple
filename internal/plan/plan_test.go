@@ -193,7 +193,7 @@ func TestReasonsClosedSet(t *testing.T) {
 	}
 	for _, r := range []string{"tier_review", "tier_manual", "tier_info", "too_recent", "project_active", "git_dirty",
 		"git_unpushed", "git_no_upstream", "git_not_a_repo", "git_unavailable", "git_unchecked", "owner_running",
-		"scan_partial", "contains_protected", "refused:symlink_in_path", "refused:denylisted"} {
+		"scan_partial", "contains_mount", "contains_protected", "refused:symlink_in_path", "refused:denylisted"} {
 		if !seen[r] {
 			t.Errorf("missing reason %q", r)
 		}

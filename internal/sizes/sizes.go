@@ -68,6 +68,10 @@ type Result struct {
 	// protected entries; ProtectedCount counts all of them.
 	Protected      []string
 	ProtectedCount int
+	// Mounts lists root-relative paths where another volume is mounted
+	// inside the root; the walk did not cross into them, and they also make
+	// the result partial.
+	Mounts []string
 	// Shared holds every non-directory inode with more than one link that
 	// was counted, so callers can dedupe across items.
 	Shared map[Inode]Usage

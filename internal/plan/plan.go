@@ -52,6 +52,9 @@ const (
 	// ReasonScanPartial: part of the item could not be read or sat on another
 	// volume, so its contents were not fully inspected. Never pre-selected.
 	ReasonScanPartial = "scan_partial"
+	// ReasonContainsMount: another volume is mounted inside the item. Never
+	// selected: moving the item would move or unmount that volume.
+	ReasonContainsMount = "contains_mount"
 	// ReasonContainsProtected: something inside the item is denylisted or
 	// user-protected (listed in protected_paths).
 	ReasonContainsProtected = "contains_protected"
@@ -68,7 +71,7 @@ var baseReasons = []string{
 	ReasonTierReview, ReasonTierManual, ReasonTierInfo, ReasonTooRecent,
 	ReasonProjectActive, ReasonGitDirty, ReasonGitUnpushed, ReasonGitNoUpstream,
 	ReasonGitNotARepo, ReasonGitUnavailable, ReasonGitUnchecked,
-	ReasonOwnerRunning, ReasonScanPartial, ReasonContainsProtected,
+	ReasonOwnerRunning, ReasonScanPartial, ReasonContainsMount, ReasonContainsProtected,
 }
 
 // Reasons returns every item reason, including "refused:" plus each policy
