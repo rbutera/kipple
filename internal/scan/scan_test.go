@@ -54,8 +54,19 @@ func fixtureSpec() testutil.Spec {
 	file("Library/pnpm/store/v3/pkg", 512*kib, old)
 	dir("Library/pnpm/store/v3", old)
 
+	// Regenerable files whose names are denylisted only as item paths.
+	file(".cache/uv/archive-v0/abc/certifi/cacert.pem", kib, old)
+	dir(".cache/uv/archive-v0/abc/certifi", old)
+	dir(".cache/uv/archive-v0/abc", old)
+	file("dev/py/pyproject.toml", 10, old)
+	file("dev/py/.venv/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem", kib, old)
+	file(".codex/worktrees/wt1/.git", 40, old) // a worktree's .git is a file
+	file(".codex/worktrees/wt1/main.go", 10, old)
+
 	// review
+	file("go/pkg/mod/github.com/x/testdata/key.pem", 100, old)
 	file("go/pkg/mod/github.com/x/y.go", 4*kib, old)
+	dir("go/pkg/mod/github.com/x/testdata", old)
 	dir("go/pkg/mod/github.com/x", old)
 	dir("go/pkg/mod/github.com", old)
 
@@ -355,5 +366,26 @@ func TestHomeErrors(t *testing.T) {
 	cancel()
 	if _, err := Run(ctx, Options{Env: policy.Env{Home: home}}); err == nil {
 		t.Fatal("cancelled scan must fail")
+	}
+}
+
+// Review finding: regenerable descendants such as certifi's cacert.pem, Go
+// test keys and a worktree's .git file must not make an item unselectable.
+func TestRegenerableDescendantsDoNotBlock(t *testing.T) {
+	home := testutil.NewHome(t, fixtureSpec())
+	items := byRel(t, runScan(t, home, rules.LevelReview), home)
+	venv := items["dev/py/.venv"]
+	if !slices.Equal(venv.Reasons, []string{plan.ReasonGitUnchecked}) || len(venv.ProtectedPaths) != 0 {
+		t.Errorf("venv with cacert.pem: reasons %v protected %v, want only the wave 2 git placeholder", venv.Reasons, venv.ProtectedPaths)
+	}
+	if uv := items[".cache/uv/archive-v0"]; !uv.Selected {
+		t.Errorf("uv cache with cacert.pem not selected: %+v", uv.Reasons)
+	}
+	if gomod := items["go/pkg/mod/github.com"]; !gomod.Selected {
+		t.Errorf("go module cache with testdata/key.pem not selected at review: %+v", gomod.Reasons)
+	}
+	wt := items[".codex/worktrees/wt1"]
+	if wt.Path == "" || !slices.Equal(wt.Reasons, []string{plan.ReasonTierManual}) || len(wt.ProtectedPaths) != 0 {
+		t.Errorf("codex worktree with a .git file: %+v", wt)
 	}
 }

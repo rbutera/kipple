@@ -39,10 +39,11 @@ type Usage struct{ Logical, Allocated int64 }
 // Options configure a walk.
 type Options struct {
 	// Protected, when set, is called for every entry below the root with its
-	// root-relative slash path, its name and identity. Returning true records
+	// root-relative slash path, its name, identity and whether it is a
+	// directory. Returning true records
 	// the entry in Result.Protected. Entries below a protected directory are
 	// still measured but not reported again.
-	Protected func(rel, name string, dev, ino uint64) bool
+	Protected func(rel, name string, dev, ino uint64, isDir bool) bool
 	// MaxProtected caps Result.Protected (DefaultMaxProtected when zero).
 	MaxProtected int
 	// SkipDir, when set, is called for every directory below the root;

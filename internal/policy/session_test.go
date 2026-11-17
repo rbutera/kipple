@@ -162,7 +162,7 @@ func TestGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
-	g := s.Guard(home + "/Library/Caches/app")
+	g := s.Guard(cachesRule, home+"/Library/Caches/app")
 	netrc, err := os.Lstat(home + "/.netrc")
 	if err != nil {
 		t.Fatal(err)
@@ -171,32 +171,52 @@ func TestGuard(t *testing.T) {
 	cases := []struct {
 		rel, name string
 		dev, ino  uint64
+		dir       bool
 		want      string
 	}{
-		{"x/.env", ".env", 0, 0, ReasonDenylisted},
-		{"x/.ENV.local", ".ENV.local", 0, 0, ReasonDenylisted},
-		{".git", ".git", 0, 0, ReasonDenylisted},
-		{"a/id_rsa.pub", "id_rsa.pub", 0, 0, ReasonDenylisted},
-		{"a/cert.PEM", "cert.PEM", 0, 0, ReasonDenylisted},
-		{"vault.kdbx", "vault.kdbx", 0, 0, ReasonDenylisted},
-		{"keep", "keep", 0, 0, ReasonUserProtected},
-		{"KEEP/inner", "inner", 0, 0, ReasonUserProtected},
-		{"innocent", "innocent", nid.dev, nid.ino, ReasonDenylisted},
-		{"plain/file.txt", "file.txt", 0, 0, ""},
-		{"keeper", "keeper", 0, 0, ""},
+		{"x/.env", ".env", 0, 0, false, ReasonDenylisted},
+		{"x/.ENV.local", ".ENV.local", 0, 0, false, ReasonDenylisted},
+		{"vault.kdbx", "vault.kdbx", 0, 0, false, ReasonDenylisted},
+		{"login.keychain-db", "login.keychain-db", 0, 0, false, ReasonDenylisted},
+		{"Old.photoslibrary", "Old.photoslibrary", 0, 0, true, ReasonDenylisted},
+		{"keep", "keep", 0, 0, true, ReasonUserProtected},
+		{"KEEP/inner", "inner", 0, 0, false, ReasonUserProtected},
+		{"innocent", "innocent", nid.dev, nid.ino, false, ReasonDenylisted},
+		// Regenerable content that only refuses a path naming it.
+		{".git", ".git", 0, 0, true, ""},
+		{"wt/.git", ".git", 0, 0, false, ""},
+		{"pip/_vendor/certifi/cacert.pem", "cacert.pem", 0, 0, false, ""},
+		{"x/testdata/key.p12", "key.p12", 0, 0, false, ""},
+		{"x/testdata/id_rsa", "id_rsa", 0, 0, false, ""},
+		{"x/id_ed25519.pub", "id_ed25519.pub", 0, 0, false, ""},
+		{"x/.envrc", ".envrc", 0, 0, false, ""},
+		{"plain/file.txt", "file.txt", 0, 0, false, ""},
+		{"keeper", "keeper", 0, 0, true, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.rel, func(t *testing.T) {
-			got, hit := g.Check(tc.rel, tc.name, tc.dev, tc.ino)
+			got, hit := g.Check(tc.rel, tc.name, tc.dev, tc.ino, tc.dir)
 			if got != tc.want || hit != (tc.want != "") {
 				t.Fatalf("Check(%q) = %q %v, want %q", tc.rel, got, hit, tc.want)
 			}
 		})
 	}
 	// A denylist prefix below the item is found by path.
-	g2 := s.Guard(home + "/Library/Application Support")
-	if r, hit := g2.Check("Claude/x", "x", 0, 0); !hit || r != ReasonDenylisted {
+	g2 := s.Guard(cachesRule, home+"/Library/Application Support")
+	if r, hit := g2.Check("Claude/x", "x", 0, 0, false); !hit || r != ReasonDenylisted {
 		t.Fatalf("prefix below item: %q %v", r, hit)
+	}
+	// Inside a project artifact, a .git directory is protected (an artifact
+	// never legitimately holds a repository); a .git file is not.
+	ga := s.Guard(nodeModulesRule, home+"/dev/app/node_modules")
+	if r, hit := ga.Check("dep/.git", ".git", 0, 0, true); !hit || r != ReasonDenylisted {
+		t.Fatalf(".git directory in an artifact: %q %v", r, hit)
+	}
+	if _, hit := ga.Check("dep/.git", ".git", 0, 0, false); hit {
+		t.Fatal(".git file in an artifact must not be protected")
+	}
+	if _, hit := ga.Check("certifi/cacert.pem", "cacert.pem", 0, 0, false); hit {
+		t.Fatal("*.pem in an artifact must not be protected")
 	}
 }
 

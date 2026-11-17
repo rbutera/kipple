@@ -121,7 +121,7 @@ func TestProtectedDescendants(t *testing.T) {
 		files = append(files, testutil.File{Path: p, Content: "x"})
 	}
 	home := testutil.NewHome(t, testutil.Spec{Files: files})
-	r := measure(t, home+"/c", Options{Protected: func(rel, name string, _, _ uint64) bool {
+	r := measure(t, home+"/c", Options{Protected: func(rel, name string, _, _ uint64, _ bool) bool {
 		return name == ".env" || name == ".git"
 	}})
 	if r.ProtectedCount != 7 || len(r.Protected) != DefaultMaxProtected {

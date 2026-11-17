@@ -360,9 +360,9 @@ func (s *scanner) measureOne(c *candidate) {
 	defer func() { _ = e.Dir.Close() }()
 	opts := sizes.Options{}
 	if c.guard {
-		g := s.sess.Guard(c.path)
-		opts.Protected = func(rel, name string, dev, ino uint64) bool {
-			_, hit := g.Check(rel, name, dev, ino)
+		g := s.sess.Guard(s.rules[c.rule], c.path)
+		opts.Protected = func(rel, name string, dev, ino uint64, isDir bool) bool {
+			_, hit := g.Check(rel, name, dev, ino, isDir)
 			return hit
 		}
 	}

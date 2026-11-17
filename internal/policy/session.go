@@ -41,6 +41,9 @@ type Entry struct {
 // contain something the policy protects. Build one with Session.Guard.
 type Guard struct {
 	ids *protectedIDs
+	// artifact is set for project artifact items, where a .git directory
+	// is protected: an artifact never legitimately contains a repository.
+	artifact bool
 	// rems are the denylist prefixes and user protections that lie strictly
 	// below the item, as item-relative folded segments, with their reason.
 	rems []guardRem
@@ -51,18 +54,27 @@ type guardRem struct {
 	reason string
 }
 
-// foldedComponents are denyComponents folded once for Guard.Check.
-var foldedComponents = func() []string {
-	out := make([]string, len(denyComponents))
-	for i, c := range denyComponents {
+// descendantComponents are the deny components that also refuse an item
+// when they appear anywhere inside it: secrets and personal libraries that
+// cannot be regenerated. The other deny components (.git, .envrc, *.pem,
+// *.p12, id_rsa*, id_ed25519*) still refuse a path that names them, but
+// below an item they are routinely regenerable content (certifi's
+// cacert.pem in every virtualenv, test keys in the Go module cache, the .git
+// file of a worktree), so they do not make the item unselectable.
+var descendantComponents = []string{".env", ".env.*", "*.keychain*", "*.photoslibrary", "*.kdbx"}
+
+// foldedDescendantComponents are descendantComponents folded once.
+var foldedDescendantComponents = func() []string {
+	out := make([]string, len(descendantComponents))
+	for i, c := range descendantComponents {
 		out[i] = foldName(c)
 	}
 	return out
 }()
 
 // newGuard builds the Guard for item (absolute, clean, below home).
-func newGuard(env Env, ids *protectedIDs, item string) *Guard {
-	g := &Guard{ids: ids}
+func newGuard(env Env, ids *protectedIDs, rule Rule, item string) *Guard {
+	g := &Guard{ids: ids, artifact: rule != nil && rule.RuleMatchKind() == MatchProjectArtifact}
 	if !strings.HasPrefix(item, env.Home+"/") {
 		return g
 	}
@@ -97,17 +109,25 @@ func newGuard(env Env, ids *protectedIDs, item string) *Guard {
 }
 
 // Check reports whether an entry inside the item is protected: rel is its
-// item-relative slash path, name its last component, and dev and ino its
-// identity. It returns the refusal reason (denylisted or user_protected).
-func (g *Guard) Check(rel, name string, dev, ino uint64) (string, bool) {
+// item-relative slash path, name its last component, dev and ino its
+// identity, and isDir whether it is a directory. It returns the refusal
+// reason (denylisted or user_protected). An entry is protected when its name
+// matches an irreplaceable-secret pattern (descendantComponents), when it is
+// a .git directory inside a project artifact, when it lies at or below a
+// denylist prefix or user protection, or when it is the same object as an
+// existing protected location.
+func (g *Guard) Check(rel, name string, dev, ino uint64, isDir bool) (string, bool) {
 	if g == nil {
 		return "", false
 	}
 	fn := foldName(name)
-	for _, pat := range foldedComponents {
+	for _, pat := range foldedDescendantComponents {
 		if ok, err := filepath.Match(pat, fn); err != nil || ok {
 			return ReasonDenylisted, true
 		}
+	}
+	if g.artifact && isDir && fn == ".git" {
+		return ReasonDenylisted, true
 	}
 	if len(g.rems) > 0 {
 		segs := strings.Split(rel, "/")

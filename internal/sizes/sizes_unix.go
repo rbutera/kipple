@@ -154,7 +154,7 @@ func (w *walker) entry(fd int, rel, name string, depth int, inProtected bool) er
 		return nil
 	}
 	protected := inProtected
-	if !inProtected && w.opts.Protected != nil && w.opts.Protected(p, name, dev, st.Ino) {
+	if !inProtected && w.opts.Protected != nil && w.opts.Protected(p, name, dev, st.Ino, st.Mode&unix.S_IFMT == unix.S_IFDIR) {
 		protected = true
 		w.r.ProtectedCount++
 		if len(w.r.Protected) < w.opts.MaxProtected {

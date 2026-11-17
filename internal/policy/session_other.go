@@ -36,4 +36,4 @@ func (s *Session) Open(path string) (Entry, error) {
 }
 
 // Guard returns nil: Open always fails here, so nothing is measured.
-func (s *Session) Guard(string) *Guard { return nil }
+func (s *Session) Guard(Rule, string) *Guard { return nil }

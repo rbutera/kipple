@@ -215,9 +215,9 @@ func (s *Session) Open(path string) (Entry, error) {
 }
 
 // Guard returns the protected-descendant checker for item (an absolute
-// path below home), used while measuring the item.
-func (s *Session) Guard(item string) *Guard {
-	return newGuard(s.env, s.ids, item)
+// path below home) of rule, used while measuring the item.
+func (s *Session) Guard(rule Rule, item string) *Guard {
+	return newGuard(s.env, s.ids, rule, item)
 }
 
 // walkResult holds the descriptors a walk leaves open.
