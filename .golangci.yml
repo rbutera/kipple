@@ -1,0 +1,51 @@
+# golangci-lint v2 configuration.
+# gosimple is part of staticcheck in v2; gofmt and goimports are formatters.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+    - gosec
+  settings:
+    # misspell runs without a locale: the project writes British English.
+    gosec:
+      excludes:
+        # kipple reads and stats user-chosen paths by design; every path is
+        # gated by internal/policy, not by gosec's taint heuristic.
+        - G304
+        - G703
+        # git and lsappinfo are exec'd with argument vectors, never a shell.
+        - G204
+        # syscall.Stat_t field widths differ by platform; conversions are deliberate.
+        - G115
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling
+    rules:
+      # Fixture builders create temp files with ordinary permissions.
+      - path: _test\.go
+        linters:
+          - gosec
+      - path: internal/testutil/
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/rbutera/kipple

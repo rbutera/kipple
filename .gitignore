@@ -4,3 +4,9 @@
 *.out
 .DS_Store
 .playwright-mcp/
+/coverage.*
+*.prof
+/kipple
+/kipple-gui
+.idea/
+.vscode/
