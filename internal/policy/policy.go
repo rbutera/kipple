@@ -11,6 +11,8 @@
 //     trailing slash): otherwise ReasonNotAbsolute.
 //  2. The path is not home itself (ReasonIsHome) and descends from home,
 //     compared case-sensitively (ReasonOutsideHome).
+//     2a. The rule is movable: info-tier rules are measured only and never
+//     approve anything (ReasonInfoTier).
 //  3. The path is not, is not inside, and does not contain a denylisted
 //     location, compared with APFS-style Unicode case folding (see fold.go)
 //     (ReasonDenylisted).
@@ -52,6 +54,7 @@ const (
 	ReasonMissing          = "missing"
 	ReasonSymlinkInPath    = "symlink_in_path"
 	ReasonDifferentDevice  = "different_device"
+	ReasonInfoTier         = "info_tier"
 )
 
 // Reasons returns every refusal reason Authorize can produce.
@@ -67,6 +70,7 @@ func Reasons() []string {
 		ReasonMissing,
 		ReasonSymlinkInPath,
 		ReasonDifferentDevice,
+		ReasonInfoTier,
 	}
 }
 
@@ -85,22 +89,29 @@ type Env struct {
 // Roots are home-relative, slash-separated, and may contain at most one
 // segment with glob metacharacters (filepath.Match syntax). Excludes are
 // patterns matched against the first path component below a root.
+//
+// RuleMovable is false for info-tier rules, which Authorize always refuses
+// with ReasonInfoTier.
 type Rule interface {
 	RuleID() string
 	RuleRoots() []string
 	RuleExcludes() []string
+	RuleMovable() bool
 }
 
-// StaticRule is a value implementation of Rule.
+// StaticRule is a value implementation of Rule. Info marks an info-tier
+// rule (the zero value is movable).
 type StaticRule struct {
 	ID      string
 	Roots   []string
 	Exclude []string
+	Info    bool
 }
 
 func (r StaticRule) RuleID() string         { return r.ID }
 func (r StaticRule) RuleRoots() []string    { return r.Roots }
 func (r StaticRule) RuleExcludes() []string { return r.Exclude }
+func (r StaticRule) RuleMovable() bool      { return !r.Info }
 
 // Decision is the outcome of Authorize. Reason is empty when Allowed.
 type Decision struct {
@@ -134,6 +145,9 @@ func Authorize(env Env, rule Rule, path string) Decision {
 			return refuse(ReasonIsHome)
 		}
 		return refuse(ReasonOutsideHome)
+	}
+	if rule != nil && !rule.RuleMovable() {
+		return refuse(ReasonInfoTier)
 	}
 	rel := path[len(home)+1:]
 	comps := strings.Split(rel, "/")

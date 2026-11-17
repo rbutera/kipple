@@ -347,6 +347,40 @@ func TestPolicyAgreesWithCatalogue(t *testing.T) {
 	}
 }
 
+// TestInfoRuleNeverAuthorised: the spec says info rules SHALL never be
+// movable, and Authorize is the only approver, so the gate itself refuses a
+// real item under every root of every info rule.
+func TestInfoRuleNeverAuthorised(t *testing.T) {
+	var spec testutil.Spec
+	type probe struct {
+		rule rules.Rule
+		item string
+	}
+	var probes []probe
+	for _, r := range rules.Catalogue() {
+		if r.Tier != rules.TierInfo {
+			continue
+		}
+		if r.RuleMovable() {
+			t.Errorf("%s: info rule reports RuleMovable", r.ID)
+		}
+		for _, root := range r.Roots {
+			item := concreteRoot(root) + "/sample-item"
+			spec.Files = append(spec.Files, testutil.File{Path: item + "/f", Size: 16})
+			probes = append(probes, probe{r, item})
+		}
+	}
+	if len(probes) == 0 {
+		t.Fatal("no info rules in the catalogue")
+	}
+	home := testutil.NewHome(t, spec)
+	for _, p := range probes {
+		if d := policy.Authorize(policy.Env{Home: home}, p.rule, home+"/"+p.item); d.Allowed || d.Reason != policy.ReasonInfoTier {
+			t.Errorf("%s: item %q: want %q, got %+v", p.rule.ID, p.item, policy.ReasonInfoTier, d)
+		}
+	}
+}
+
 func TestCatalogueIsACopy(t *testing.T) {
 	a := rules.Catalogue()
 	a[0].Roots[0] = "Documents"

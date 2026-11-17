@@ -126,6 +126,10 @@ func TestAuthorize(t *testing.T) {
 		{"Exclusion matches regardless of case", Env{Home: home}, cachesRule, p("Library/Caches/CLOUDKIT/state"), ReasonOutsideRuleRoots},
 		{"Rule root matching is case-sensitive", Env{Home: home}, cachesRule, p("library/caches/com.example.app"), ReasonOutsideRuleRoots},
 		{"Nil rule", Env{Home: home}, nil, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+
+		// Requirement: Tier semantics (info rules are never movable).
+		{"Info rule never authorised", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true}, p("Library/Caches/com.example.app"), ReasonInfoTier},
+		{"Info rule refused before filesystem checks", Env{Home: home}, StaticRule{ID: "info.caches", Roots: []string{"Library/Caches"}, Info: true}, p("Library/Caches/never-created"), ReasonInfoTier},
 		{"Rule without roots", Env{Home: home}, StaticRule{ID: "empty"}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
 		{"Absolute rule root authorises nothing", Env{Home: home}, StaticRule{ID: "abs", Roots: []string{home + "/Library/Caches"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
 		{"Dot-dot rule root authorises nothing", Env{Home: home}, StaticRule{ID: "dd", Roots: []string{"Library/../Library/Caches"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
@@ -340,7 +344,7 @@ func TestIsDenylisted(t *testing.T) {
 // Reasons is a closed set: every reason produced by the table above is in it.
 func TestReasonsClosedSet(t *testing.T) {
 	want := []string{"not_absolute", "is_home", "outside_home", "denylisted", "user_protected",
-		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device"}
+		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device", "info_tier"}
 	got := Reasons()
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Reasons() = %v, want %v", got, want)

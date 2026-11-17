@@ -130,6 +130,9 @@ func (r Rule) RuleExcludes() []string { return r.Exclude }
 // Movable reports whether kipple may ever move items of this rule.
 func (r Rule) Movable() bool { return r.Tier != TierInfo }
 
+// RuleMovable implements policy.Rule: info rules are never authorised.
+func (r Rule) RuleMovable() bool { return r.Movable() }
+
 // agentProcesses are the agent CLIs whose working directory blocks a project
 // artifact (reason tool_running).
 var agentProcesses = []string{"claude", "codex", "cursor-agent"}
