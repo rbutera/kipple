@@ -1,0 +1,865 @@
+[
+  {
+    "id": "caches.user",
+    "title": "App caches",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches"
+    ],
+    "exclude": [
+      "com.apple.bird",
+      "CloudKit",
+      "com.apple.cloudkit",
+      "com.apple.icloud*",
+      "Homebrew",
+      "org.swift.swiftpm",
+      "Yarn",
+      "pip",
+      "pypoetry",
+      "go-build",
+      "CocoaPods"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "macOS apps"
+    },
+    "what": "Files that apps keep in your Caches folder to start and load faster, which Apple requires apps to rebuild when missing.",
+    "if_removed": "Apps may start a little slower the first time while they rebuild or re-download what they need, and no documents or settings are lost."
+  },
+  {
+    "id": "logs.user",
+    "title": "App logs",
+    "tier": "safe",
+    "roots": [
+      "Library/Logs"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "macOS apps"
+    },
+    "what": "Diagnostic and activity logs that apps write to your Logs folder.",
+    "if_removed": "You lose old log history that is only useful for troubleshooting, and apps simply start new logs."
+  },
+  {
+    "id": "xcode.deriveddata",
+    "title": "Xcode DerivedData",
+    "tier": "safe",
+    "roots": [
+      "Library/Developer/Xcode/DerivedData"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Xcode",
+      "bundle_ids": [
+        "com.apple.dt.Xcode"
+      ],
+      "processes": [
+        "Xcode"
+      ]
+    },
+    "what": "Build products, indexes and intermediate files Xcode keeps for every project you have opened.",
+    "if_removed": "The next build of each project starts from scratch and Xcode re-indexes it, which can take a few minutes."
+  },
+  {
+    "id": "simulator.caches",
+    "title": "iOS Simulator caches",
+    "tier": "safe",
+    "roots": [
+      "Library/Developer/CoreSimulator/Caches"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "iOS Simulator",
+      "bundle_ids": [
+        "com.apple.iphonesimulator"
+      ],
+      "processes": [
+        "Simulator"
+      ]
+    },
+    "what": "Cached system files the iOS Simulator builds for each runtime so devices boot faster.",
+    "if_removed": "The Simulator rebuilds them the next time it boots a device, so that first boot is slower."
+  },
+  {
+    "id": "swiftpm.cache",
+    "title": "Swift Package Manager cache",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches/org.swift.swiftpm"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Swift Package Manager"
+    },
+    "what": "Downloaded Swift packages and their metadata, shared by Xcode and the swift command.",
+    "if_removed": "Packages are downloaded again the next time a project resolves its dependencies."
+  },
+  {
+    "id": "homebrew.cache",
+    "title": "Homebrew download cache",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches/Homebrew"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Homebrew"
+    },
+    "what": "Bottles, source archives and index files that Homebrew downloaded while installing or upgrading packages.",
+    "if_removed": "Installed packages keep working, and Homebrew downloads files again only when you reinstall or upgrade."
+  },
+  {
+    "id": "npm.cache",
+    "title": "npm cache",
+    "tier": "safe",
+    "roots": [
+      ".npm/_cacache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "npm"
+    },
+    "what": "npm's cache of every package archive it has downloaded.",
+    "if_removed": "The next install fetches packages from the registry again, so it is slower and needs a network connection."
+  },
+  {
+    "id": "pnpm.store",
+    "title": "pnpm store",
+    "tier": "safe",
+    "roots": [
+      "Library/pnpm/store"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "pnpm"
+    },
+    "what": "The shared store that pnpm copies or links every project's packages from.",
+    "if_removed": "Existing node_modules folders keep working, and the next install downloads packages into a fresh store."
+  },
+  {
+    "id": "yarn.cache",
+    "title": "Yarn classic cache",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches/Yarn"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Yarn"
+    },
+    "what": "Yarn 1's offline copy of every package it has downloaded.",
+    "if_removed": "The next yarn install downloads packages again from the registry."
+  },
+  {
+    "id": "bun.cache",
+    "title": "Bun install cache",
+    "tier": "safe",
+    "roots": [
+      ".bun/install/cache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Bun"
+    },
+    "what": "Packages that bun install has downloaded and keeps for reuse across projects.",
+    "if_removed": "The next bun install downloads packages again."
+  },
+  {
+    "id": "pip.cache",
+    "title": "pip cache",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches/pip"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "pip"
+    },
+    "what": "Python packages and built wheels that pip downloaded or compiled.",
+    "if_removed": "pip downloads or rebuilds packages again the next time you install them."
+  },
+  {
+    "id": "uv.cache",
+    "title": "uv cache",
+    "tier": "safe",
+    "roots": [
+      ".cache/uv"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "uv"
+    },
+    "what": "Python packages, wheels and source builds that uv keeps to make environments fast to create.",
+    "if_removed": "Existing environments keep working, and uv downloads or rebuilds packages the next time it needs them."
+  },
+  {
+    "id": "poetry.cache",
+    "title": "Poetry cache",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches/pypoetry/cache",
+      "Library/Caches/pypoetry/artifacts"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Poetry"
+    },
+    "what": "Package metadata and downloaded archives that Poetry caches, not including its virtual environments.",
+    "if_removed": "Poetry downloads package information and archives again on the next install or lock."
+  },
+  {
+    "id": "cargo.registry",
+    "title": "Cargo registry cache and sources",
+    "tier": "safe",
+    "roots": [
+      ".cargo/registry/cache",
+      ".cargo/registry/src"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Cargo"
+    },
+    "what": "Downloaded Rust crate archives and the unpacked source Cargo builds them from.",
+    "if_removed": "Cargo downloads and unpacks crates again the next time a project builds."
+  },
+  {
+    "id": "go.build-cache",
+    "title": "Go build cache",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches/go-build"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Go"
+    },
+    "what": "Compiled packages and test results the Go toolchain reuses to make builds fast.",
+    "if_removed": "The next go build or go test recompiles everything once, so it is slower that time."
+  },
+  {
+    "id": "gradle.caches",
+    "title": "Gradle caches",
+    "tier": "safe",
+    "roots": [
+      ".gradle/caches"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Gradle"
+    },
+    "what": "Dependencies, build outputs and transformed files that Gradle shares across projects.",
+    "if_removed": "The next Gradle build downloads dependencies and rebuilds outputs again, which can take a while."
+  },
+  {
+    "id": "cocoapods.cache",
+    "title": "CocoaPods cache",
+    "tier": "safe",
+    "roots": [
+      "Library/Caches/CocoaPods"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "CocoaPods"
+    },
+    "what": "Pod source code and specs that CocoaPods downloaded.",
+    "if_removed": "The next pod install downloads pods again."
+  },
+  {
+    "id": "editor.cursor",
+    "title": "Cursor caches",
+    "tier": "safe",
+    "roots": [
+      "Library/Application Support/Cursor/Cache",
+      "Library/Application Support/Cursor/CachedData",
+      "Library/Application Support/Cursor/Code Cache",
+      "Library/Application Support/Cursor/GPUCache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Cursor",
+      "bundle_ids": [
+        "com.todesktop.230313mzl4w4u92"
+      ],
+      "processes": [
+        "Cursor"
+      ]
+    },
+    "what": "Web, code and graphics caches the Cursor editor keeps to open windows and extensions faster.",
+    "if_removed": "Cursor rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched."
+  },
+  {
+    "id": "editor.vscode",
+    "title": "VS Code caches",
+    "tier": "safe",
+    "roots": [
+      "Library/Application Support/Code/Cache",
+      "Library/Application Support/Code/CachedData",
+      "Library/Application Support/Code/Code Cache",
+      "Library/Application Support/Code/GPUCache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Visual Studio Code",
+      "bundle_ids": [
+        "com.microsoft.VSCode"
+      ],
+      "processes": [
+        "Code"
+      ]
+    },
+    "what": "Web, code and graphics caches VS Code keeps to open windows and extensions faster.",
+    "if_removed": "VS Code rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched."
+  },
+  {
+    "id": "editor.windsurf",
+    "title": "Windsurf caches",
+    "tier": "safe",
+    "roots": [
+      "Library/Application Support/Windsurf/Cache",
+      "Library/Application Support/Windsurf/CachedData",
+      "Library/Application Support/Windsurf/Code Cache",
+      "Library/Application Support/Windsurf/GPUCache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Windsurf",
+      "bundle_ids": [
+        "com.exafunction.windsurf"
+      ],
+      "processes": [
+        "Windsurf"
+      ]
+    },
+    "what": "Web, code and graphics caches the Windsurf editor keeps to open windows and extensions faster.",
+    "if_removed": "Windsurf rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched."
+  },
+  {
+    "id": "claude.shell-snapshots",
+    "title": "Claude Code shell snapshots",
+    "tier": "safe",
+    "roots": [
+      ".claude/shell-snapshots"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 7,
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Claude Code",
+      "processes": [
+        "claude"
+      ]
+    },
+    "what": "Copies of your shell setup that Claude Code saves when a session starts so its commands run in a familiar environment.",
+    "if_removed": "New sessions save a fresh snapshot, and snapshots older than a week belong to sessions that have ended."
+  },
+  {
+    "id": "claude.debug",
+    "title": "Claude Code debug logs",
+    "tier": "safe",
+    "roots": [
+      ".claude/debug"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 7
+    },
+    "owner": {
+      "name": "Claude Code",
+      "processes": [
+        "claude"
+      ]
+    },
+    "what": "Debug logs Claude Code writes for each session.",
+    "if_removed": "You lose old debug output that is only useful when reporting a Claude Code bug."
+  },
+  {
+    "id": "codex.log",
+    "title": "Codex logs",
+    "tier": "safe",
+    "roots": [
+      ".codex/log"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 7
+    },
+    "owner": {
+      "name": "Codex",
+      "processes": [
+        "codex"
+      ]
+    },
+    "what": "Log files the Codex CLI and app write while they run.",
+    "if_removed": "You lose old log output that is only useful when reporting a Codex bug."
+  },
+  {
+    "id": "go.mod-cache",
+    "title": "Go module cache",
+    "tier": "review",
+    "roots": [
+      "go/pkg/mod"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Go"
+    },
+    "what": "Source code of every Go module your projects have downloaded, the same folder go clean -modcache empties.",
+    "if_removed": "Every Go project downloads its dependencies again on the next build, which needs a network connection and can take a while."
+  },
+  {
+    "id": "xcode.devicesupport",
+    "title": "Xcode device support files",
+    "tier": "review",
+    "roots": [
+      "Library/Developer/Xcode/* DeviceSupport"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 90,
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Xcode",
+      "bundle_ids": [
+        "com.apple.dt.Xcode"
+      ],
+      "processes": [
+        "Xcode"
+      ]
+    },
+    "what": "Debug symbols Xcode copies from each iPhone, iPad or Watch OS version you have connected, kept here when unused for 90 days.",
+    "if_removed": "Xcode copies the symbols again the next time you connect a device on that OS version, which takes several minutes."
+  },
+  {
+    "id": "project.node-modules",
+    "title": "Project node_modules",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        "node_modules"
+      ],
+      "markers": [
+        "package.json"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "Installed JavaScript packages inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The project needs npm, pnpm, Yarn or Bun install before it runs or builds again."
+  },
+  {
+    "id": "project.target",
+    "title": "Project Rust target",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        "target"
+      ],
+      "markers": [
+        "Cargo.toml"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "Rust build output inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The next cargo build of that project compiles everything from scratch."
+  },
+  {
+    "id": "project.venv",
+    "title": "Project Python virtualenv",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        ".venv",
+        "venv"
+      ],
+      "markers": [
+        "pyproject.toml",
+        "requirements.txt"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "A Python virtual environment inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The project needs its virtual environment recreated and packages reinstalled before it runs again."
+  },
+  {
+    "id": "project.next",
+    "title": "Project Next.js build",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        ".next"
+      ],
+      "markers": [
+        "next.config.*"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "Next.js build output and cache inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The next dev server start or build of that project is slower while Next.js rebuilds it."
+  },
+  {
+    "id": "xcode.archives",
+    "title": "Xcode Archives",
+    "tier": "manual",
+    "roots": [
+      "Library/Developer/Xcode/Archives"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Xcode",
+      "bundle_ids": [
+        "com.apple.dt.Xcode"
+      ],
+      "processes": [
+        "Xcode"
+      ]
+    },
+    "what": "App archives Xcode keeps for every build you exported or submitted, including the debug symbols for crash reports.",
+    "if_removed": "You can no longer re-export those builds or read their crash reports unless you kept the debug symbols elsewhere."
+  },
+  {
+    "id": "huggingface.hub",
+    "title": "Hugging Face hub cache",
+    "tier": "manual",
+    "roots": [
+      ".cache/huggingface/hub"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Hugging Face libraries"
+    },
+    "what": "Model weights and datasets downloaded by Hugging Face libraries such as transformers and diffusers.",
+    "if_removed": "Each model downloads again, often several gigabytes, the next time code loads it."
+  },
+  {
+    "id": "codex.worktrees",
+    "title": "Codex worktrees",
+    "tier": "manual",
+    "roots": [
+      ".codex/worktrees"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Codex",
+      "processes": [
+        "codex"
+      ]
+    },
+    "what": "Separate git checkouts that Codex creates so tasks can run in parallel without touching your main checkout.",
+    "if_removed": "Any uncommitted or unpushed work in that checkout leaves your disk with it, and git keeps listing the worktree until you run git worktree prune."
+  },
+  {
+    "id": "downloads.installers",
+    "title": "Old installers in Downloads",
+    "tier": "manual",
+    "roots": [
+      "Downloads"
+    ],
+    "match": {
+      "kind": "extensions",
+      "extensions": [
+        ".dmg",
+        ".pkg",
+        ".iso"
+      ]
+    },
+    "conditions": {
+      "min_age_days": 14
+    },
+    "owner": {
+      "name": "You"
+    },
+    "what": "Disk images and installer packages in your Downloads folder that are more than two weeks old.",
+    "if_removed": "You would need to download an installer again to reinstall that app."
+  },
+  {
+    "id": "ollama.models",
+    "title": "Ollama models",
+    "tier": "info",
+    "roots": [
+      ".ollama/models"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Ollama",
+      "processes": [
+        "ollama"
+      ]
+    },
+    "owner_command": "ollama rm <model>",
+    "what": "Local language models that Ollama downloaded, often several gigabytes each.",
+    "if_removed": "Ollama has to download a model again before you can run it, so remove models with Ollama itself."
+  },
+  {
+    "id": "claude.projects",
+    "title": "Claude Code session history",
+    "tier": "info",
+    "roots": [
+      ".claude/projects"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Claude Code",
+      "processes": [
+        "claude"
+      ]
+    },
+    "owner_command": "set cleanupPeriodDays in ~/.claude/settings.json",
+    "what": "Transcripts of your Claude Code conversations, grouped by project, which also hold the context for resuming a session.",
+    "if_removed": "You can no longer resume or search those conversations, so let Claude Code expire them itself."
+  },
+  {
+    "id": "codex.sessions",
+    "title": "Codex session history",
+    "tier": "info",
+    "roots": [
+      ".codex/sessions"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Codex",
+      "processes": [
+        "codex"
+      ]
+    },
+    "owner_command": "archive or delete old sessions from within Codex",
+    "what": "Recorded Codex sessions, which Codex uses to resume and review past work.",
+    "if_removed": "You can no longer resume or review those sessions, so manage them from Codex itself."
+  },
+  {
+    "id": "docker.raw",
+    "title": "Docker Desktop disk image",
+    "tier": "info",
+    "roots": [
+      "Library/Containers/com.docker.docker/Data/vms/0/data"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Docker Desktop",
+      "bundle_ids": [
+        "com.docker.docker"
+      ],
+      "processes": [
+        "com.docker.backend"
+      ]
+    },
+    "owner_command": "docker system prune",
+    "what": "The single disk image file that holds all of Docker Desktop's images, containers and volumes.",
+    "if_removed": "Every image, container and volume is lost at once, so reclaim space with Docker's own prune commands instead."
+  },
+  {
+    "id": "simulator.runtimes",
+    "title": "iOS Simulator runtimes",
+    "tier": "info",
+    "roots": [
+      "Library/Developer/CoreSimulator/Profiles/Runtimes"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "iOS Simulator",
+      "bundle_ids": [
+        "com.apple.iphonesimulator"
+      ],
+      "processes": [
+        "Simulator"
+      ]
+    },
+    "owner_command": "xcrun simctl runtime delete <runtime-id>",
+    "what": "Simulator operating system images installed for your user, several gigabytes per iOS version.",
+    "if_removed": "Simulators for that OS version stop working until you download the runtime again, so remove runtimes with Xcode or simctl."
+  }
+]
