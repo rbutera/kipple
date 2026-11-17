@@ -132,6 +132,8 @@ func TestAuthorize(t *testing.T) {
 		{"Relative protection is home-relative", Env{Home: home, Protect: []string{"Library/Caches/com.example.keep"}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
 		{"Protection of the filesystem root refuses everything", Env{Home: home, Protect: []string{"/"}}, cachesRule, p("Library/Caches/com.example.app"), ReasonUserProtected},
 		{"Protection matches with Unicode folding", Env{Home: home, Protect: []string{p("Library/Cacheſ/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
+		{"Pattern in a caller-built protection is matched", Env{Home: home, Protect: []string{p("Library/Caches/com.example.k*")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
+		{"Malformed pattern in a protection refuses its siblings", Env{Home: home, Protect: []string{p("Library/Caches/[")}}, cachesRule, p("Library/Caches/com.example.app"), ReasonUserProtected},
 		{"Unrelated protection does not refuse", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.app"), ""},
 
 		// Requirement: Rule roots are kept.

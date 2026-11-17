@@ -34,7 +34,7 @@ func collectProtectedIDs(home string, protect []string) *protectedIDs {
 		if !ok || abs == "/" {
 			continue
 		}
-		ids.addChain("", strings.Split(abs[1:], "/"), ReasonUserProtected, false)
+		ids.addChain("", strings.Split(abs[1:], "/"), ReasonUserProtected, true)
 	}
 	return ids
 }

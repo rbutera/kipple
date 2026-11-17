@@ -223,9 +223,11 @@ func protectPath(home, p string) (string, bool) {
 }
 
 // isProtected: the path equals, descends from, or contains a protected path,
-// compared with foldName.
+// compared segment by segment with foldName. Config rejects patterns, but a
+// caller-built Env may hold one, so a segment with glob metacharacters is
+// matched as a pattern, and a malformed pattern matches everything.
 func isProtected(home string, protect []string, path string) bool {
-	lp := foldName(path)
+	psegs := strings.Split(path[1:], "/")
 	for _, p := range protect {
 		abs, ok := protectPath(home, p)
 		if !ok {
@@ -234,8 +236,14 @@ func isProtected(home string, protect []string, path string) bool {
 		if abs == "/" {
 			return true
 		}
-		lq := foldName(abs)
-		if lp == lq || strings.HasPrefix(lp, lq+"/") || strings.HasPrefix(lq, lp+"/") {
+		qsegs := strings.Split(abs[1:], "/")
+		n := min(len(psegs), len(qsegs))
+		match := true
+		for i := 0; i < n && match; i++ {
+			q, s := foldName(qsegs[i]), foldName(psegs[i])
+			match = q == s || globOverlap(q, s)
+		}
+		if match {
 			return true
 		}
 	}
