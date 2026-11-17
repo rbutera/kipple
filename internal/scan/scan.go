@@ -353,6 +353,9 @@ func (s *scanner) measureOne(c *candidate) {
 		c.item.Warnings = append(c.item.Warnings, "could not be measured: "+reason)
 		return
 	}
+	if dev, ino, ok := policy.Identity(e.Info); ok {
+		c.item.Dev, c.item.Ino = dev, ino
+	}
 	if e.Dir == nil {
 		c.res = sizes.MeasureFile(e.Info)
 		return

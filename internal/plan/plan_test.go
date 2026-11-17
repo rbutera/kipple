@@ -175,6 +175,7 @@ func TestDecodeRejects(t *testing.T) {
 		"other version": strings.Replace(buf.String(), `"schema_version": 1`, `"schema_version": 7`, 1),
 		"trailing data": buf.String() + "{}",
 		"not json":      "nope",
+		"too large":     buf.String()[:len(buf.String())-2] + `, "pad": "` + strings.Repeat("x", MaxDocumentSize) + `"}`,
 	} {
 		if _, err := Decode(strings.NewReader(doc)); err == nil {
 			t.Errorf("%s: decoded", name)

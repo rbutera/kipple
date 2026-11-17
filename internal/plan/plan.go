@@ -143,6 +143,8 @@ type Item struct {
 	Rule             string    `json:"rule"`
 	Tier             string    `json:"tier" jsonschema:"enum=safe,enum=review,enum=manual,enum=info"`
 	Path             string    `json:"path" jsonschema:"description=Absolute path."`
+	Dev              uint64    `json:"dev" jsonschema:"description=st_dev of the item when it was scanned; apply refuses the path if its identity changed. 0 when the item could not be opened."`
+	Ino              uint64    `json:"ino" jsonschema:"description=st_ino of the item when it was scanned; 0 when the item could not be opened."`
 	SizeBytes        int64     `json:"size_bytes" jsonschema:"description=Logical bytes (st_size)."`
 	AllocatedBytes   int64     `json:"allocated_bytes" jsonschema:"description=Bytes on disk (st_blocks*512)."`
 	ReclaimableBytes int64     `json:"reclaimable_bytes" jsonschema:"description=Allocated bytes excluding files with other hard links."`
@@ -198,16 +200,26 @@ func Encode(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-// Decode reads a plan, rejecting unknown fields, trailing data and other
-// schema versions.
+// MaxDocumentSize caps how much Decode reads, so a plan file or stdin cannot
+// make kipple allocate without bound.
+const MaxDocumentSize = 16 << 20
+
+// Decode reads a plan of at most MaxDocumentSize bytes, rejecting unknown
+// fields, trailing data and other schema versions.
 func Decode(r io.Reader) (Plan, error) {
 	var p Plan
-	dec := json.NewDecoder(r)
+	lr := &io.LimitedReader{R: r, N: MaxDocumentSize + 1}
+	dec := json.NewDecoder(lr)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&p); err != nil {
+	err := dec.Decode(&p)
+	more := err == nil && dec.More()
+	if lr.N <= 0 {
+		return Plan{}, fmt.Errorf("plan: document larger than %d bytes", MaxDocumentSize)
+	}
+	if err != nil {
 		return Plan{}, fmt.Errorf("plan: %w", err)
 	}
-	if dec.More() {
+	if more {
 		return Plan{}, fmt.Errorf("plan: trailing data after the document")
 	}
 	if p.SchemaVersion != SchemaVersion {

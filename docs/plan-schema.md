@@ -60,6 +60,7 @@ hard-linked file counted once across the whole plan.
 | `id` | Stable 12-character ID: the first 12 characters of the lower-case, unpadded base32 encoding of `sha256(rule_id + "\x00" + home_relative_path)`. The same layout gives the same ID on every run and machine. |
 | `rule`, `tier` | The rule that offers the item and its tier. |
 | `path` | Absolute path. |
+| `dev`, `ino` | The item's device and inode when it was scanned. Apply refuses a path whose identity has changed since. Both are `0` when the item could not be opened (for example a `refused:symlink_in_path` item). |
 | `size_bytes` | Logical bytes (`st_size`), symlinks never followed. |
 | `allocated_bytes` | Bytes on disk (`st_blocks * 512`). |
 | `reclaimable_bytes` | Allocated bytes excluding files with other hard links. |
@@ -137,6 +138,8 @@ A plan for a small fixture home at level `safe`:
       "rule": "caches.user",
       "tier": "safe",
       "path": "/Users/ada/Library/Caches/com.example.app",
+      "dev": 16777232,
+      "ino": 48211907,
       "size_bytes": 1499820,
       "allocated_bytes": 1503232,
       "reclaimable_bytes": 1503232,
@@ -151,6 +154,8 @@ A plan for a small fixture home at level `safe`:
       "rule": "caches.user",
       "tier": "safe",
       "path": "/Users/ada/Library/Caches/link",
+      "dev": 0,
+      "ino": 0,
       "size_bytes": 0,
       "allocated_bytes": 0,
       "reclaimable_bytes": 0,
@@ -165,6 +170,8 @@ A plan for a small fixture home at level `safe`:
       "rule": "project.node-modules",
       "tier": "review",
       "path": "/Users/ada/dev/site/node_modules",
+      "dev": 16777232,
+      "ino": 51870022,
       "size_bytes": 98304000,
       "allocated_bytes": 119748096,
       "reclaimable_bytes": 20480000,
@@ -180,6 +187,8 @@ A plan for a small fixture home at level `safe`:
       "rule": "ollama.models",
       "tier": "info",
       "path": "/Users/ada/.ollama/models/blobs",
+      "dev": 16777232,
+      "ino": 39004417,
       "size_bytes": 4199991296,
       "allocated_bytes": 4200000000,
       "reclaimable_bytes": 4200000000,

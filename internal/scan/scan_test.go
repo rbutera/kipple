@@ -250,6 +250,13 @@ func TestStableIDs(t *testing.T) {
 			if it.ID != plan.ID(it.Rule, strings.TrimPrefix(it.Path, home+"/")) {
 				t.Fatalf("%s: ID is not plan.ID(rule, rel)", it.Path)
 			}
+			refused := len(it.Reasons) > 0 && strings.HasPrefix(it.Reasons[0], plan.RefusedPrefix)
+			if fi, err := os.Lstat(it.Path); err == nil && !refused {
+				dev, ino, _ := policy.Identity(fi)
+				if it.Dev != dev || it.Ino != ino || ino == 0 {
+					t.Fatalf("%s: recorded identity %d/%d, on disk %d/%d", it.Path, it.Dev, it.Ino, dev, ino)
+				}
+			}
 		}
 		return out
 	}
