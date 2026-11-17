@@ -1,0 +1,363 @@
+package policy
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/rbutera/kipple/internal/testutil"
+)
+
+func TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }
+
+var (
+	cachesRule = StaticRule{
+		ID:      "caches.user",
+		Roots:   []string{"Library/Caches"},
+		Exclude: []string{"com.apple.bird", "CloudKit", "com.apple.cloudkit", "com.apple.icloud*", "Homebrew"},
+	}
+	derivedDataRule = StaticRule{ID: "xcode.deriveddata", Roots: []string{"Library/Developer/Xcode/DerivedData"}}
+	mailRule        = StaticRule{ID: "hypothetical.mail", Roots: []string{"Library/Mail/V10"}}
+	editorRule      = StaticRule{ID: "editor.glob", Roots: []string{"Library/Application Support/*/Cache"}}
+	libraryRule     = StaticRule{ID: "hypothetical.library", Roots: []string{"Library"}}
+	claudeRule      = StaticRule{ID: "hypothetical.claude", Roots: []string{".claude"}}
+	anyRule         = StaticRule{ID: "hypothetical.any", Roots: []string{"Library/Caches", "dev", "Library/Logs"}}
+)
+
+func fixture(t *testing.T) string {
+	t.Helper()
+	return testutil.NewHome(t, testutil.Spec{
+		Files: []testutil.File{
+			{Path: "Library/Caches/com.example.app/blob", Size: 64},
+			{Path: "Library/Caches/com.example.keep/blob", Size: 64},
+			{Path: "Library/Caches/plain.txt", Content: "x"},
+			{Path: "Library/Caches/com.apple.bird/state", Content: "x"},
+			{Path: "Library/Caches/com.apple.icloud.fmfd/state", Content: "x"},
+			{Path: "Library/Caches/CLOUDKIT/state", Content: "x"},
+			{Path: "Library/Developer/Xcode/DerivedData/App-abc/info.plist", Content: "x"},
+			{Path: "Library/Logs/foo/log.txt", Content: "x"},
+			{Path: "Library/Application Support/Cursor/Cache/Cache_Data/f", Content: "x"},
+			{Path: "Library/Mail/V10/MailData/x", Content: "x"},
+			{Path: "Documents/important/report.pdf", Content: "x"},
+			{Path: "dev/app/.env", Content: "SECRET=1"},
+			{Path: "dev/app/node_modules/x/index.js", Content: "x"},
+			{Path: "realdir/child/f", Content: "x"},
+		},
+		Symlinks: []testutil.Symlink{
+			{Path: "Library/Caches/foo", Target: "~/Documents/important"},
+			{Path: "Library/Caches/mid", Target: "~/realdir"},
+			{Path: "Library/Caches/link-to-file", Target: "~/Library/Caches/plain.txt"},
+		},
+	})
+}
+
+func TestAuthorize(t *testing.T) {
+	home := fixture(t)
+	p := func(rel string) string { return home + "/" + rel }
+
+	cases := []struct {
+		name string
+		env  Env
+		rule Rule
+		path string
+		want string // "" means allowed
+	}{
+		// Allowed baselines.
+		{"Allowed cache directory", Env{Home: home}, cachesRule, p("Library/Caches/com.example.app"), ""},
+		{"Allowed file inside a cache child", Env{Home: home}, cachesRule, p("Library/Caches/com.example.app/blob"), ""},
+		{"Allowed regular file as the item", Env{Home: home}, cachesRule, p("Library/Caches/plain.txt"), ""},
+		{"Allowed under one-level glob root", Env{Home: home}, editorRule, p("Library/Application Support/Cursor/Cache/Cache_Data"), ""},
+
+		// Requirement: Home-only.
+		{"Path outside home", Env{Home: home}, StaticRule{ID: "x", Roots: []string{"Library/Caches"}}, "/Library/Caches/x", ReasonOutsideHome},
+		{"Path is a sibling sharing the home prefix", Env{Home: home}, cachesRule, home + "-other/Library/Caches/x", ReasonOutsideHome},
+		{"Path is home itself", Env{Home: home}, cachesRule, home, ReasonIsHome},
+		{"Home prefix with different case is outside home", Env{Home: home}, cachesRule, strings.ToUpper(home) + "/Library/Caches/com.example.app", ReasonOutsideHome},
+
+		// Requirement: No symlink traversal.
+		{"Symlinked cache directory", Env{Home: home}, cachesRule, p("Library/Caches/foo"), ReasonSymlinkInPath},
+		{"Symlink as the item itself", Env{Home: home}, cachesRule, p("Library/Caches/link-to-file"), ReasonSymlinkInPath},
+		{"Symlink in the middle of the path", Env{Home: home}, cachesRule, p("Library/Caches/mid/child"), ReasonSymlinkInPath},
+
+		// Canonical form.
+		{"Relative path", Env{Home: home}, cachesRule, "Library/Caches/com.example.app", ReasonNotAbsolute},
+		{"Dot-dot segments", Env{Home: home}, cachesRule, p("Library/Caches/com.example.app/../../../Documents"), ReasonNotAbsolute},
+		{"Dot-dot that stays under the root", Env{Home: home}, cachesRule, p("Library/Caches/x/../com.example.app"), ReasonNotAbsolute},
+		{"Trailing slash", Env{Home: home}, cachesRule, p("Library/Caches/com.example.app") + "/", ReasonNotAbsolute},
+		{"Trailing slash on a symlink", Env{Home: home}, cachesRule, p("Library/Caches/foo") + "/", ReasonNotAbsolute},
+		{"Double slash", Env{Home: home}, cachesRule, home + "/Library//Caches/com.example.app", ReasonNotAbsolute},
+		{"Dot segment", Env{Home: home}, cachesRule, home + "/Library/./Caches/com.example.app", ReasonNotAbsolute},
+		{"Empty path", Env{Home: home}, cachesRule, "", ReasonNotAbsolute},
+		{"Home not absolute", Env{Home: "relative/home"}, cachesRule, p("Library/Caches/com.example.app"), ReasonNotAbsolute},
+		{"Home empty", Env{}, cachesRule, p("Library/Caches/com.example.app"), ReasonNotAbsolute},
+		{"Home is filesystem root", Env{Home: "/"}, cachesRule, "/Library/Caches/x", ReasonNotAbsolute},
+		{"Home with trailing slash", Env{Home: home + "/"}, cachesRule, p("Library/Caches/com.example.app"), ReasonNotAbsolute},
+
+		// Requirement: Hard-coded denylist.
+		{"Rule points into denylist", Env{Home: home}, mailRule, p("Library/Mail/V10/MailData"), ReasonDenylisted},
+		{"Denylisted rule root itself is denylisted, not is_rule_root", Env{Home: home}, mailRule, p("Library/Mail/V10"), ReasonDenylisted},
+		{"Denylist matches regardless of case", Env{Home: home}, anyRule, p("documents/important"), ReasonDenylisted},
+		{"Ancestor of a denylisted path", Env{Home: home}, libraryRule, p("Library/Application Support"), ReasonDenylisted},
+		{"Ancestor of agent memory", Env{Home: home}, claudeRule, p(".claude"), ReasonDenylisted},
+		{"Dotenv file at any depth", Env{Home: home}, anyRule, p("dev/app/.env"), ReasonDenylisted},
+		{"Dotenv variant at any depth", Env{Home: home}, anyRule, p("Library/Caches/x/.env.local"), ReasonDenylisted},
+		{"Keychain file at any depth", Env{Home: home}, anyRule, p("Library/Caches/x/login.keychain-db"), ReasonDenylisted},
+		{"Photos library at any depth", Env{Home: home}, anyRule, p("Library/Caches/x/Old.photoslibrary"), ReasonDenylisted},
+		{"Denylist wins over missing", Env{Home: home}, anyRule, p("Library/Caches/never-created/.env"), ReasonDenylisted},
+
+		// Requirement: User protections are additive.
+		{"Extra protection honoured", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
+		{"Extra protection covers descendants", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.keep/blob"), ReasonUserProtected},
+		{"Extra protection covers ancestors", Env{Home: home, Protect: []string{p("Library/Caches/com.example.app/blob")}}, cachesRule, p("Library/Caches/com.example.app"), ReasonUserProtected},
+		{"Extra protection matches regardless of case", Env{Home: home, Protect: []string{p("library/caches/COM.EXAMPLE.KEEP")}}, cachesRule, p("Library/Caches/com.example.keep"), ReasonUserProtected},
+		{"Unrelated protection does not refuse", Env{Home: home, Protect: []string{p("Library/Caches/com.example.keep")}}, cachesRule, p("Library/Caches/com.example.app"), ""},
+
+		// Requirement: Rule roots are kept.
+		{"Root is the candidate", Env{Home: home}, cachesRule, p("Library/Caches"), ReasonIsRuleRoot},
+		{"Glob root is the candidate", Env{Home: home}, editorRule, p("Library/Application Support/Cursor/Cache"), ReasonIsRuleRoot},
+
+		// Requirement: Allowlist descent.
+		{"Path not under rule root", Env{Home: home}, derivedDataRule, p("Library/Logs/foo"), ReasonOutsideRuleRoots},
+		{"Rule root prefix is not a path prefix", Env{Home: home}, derivedDataRule, p("Library/Developer/Xcode/DerivedDataX/a"), ReasonOutsideRuleRoots},
+		{"Excluded child of a rule root", Env{Home: home}, cachesRule, p("Library/Caches/com.apple.bird"), ReasonOutsideRuleRoots},
+		{"Excluded child by glob", Env{Home: home}, cachesRule, p("Library/Caches/com.apple.icloud.fmfd"), ReasonOutsideRuleRoots},
+		{"Exclusion matches regardless of case", Env{Home: home}, cachesRule, p("Library/Caches/CLOUDKIT/state"), ReasonOutsideRuleRoots},
+		{"Rule root matching is case-sensitive", Env{Home: home}, cachesRule, p("library/caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Nil rule", Env{Home: home}, nil, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Rule without roots", Env{Home: home}, StaticRule{ID: "empty"}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Absolute rule root authorises nothing", Env{Home: home}, StaticRule{ID: "abs", Roots: []string{home + "/Library/Caches"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Dot-dot rule root authorises nothing", Env{Home: home}, StaticRule{ID: "dd", Roots: []string{"Library/../Library/Caches"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Two glob segments authorise nothing", Env{Home: home}, StaticRule{ID: "g2", Roots: []string{"Library/*/*"}}, p("Library/Caches/com.example.app/blob"), ReasonOutsideRuleRoots},
+		{"Double-star root authorises nothing", Env{Home: home}, StaticRule{ID: "gg", Roots: []string{"Library/**"}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+		{"Dot root authorises nothing", Env{Home: home}, StaticRule{ID: "dot", Roots: []string{"."}}, p("Library/Caches/com.example.app"), ReasonOutsideRuleRoots},
+
+		// Filesystem state.
+		{"Missing path", Env{Home: home}, cachesRule, p("Library/Caches/never-created"), ReasonMissing},
+		{"Path through a regular file", Env{Home: home}, cachesRule, p("Library/Caches/plain.txt/child"), ReasonMissing},
+		{"Home does not exist", Env{Home: home + "-missing"}, StaticRule{ID: "x", Roots: []string{"a"}}, home + "-missing/a/b", ReasonMissing},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Authorize(tc.env, tc.rule, tc.path)
+			if tc.want == "" {
+				if !got.Allowed || got.Reason != "" {
+					t.Fatalf("want allowed, got %+v", got)
+				}
+				return
+			}
+			if got.Allowed || got.Reason != tc.want {
+				t.Fatalf("want refused %q, got %+v", tc.want, got)
+			}
+		})
+	}
+}
+
+// Under a hypothetical ".claude" root, agent memory stays refused while a
+// sibling cache directory is allowed.
+func TestAgentStateUnderDotClaudeRoot(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".claude/projects"}, {Path: ".claude/debug"}}})
+	if got := Authorize(Env{Home: home}, claudeRule, home+"/.claude/projects"); got.Reason != ReasonDenylisted {
+		t.Fatalf("want denylisted, got %+v", got)
+	}
+	if got := Authorize(Env{Home: home}, claudeRule, home+"/.claude/debug"); !got.Allowed {
+		t.Fatalf("want .claude/debug allowed under a .claude root, got %+v", got)
+	}
+}
+
+func TestApplyReauthorisesBeforeMoving(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{
+		Files: []testutil.File{
+			{Path: "Library/Caches/com.example.app/blob", Size: 128},
+			{Path: "Documents/important/report.pdf", Content: "x"},
+		},
+	})
+	env := Env{Home: home}
+	item := home + "/Library/Caches/com.example.app"
+	if d := Authorize(env, cachesRule, item); !d.Allowed {
+		t.Fatalf("scan-time authorisation should pass, got %+v", d)
+	}
+	// Between scan and apply, the item is swapped for a symlink.
+	if err := os.RemoveAll(item); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(home+"/Documents/important", item); err != nil {
+		t.Fatal(err)
+	}
+	if d := Authorize(env, cachesRule, item); d.Allowed || d.Reason != ReasonSymlinkInPath {
+		t.Fatalf("apply-time authorisation: want %q, got %+v", ReasonSymlinkInPath, d)
+	}
+}
+
+func TestDifferentDevice(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{
+		Files: []testutil.File{
+			{Path: "Library/Caches/mounted/data/blob", Content: "x"},
+			{Path: "Library/Caches/local/blob", Content: "x"},
+		},
+	})
+	mount := home + "/Library/Caches/mounted"
+	orig := deviceOf
+	t.Cleanup(func() { deviceOf = orig })
+	// Pretend a volume is mounted at Library/Caches/mounted.
+	deviceOf = func(path string, fi fs.FileInfo) (uint64, bool) {
+		dev, ok := orig(path, fi)
+		if path == mount || strings.HasPrefix(path, mount+"/") {
+			return dev + 1, ok
+		}
+		return dev, ok
+	}
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"Different device", mount + "/data", ReasonDifferentDevice},
+		{"Mount point itself", mount, ReasonDifferentDevice},
+		{"Same device sibling", home + "/Library/Caches/local", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Authorize(Env{Home: home}, cachesRule, tc.path)
+			if tc.want == "" {
+				if !got.Allowed {
+					t.Fatalf("want allowed, got %+v", got)
+				}
+				return
+			}
+			if got.Reason != tc.want {
+				t.Fatalf("want %q, got %+v", tc.want, got)
+			}
+		})
+	}
+
+	deviceOf = func(string, fs.FileInfo) (uint64, bool) { return 0, false }
+	if got := Authorize(Env{Home: home}, cachesRule, home+"/Library/Caches/local"); got.Reason != ReasonDifferentDevice {
+		t.Fatalf("unknown device must refuse, got %+v", got)
+	}
+}
+
+func TestHomeIsSymlink(t *testing.T) {
+	target := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Caches/a/b", Content: "x"}}})
+	link := filepath.Join(filepath.Dir(target), "linked-home")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if got := Authorize(Env{Home: link}, cachesRule, link+"/Library/Caches/a"); got.Reason != ReasonSymlinkInPath {
+		t.Fatalf("want %q, got %+v", ReasonSymlinkInPath, got)
+	}
+}
+
+func TestRunAsRoot(t *testing.T) {
+	err := CheckNotRoot(0)
+	if err == nil || err.Error() != "kipple will not run as root" {
+		t.Fatalf("euid 0: got %v", err)
+	}
+	if err := CheckNotRoot(501); err != nil {
+		t.Fatalf("euid 501: got %v", err)
+	}
+	if os.Geteuid() != 0 {
+		if err := RefuseRoot(); err != nil {
+			t.Fatalf("RefuseRoot as non-root: %v", err)
+		}
+	}
+}
+
+func TestDenylistContainsSpecMinimum(t *testing.T) {
+	// From specs/safety-policy "Hard-coded denylist" and design D3.
+	required := []string{
+		"Documents", "Desktop", "Pictures", "Movies", "Music",
+		"Library/Mobile Documents", "Library/CloudStorage", "Library/Mail", "Library/Messages",
+		"Library/Photos", "Pictures/Photos Library.photoslibrary", "Library/Keychains", "Library/Preferences",
+		"Library/Containers", "Library/Group Containers", "Library/Application Support/MobileSync",
+		".ssh", ".gnupg", ".aws", ".config/op", ".ark",
+		".claude/projects", ".claude/memory", ".claude/plans", ".claude/skills", ".claude/settings*.json",
+		".codex/sessions", ".codex/memory",
+		"**/.env", "**/.env.*", "**/*.keychain*", "**/*.photoslibrary",
+	}
+	have := map[string]bool{}
+	for _, d := range Denylist() {
+		have[d] = true
+	}
+	for _, r := range required {
+		if !have[r] {
+			t.Errorf("denylist is missing %q", r)
+		}
+	}
+}
+
+// Every denylist entry, its descendants and its case variants are refused.
+func TestEveryDenylistEntryRefused(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{})
+	for _, entry := range Denylist() {
+		rel := strings.TrimPrefix(entry, "**/")
+		rel = strings.ReplaceAll(rel, "*", "x")
+		if strings.HasPrefix(entry, "**/") {
+			rel = "Library/Caches/some/" + rel
+		}
+		root := StaticRule{ID: "everything", Roots: []string{strings.Split(rel, "/")[0]}}
+		for _, cand := range []string{rel, rel + "/child", strings.ToUpper(rel)} {
+			got := Authorize(Env{Home: home}, root, home+"/"+cand)
+			if got.Allowed || (got.Reason != ReasonDenylisted && got.Reason != ReasonIsRuleRoot) {
+				t.Errorf("%s: candidate %q got %+v", entry, cand, got)
+			}
+			if !IsDenylisted(cand) {
+				t.Errorf("IsDenylisted(%q) = false for entry %q", cand, entry)
+			}
+		}
+	}
+}
+
+func TestIsDenylisted(t *testing.T) {
+	cases := map[string]bool{
+		"Documents":                   true,
+		"Documents/x":                 true,
+		"documents/x":                 true,
+		"Library":                     true, // contains Library/Mail and others
+		".claude":                     true, // contains .claude/projects
+		".claude/settings.json":       true,
+		".claude/settings.local.json": true,
+		".claude/debug":               false,
+		".claude/shell-snapshots":     false,
+		".claude.json":                true,
+		"Library/Caches":              false,
+		"Library/Caches/com.x":        false,
+		"Library/Logs":                false,
+		"dev/app/.env.production":     true,
+		"dev/app/.envrc":              false,
+		"dev/app/.venv":               false,
+		"dev/app/node_modules":        false,
+		"":                            false,
+	}
+	for rel, want := range cases {
+		if got := IsDenylisted(rel); got != want {
+			t.Errorf("IsDenylisted(%q) = %v, want %v", rel, got, want)
+		}
+	}
+}
+
+// Reasons is a closed set: every reason produced by the table above is in it.
+func TestReasonsClosedSet(t *testing.T) {
+	want := []string{"not_absolute", "is_home", "outside_home", "denylisted", "user_protected",
+		"is_rule_root", "outside_rule_roots", "missing", "symlink_in_path", "different_device"}
+	got := Reasons()
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Reasons() = %v, want %v", got, want)
+	}
+}
+
+func TestParseRoot(t *testing.T) {
+	valid := []string{"Library/Caches", "Library/Application Support/*/Cache", ".npm/_cacache", "dev"}
+	invalid := []string{"", "/abs", "~/x", "a/../b", "a//b", "a/", "./a", ".", "..", "a/*/*", "a/**", "a/[", "a/b\\"}
+	for _, r := range valid {
+		if _, ok := ParseRoot(r); !ok {
+			t.Errorf("ParseRoot(%q) rejected a valid root", r)
+		}
+	}
+	for _, r := range invalid {
+		if _, ok := ParseRoot(r); ok {
+			t.Errorf("ParseRoot(%q) accepted an invalid root", r)
+		}
+	}
+}
