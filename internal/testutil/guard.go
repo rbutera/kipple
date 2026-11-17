@@ -2,24 +2,61 @@
 // against touching the real home folder of the machine it runs on.
 //
 // This file is the only file under internal/ allowed to resolve the real home
-// directory (tools/checkhome enforces that), and it does so only to refuse it.
+// directory, through os.UserHomeDir and os/user (tools/checkhome enforces
+// that), and it does so only to refuse it.
 package testutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// realHomeDir returns the real home directory of the user running the tests.
-func realHomeDir() (string, error) {
-	return os.UserHomeDir()
+// accountHomeDir returns the home directory recorded in the user database
+// for the user running the tests. Unlike os.UserHomeDir it ignores $HOME, so
+// a test that overrides HOME cannot hide the real home from the guard.
+func accountHomeDir() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	if u.HomeDir == "" {
+		return "", errors.New("user database has no home directory for the current user")
+	}
+	return u.HomeDir, nil
+}
+
+// realHomeDirs returns every location the real home might be: $HOME (via
+// os.UserHomeDir) and the user database entry. It fails only when neither
+// can be determined.
+func realHomeDirs() ([]string, error) {
+	var homes []string
+	var errs []error
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		homes = append(homes, h)
+	} else {
+		errs = append(errs, fmt.Errorf("os.UserHomeDir: %v", err))
+	}
+	if h, err := accountHomeDir(); err == nil {
+		if len(homes) == 0 || homes[0] != h {
+			homes = append(homes, h)
+		}
+	} else {
+		errs = append(errs, fmt.Errorf("os/user: %w", err))
+	}
+	if len(homes) == 0 {
+		return nil, errors.Join(errs...)
+	}
+	return homes, nil
 }
 
 // GuardRealHome fails the test unless KIPPLE_HOME and KIPPLE_STATE_DIR are set
-// to locations that are neither the real home folder nor inside it.
+// to locations that are neither the real home folder, inside it, nor an
+// ancestor of it (such as / or /Users).
 func GuardRealHome(t testing.TB) {
 	t.Helper()
 	if err := checkEnv(); err != nil {
@@ -70,8 +107,8 @@ func GuardedMain(m *testing.M) int {
 
 // checkEnv fails closed: if the real home cannot be determined, nothing runs.
 func checkEnv() error {
-	realHome, err := realHomeDir()
-	if err != nil || realHome == "" {
+	realHomes, err := realHomeDirs()
+	if err != nil {
 		return fmt.Errorf("cannot determine the real home directory to guard against it: %v", err)
 	}
 	for _, name := range []string{"KIPPLE_HOME", "KIPPLE_STATE_DIR"} {
@@ -82,8 +119,13 @@ func checkEnv() error {
 		if !filepath.IsAbs(v) {
 			return fmt.Errorf("%s=%q is not absolute", name, v)
 		}
-		if within(v, realHome) {
-			return fmt.Errorf("%s=%q is the real home folder or inside it (%q); tests must use a fixture", name, v, realHome)
+		for _, realHome := range realHomes {
+			if within(v, realHome) {
+				return fmt.Errorf("%s=%q is the real home folder or inside it (%q); tests must use a fixture", name, v, realHome)
+			}
+			if within(realHome, v) {
+				return fmt.Errorf("%s=%q contains the real home folder (%q); tests must use a fixture", name, v, realHome)
+			}
 		}
 	}
 	return nil

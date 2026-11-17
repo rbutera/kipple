@@ -201,10 +201,11 @@ func TestUnreadableDirRestoredForCleanup(t *testing.T) {
 }
 
 func TestGuardRealHome(t *testing.T) {
-	realHome, err := realHomeDir()
+	homes, err := realHomeDirs()
 	if err != nil {
 		t.Fatal(err)
 	}
+	realHome := homes[0]
 	fixture := NewHome(t, Spec{})
 	aliasDir := t.TempDir()
 	alias := filepath.Join(aliasDir, "alias")
@@ -230,6 +231,10 @@ func TestGuardRealHome(t *testing.T) {
 		{"KIPPLE_HOME relative", "relative/home", StateDir(fixture), true},
 		{"KIPPLE_STATE_DIR empty", fixture, "", true},
 		{"KIPPLE_STATE_DIR inside real home", fixture, filepath.Join(realHome, "Library/Application Support/kipple"), true},
+		{"KIPPLE_HOME is an ancestor of real home", filepath.Dir(realHome), StateDir(fixture), true},
+		{"KIPPLE_HOME is filesystem root", "/", StateDir(fixture), true},
+		{"KIPPLE_STATE_DIR is filesystem root", fixture, "/", true},
+		{"KIPPLE_STATE_DIR is an ancestor of real home in other case", fixture, strings.ToUpper(filepath.Dir(realHome)), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,6 +244,32 @@ func TestGuardRealHome(t *testing.T) {
 			GuardRealHome(f)
 			if f.failed != tc.wantFail {
 				t.Fatalf("guard failed=%v, want %v (%s)", f.failed, tc.wantFail, f.msg)
+			}
+		})
+	}
+}
+
+// Overriding HOME must not hide the real home: the guard also consults the
+// user database.
+func TestGuardRealHomeIgnoresHOMEOverride(t *testing.T) {
+	account, err := accountHomeDir()
+	if err != nil {
+		t.Skipf("no user database entry: %v", err)
+	}
+	fixture := NewHome(t, Spec{})
+	t.Setenv("HOME", t.TempDir())
+	for _, tc := range []struct{ name, home string }{
+		{"KIPPLE_HOME equals the account home", account},
+		{"KIPPLE_HOME inside the account home", filepath.Join(account, "fixture")},
+		{"KIPPLE_HOME is an ancestor of the account home", filepath.Dir(account)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KIPPLE_HOME", tc.home)
+			t.Setenv("KIPPLE_STATE_DIR", StateDir(fixture))
+			f := &fakeTB{TB: t}
+			GuardRealHome(f)
+			if !f.failed {
+				t.Fatal("guard passed with HOME overridden")
 			}
 		})
 	}
