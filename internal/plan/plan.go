@@ -216,6 +216,7 @@ func Decode(r io.Reader) (Plan, error) {
 // RulesDocument is the output of kipple rules --json.
 type RulesDocument struct {
 	SchemaVersion int          `json:"schema_version"`
+	Home          string       `json:"home,omitempty" jsonschema:"description=The effective home whose config set the project roots."`
 	Rules         []rules.Rule `json:"rules"`
 }
 
