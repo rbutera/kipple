@@ -1,0 +1,123 @@
+// Package homeguard decides by file identity (st_dev, st_ino), never by
+// path spelling, whether one directory is another, lies inside it, or
+// contains it. kipple uses it to refuse a KIPPLE_HOME that overlaps the real
+// home folder.
+//
+// Spelling cannot decide this on macOS: APFS folds case and Unicode (a long
+// s "ſ" reaches "s", an NFD name reaches its NFC twin) and firmlinks make
+// /System/Volumes/Data/Users/<me> the same directory as /Users/<me>.
+//
+// The package never resolves the real home itself. The CLI and the test
+// guard resolve it and pass it in.
+package homeguard
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+)
+
+// ID is a directory's (st_dev, st_ino).
+type ID struct{ Dev, Ino uint64 }
+
+// Relation is how a candidate directory relates to the real home.
+type Relation int
+
+// Relations, from the candidate's point of view.
+const (
+	Separate Relation = iota // neither contains the other
+	Same                     // the candidate is the real home
+	Inside                   // the candidate lies inside the real home
+	Contains                 // the candidate is an ancestor of the real home
+)
+
+func (r Relation) String() string {
+	switch r {
+	case Same:
+		return "is the real home folder"
+	case Inside:
+		return "is inside the real home folder"
+	case Contains:
+		return "contains the real home folder"
+	default:
+		return "is separate from the real home folder"
+	}
+}
+
+// FS looks up directory identities. System is the real file system; tests
+// substitute stubs to model aliases (firmlinks) that cannot be created in a
+// temp folder.
+type FS struct {
+	// Chain returns the identity of dir followed by the identity of each
+	// ancestor, reached with openat(fd, ".."), up to and including the root.
+	// With nofollow, dir itself is opened with O_NOFOLLOW.
+	Chain func(dir string, nofollow bool) ([]ID, error)
+	// Stat returns the identity of path, following symlinks; ok is false
+	// when path does not exist or a component is not a directory.
+	Stat func(path string) (id ID, ok bool, err error)
+}
+
+// ErrUnsupported is returned by System on platforms without directory
+// identities; callers fail closed.
+var ErrUnsupported = errors.New("directory identities are not available on this platform")
+
+// Relate reports how candidate relates to real, by identity. Any lookup
+// error is returned and the caller must refuse the candidate.
+//
+// It checks, in order: the two have the same identity; the real home's
+// identity is on the candidate's ".." chain (inside); the candidate's
+// identity is on the real home's ".." chain (contains); and, because a
+// firmlink's target is not on the ".." chain of the directory it aliases
+// (".." of /Users/<me>/.. is /, never /System/Volumes/Data), candidate
+// joined with each tail of real's path (<me>, Users/<me>, ...) having the
+// real home's identity (contains).
+func Relate(fsys FS, candidate, real string) (Relation, error) {
+	if fsys.Chain == nil || fsys.Stat == nil {
+		return Separate, errors.New("homeguard: incomplete FS")
+	}
+	c, err := fsys.Chain(candidate, true)
+	if err != nil {
+		return Separate, fmt.Errorf("cannot identify %q: %w", candidate, err)
+	}
+	r, err := fsys.Chain(real, false)
+	if err != nil {
+		return Separate, fmt.Errorf("cannot identify the real home %q: %w", real, err)
+	}
+	if len(c) == 0 || len(r) == 0 {
+		return Separate, errors.New("homeguard: empty identity chain")
+	}
+	if c[0] == r[0] {
+		return Same, nil
+	}
+	if contains(c[1:], r[0]) {
+		return Inside, nil
+	}
+	if contains(r[1:], c[0]) {
+		return Contains, nil
+	}
+	comps := strings.Split(strings.Trim(filepath.Clean(real), "/"), "/")
+	for i := len(comps) - 1; i >= 0; i-- {
+		if comps[i] == "" {
+			continue
+		}
+		p := filepath.Join(append([]string{candidate}, comps[i:]...)...)
+		id, ok, err := fsys.Stat(p)
+		if err != nil {
+			return Separate, fmt.Errorf("cannot identify %q: %w", p, err)
+		}
+		if ok && id == r[0] {
+			return Contains, nil
+		}
+	}
+	return Separate, nil
+}
+
+func contains(ids []ID, id ID) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}

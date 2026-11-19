@@ -275,6 +275,67 @@ func TestGuardRealHomeIgnoresHOMEOverride(t *testing.T) {
 	}
 }
 
+// Spellings that the case-insensitive string check accepts but that name
+// the real home on APFS: the guard must refuse them by identity. The long-s
+// case reads (stats) the machine's real home and changes nothing.
+func TestGuardRealHomeByIdentity(t *testing.T) {
+	homes, err := realHomeDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := NewHome(t, Spec{})
+	t.Run("KIPPLE_HOME is a long s spelling of the real home", func(t *testing.T) {
+		real := homes[0]
+		i := strings.IndexAny(real, "sS")
+		if i < 0 {
+			t.Skip("real home path has no s to respell")
+		}
+		alias := real[:i] + "\u017f" + real[i+1:]
+		if fi, err := os.Stat(alias); err != nil || !fi.IsDir() {
+			t.Skipf("long s does not fold on this volume: %v", err)
+		}
+		t.Setenv("KIPPLE_HOME", alias)
+		t.Setenv("KIPPLE_STATE_DIR", StateDir(fixture))
+		f := &fakeTB{TB: t}
+		GuardRealHome(f)
+		if !f.failed {
+			t.Fatalf("guard passed %q", alias)
+		}
+	})
+
+	// The rest use a stand-in real home in a temp folder.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(base, "Users", "m\u00e9") // stored precomposed (NFC)
+	other := filepath.Join(base, "other")
+	for _, d := range []string{filepath.Join(real, "Documents"), other} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name     string
+		path     string
+		wantFail bool
+	}{
+		{"Separate folder passes", other, false},
+		{"Missing folder under a separate folder passes", filepath.Join(other, "state", "later"), false},
+		{"Long s spelling inside the real home", filepath.Join(base, "U\u017fers", "m\u00e9", "Documents"), true},
+		{"NFD spelling inside the real home", filepath.Join(base, "Users", "me\u0301", "Documents"), true},
+		{"Long s spelling of an ancestor", filepath.Join(base, "U\u017fers"), true},
+		{"Missing folder inside a long s spelling of the real home", filepath.Join(base, "U\u017fers", "m\u00e9", "state"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkIdentity("KIPPLE_HOME", tc.path, real)
+			if (err != nil) != tc.wantFail {
+				t.Fatalf("checkIdentity(%q) = %v, want failure %v", tc.path, err, tc.wantFail)
+			}
+		})
+	}
+}
+
 func TestDirTrasher(t *testing.T) {
 	home := NewHome(t, Spec{
 		Files: []File{

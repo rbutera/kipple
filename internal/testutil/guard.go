@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rbutera/kipple/internal/homeguard"
 )
 
 // accountHomeDir returns the home directory recorded in the user database
@@ -126,7 +128,42 @@ func checkEnv() error {
 			if within(realHome, v) {
 				return fmt.Errorf("%s=%q contains the real home folder (%q); tests must use a fixture", name, v, realHome)
 			}
+			if err := checkIdentity(name, v, realHome); err != nil {
+				return err
+			}
 		}
+	}
+	return nil
+}
+
+// checkIdentity refuses v when it is, lies inside, or contains realHome by
+// (st_dev, st_ino), which catches spellings the string check misses: APFS
+// folds case and Unicode (a long s, an NFD name) and firmlinks alias
+// /System/Volumes/Data/Users/<me> to /Users/<me>. A path that does not
+// exist yet (a state folder created lazily) is checked through its nearest
+// existing ancestor, which must not be the real home or inside it. Any
+// lookup error refuses.
+func checkIdentity(name, v, realHome string) error {
+	p, exact := filepath.Clean(v), true
+	for {
+		if _, err := os.Lstat(p); err == nil {
+			break
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return fmt.Errorf("%s=%q has no existing ancestor to check against the real home folder", name, v)
+		}
+		p, exact = parent, false
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	rel, err := homeguard.Relate(homeguard.System(), p, realHome)
+	if err != nil {
+		return fmt.Errorf("%s=%q cannot be checked against the real home folder (%q), so it is refused: %v", name, v, realHome, err)
+	}
+	if rel == homeguard.Same || rel == homeguard.Inside || (exact && rel == homeguard.Contains) {
+		return fmt.Errorf("%s=%q %s (%q); tests must use a fixture", name, v, rel, realHome)
 	}
 	return nil
 }
