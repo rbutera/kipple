@@ -18,6 +18,10 @@ linters:
     - gosec
   settings:
     # misspell runs without a locale: the project writes British English.
+    misspell:
+      # The spec scenario heading is "Hardlinked store"; tests carry it verbatim.
+      ignore-rules:
+        - hardlinked
     gosec:
       excludes:
         # kipple reads and stats user-chosen paths by design; every path is
