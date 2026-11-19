@@ -369,3 +369,139 @@ func TestSessionCloseDuringWalks(t *testing.T) {
 		t.Fatalf("after Close: %+v", d)
 	}
 }
+
+// Review finding (wave 2 re-review): cmd/ approves a home directory, then
+// pins its identity; if the path later names another directory (an
+// ancestor swapped for a symlink, or home replaced), NewSession,
+// AuthorizeFresh and Authorize refuse with home_identity_mismatch.
+func TestHomeIdentityPinned(t *testing.T) {
+	setup := func(t *testing.T) (base, home, item string, pin *FileIdentity) {
+		t.Helper()
+		testutil.GuardRealHome(t)
+		var err error
+		base, err = filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		home = filepath.Join(base, "a", "home")
+		item = filepath.Join(home, "Library", "Caches", "app")
+		other := filepath.Join(base, "other", "home", "Library", "Caches", "app")
+		for _, d := range []string{item, other} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fi, err := os.Lstat(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dev, ino, ok := Identity(fi)
+		if !ok {
+			t.Fatal("no identity")
+		}
+		return base, home, item, &FileIdentity{Dev: dev, Ino: ino}
+	}
+	// swapParent replaces base/a with a symlink to base/other, so home's path
+	// now names base/other/home.
+	swapParent := func(t *testing.T, base string) {
+		t.Helper()
+		if err := os.Rename(filepath.Join(base, "a"), filepath.Join(base, "a-approved")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(base, "other"), filepath.Join(base, "a")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// replaceHome moves home aside and makes a new directory at its path.
+	replaceHome := func(t *testing.T, base string) {
+		t.Helper()
+		home := filepath.Join(base, "a", "home")
+		if err := os.Rename(home, home+"-approved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(home, "Library", "Caches", "app"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// homeToSymlink replaces home itself with a symlink to another directory.
+	homeToSymlink := func(t *testing.T, base string) {
+		t.Helper()
+		home := filepath.Join(base, "a", "home")
+		if err := os.Rename(home, home+"-approved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(base, "other", "home"), home); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("Unchanged pinned home is accepted", func(t *testing.T) {
+		_, home, item, pin := setup(t)
+		env := Env{Home: home, HomeIdentity: pin}
+		s, err := NewSession(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = s.Close() }()
+		if d := s.Authorize(cachesRule, item); !d.Allowed {
+			t.Fatalf("session: %+v", d)
+		}
+		f, d := s.AuthorizeFresh(cachesRule, item)
+		if !d.Allowed {
+			t.Fatalf("fresh: %+v", d)
+		}
+		_ = f.Close()
+		if d := Authorize(env, cachesRule, item); !d.Allowed {
+			t.Fatalf("authorize: %+v", d)
+		}
+	})
+	for _, sw := range []struct {
+		name   string
+		swap   func(*testing.T, string)
+		reason string // NewSession's refusal
+	}{
+		{"Parent swapped for a symlink", swapParent, ReasonHomeIdentityMismatch},
+		{"Home replaced by another directory", replaceHome, ReasonHomeIdentityMismatch},
+		{"Home replaced by a symlink", homeToSymlink, ReasonSymlinkInPath},
+	} {
+		t.Run(sw.name+" before NewSession", func(t *testing.T) {
+			base, home, item, pin := setup(t)
+			sw.swap(t, base)
+			s, err := NewSession(Env{Home: home, HomeIdentity: pin})
+			defer func() { _ = s.Close() }()
+			var he *HomeError
+			if !errors.As(err, &he) || he.Reason != sw.reason {
+				t.Fatalf("NewSession: %v, want reason %s", err, sw.reason)
+			}
+			if d := s.Authorize(cachesRule, item); d.Allowed || d.Reason != sw.reason {
+				t.Fatalf("session authorize: %+v", d)
+			}
+			if d := Authorize(Env{Home: home, HomeIdentity: pin}, cachesRule, item); d.Allowed {
+				t.Fatalf("authorize allowed after swap: %+v", d)
+			}
+		})
+		t.Run(sw.name+" during a session", func(t *testing.T) {
+			base, home, item, pin := setup(t)
+			s, err := NewSession(Env{Home: home, HomeIdentity: pin})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = s.Close() }()
+			sw.swap(t, base)
+			if f, d := s.AuthorizeFresh(cachesRule, item); d.Allowed || d.Reason != ReasonHomeIdentityMismatch {
+				if f != nil {
+					_ = f.Close()
+				}
+				t.Fatalf("fresh after swap: %+v", d)
+			}
+		})
+	}
+	t.Run("Authorize with a pinned identity that differs", func(t *testing.T) {
+		_, home, item, pin := setup(t)
+		wrong := *pin
+		wrong.Ino++
+		if d := Authorize(Env{Home: home, HomeIdentity: &wrong}, cachesRule, item); d.Allowed || d.Reason != ReasonHomeIdentityMismatch {
+			t.Fatalf("authorize: %+v", d)
+		}
+	})
+}

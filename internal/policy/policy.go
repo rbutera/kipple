@@ -81,6 +81,10 @@ const (
 	ReasonNotRuleItem      = "not_rule_item"
 	ReasonNameMismatch     = "name_mismatch"
 	ReasonInvalidEnv       = "invalid_env"
+	// ReasonHomeIdentityMismatch: Env.HomeIdentity is set and the directory
+	// that Env.Home names now is a different one (an ancestor was swapped
+	// for a symlink, or home itself was replaced, after cmd/ approved it).
+	ReasonHomeIdentityMismatch = "home_identity_mismatch"
 )
 
 // Reasons returns every refusal reason Authorize can produce.
@@ -100,6 +104,7 @@ func Reasons() []string {
 		ReasonNotRuleItem,
 		ReasonNameMismatch,
 		ReasonInvalidEnv,
+		ReasonHomeIdentityMismatch,
 	}
 }
 
@@ -114,10 +119,19 @@ const (
 // KIPPLE_HOME or the real home); the library never resolves it. Protect holds
 // absolute, clean paths from user config that are refused like denylist
 // entries; any other entry makes Authorize refuse everything.
+//
+// HomeIdentity, when set, pins home to the directory cmd/ approved (its
+// KIPPLE_HOME guard checked that object, not a path): if Home names a
+// different directory later, every decision is refused with
+// ReasonHomeIdentityMismatch. cmd/ always sets it.
 type Env struct {
-	Home    string
-	Protect []string
+	Home         string
+	Protect      []string
+	HomeIdentity *FileIdentity
 }
+
+// FileIdentity is a file's (st_dev, st_ino).
+type FileIdentity struct{ Dev, Ino uint64 }
 
 // Rule is the part of a catalogue rule the policy needs. internal/rules.Rule
 // implements it; StaticRule is a plain implementation for tests and callers
@@ -204,6 +218,15 @@ func Authorize(env Env, rule Rule, path string) Decision {
 		return lx.d
 	}
 	home := env.Home
+	if env.HomeIdentity != nil {
+		fi, err := lstat(home)
+		if err != nil {
+			return refuse(ReasonMissing)
+		}
+		if id, ok := identityOf(fi); !ok || (FileIdentity{Dev: id.dev, Ino: id.ino}) != *env.HomeIdentity {
+			return refuse(ReasonHomeIdentityMismatch)
+		}
+	}
 	if fd := checkFilesystem(home, lx.comps, lx.want, collectIDs(home, env.Protect)); !fd.Allowed {
 		return fd
 	}

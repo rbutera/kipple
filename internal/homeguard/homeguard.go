@@ -80,13 +80,29 @@ var ErrUnsupported = errors.New("directory identities are not available on this 
 // /System/Volumes and /System) contains the real home through that volume,
 // even though no tail of the real path names it from there.
 func Relate(fsys FS, candidate, real string) (Relation, error) {
+	rel, _, err := RelateID(fsys, candidate, real)
+	return rel, err
+}
+
+// RelateID is Relate that also returns the identity of the candidate it
+// checked, so a caller can pin exactly the directory that was approved.
+func RelateID(fsys FS, candidate, real string) (Relation, ID, error) {
 	if fsys.Chain == nil || fsys.Stat == nil || fsys.MountPoint == nil {
-		return Separate, errors.New("homeguard: incomplete FS")
+		return Separate, ID{}, errors.New("homeguard: incomplete FS")
 	}
 	c, err := fsys.Chain(candidate, true)
 	if err != nil {
-		return Separate, fmt.Errorf("cannot identify %q: %w", candidate, err)
+		return Separate, ID{}, fmt.Errorf("cannot identify %q: %w", candidate, err)
 	}
+	if len(c) == 0 {
+		return Separate, ID{}, errors.New("homeguard: empty identity chain")
+	}
+	rel, err := relate(fsys, candidate, c, real)
+	return rel, c[0], err
+}
+
+// relate decides the relation given the candidate's identity chain c.
+func relate(fsys FS, candidate string, c []ID, real string) (Relation, error) {
 	r, err := fsys.Chain(real, false)
 	if err != nil {
 		return Separate, fmt.Errorf("cannot identify the real home %q: %w", real, err)

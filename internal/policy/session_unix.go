@@ -37,6 +37,7 @@ type Session struct {
 	env      Env
 	homeFd   int
 	homeDev  uint64
+	homeID   fileID // identity of homeFd
 	homeFail string // filesystem refusal for every path when home is unusable
 	ids      *protectedIDs
 
@@ -83,7 +84,7 @@ func (e *HomeError) Unwrap() error { return e.Err }
 // ends.
 func NewSession(env Env) (*Session, error) {
 	s := &Session{
-		env:    Env{Home: env.Home, Protect: append([]string(nil), env.Protect...)},
+		env:    Env{Home: env.Home, Protect: append([]string(nil), env.Protect...), HomeIdentity: copyIdentity(env.HomeIdentity)},
 		homeFd: -1,
 		dirs:   map[fileID]*dirNames{},
 	}
@@ -129,7 +130,12 @@ func NewSession(env Env) (*Session, error) {
 		_ = unix.Close(fd)
 		return fail(ReasonMissing, err)
 	}
+	if p := env.HomeIdentity; p != nil && (FileIdentity{Dev: hid.dev, Ino: hid.ino}) != *p {
+		_ = unix.Close(fd)
+		return fail(ReasonHomeIdentityMismatch, nil)
+	}
 	s.homeFd = fd
+	s.homeID = hid
 	s.homeDev = dev
 	s.ids = collectIDs(home, s.env.Protect)
 	return s, nil
@@ -271,6 +277,12 @@ func (s *Session) AuthorizeFresh(rule Rule, path string) (*Fresh, Decision) {
 	if s.homeFail != "" {
 		return nil, refuse(s.homeFail)
 	}
+	// The walk starts from homeFd, but apply must also refuse once the path
+	// Home no longer names the approved directory: open it again and
+	// compare with the session's (pinned) identity.
+	if d := s.checkHomeStillPinned(); !d.Allowed {
+		return nil, d
+	}
 	ids := collectIDs(s.env.Home, s.env.Protect)
 	w := s.walk(lx.comps, lx.want, ids, false, false)
 	defer w.close(s.homeFd)
@@ -294,6 +306,30 @@ func (s *Session) AuthorizeFresh(rule Rule, path string) (*Fresh, Decision) {
 		w.parent = -1 // ownership passes to Fresh
 	}
 	return &Fresh{ParentFd: parent, Name: lx.comps[len(lx.comps)-1], Info: w.final}, Decision{Allowed: true}
+}
+
+// checkHomeStillPinned opens Env.Home again (O_NOFOLLOW, O_DIRECTORY) and
+// refuses with ReasonHomeIdentityMismatch unless it is the directory the
+// session opened, which NewSession checked against Env.HomeIdentity.
+func (s *Session) checkHomeStillPinned() Decision {
+	fd, err := openDir(unix.AT_FDCWD, s.env.Home)
+	if err != nil {
+		return refuse(ReasonHomeIdentityMismatch)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	var st unix.Stat_t
+	if err := fstat(fd, &st); err != nil || (fileID{dev: uint64(st.Dev), ino: st.Ino}) != s.homeID { //nolint:unconvert // field widths differ by platform
+		return refuse(ReasonHomeIdentityMismatch)
+	}
+	return Decision{Allowed: true}
+}
+
+func copyIdentity(p *FileIdentity) *FileIdentity {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	return &c
 }
 
 // Identity returns the (st_dev, st_ino) of info from os.Lstat or a Session.

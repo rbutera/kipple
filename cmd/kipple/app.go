@@ -55,6 +55,17 @@ type runtimeEnv struct {
 	// means the real file system.
 	guardFS homeguard.FS
 	isTTY   func(io.Writer) bool
+	// beforeScan, when set, runs after home is resolved and guarded and
+	// before the scan opens it. Tests use it to swap the directory.
+	beforeScan func(home string)
+}
+
+// fs returns the identity lookups, the real file system by default.
+func (rt runtimeEnv) fs() homeguard.FS {
+	if rt.guardFS.Chain == nil || rt.guardFS.Stat == nil || rt.guardFS.MountPoint == nil {
+		return homeguard.System()
+	}
+	return rt.guardFS
 }
 
 // cliError carries an exit code and a machine-readable code.
@@ -266,11 +277,14 @@ func (a *app) emit(v any, human func(io.Writer) error) error {
 type homeEnv struct {
 	home    string
 	fromEnv bool
-	cfg     config.Config
+	// id is the identity of the approved home directory; the scan's policy
+	// session refuses home if its path names another directory by then.
+	id  homeguard.ID
+	cfg config.Config
 }
 
 func (a *app) resolve() (homeEnv, error) {
-	home, fromEnv, err := resolveHome(a.rt)
+	home, fromEnv, id, err := resolveHome(a.rt)
 	if err != nil {
 		return homeEnv{}, err
 	}
@@ -278,7 +292,7 @@ func (a *app) resolve() (homeEnv, error) {
 	if err != nil {
 		return homeEnv{}, fail(codeConfig, "%v", err)
 	}
-	return homeEnv{home: home, fromEnv: fromEnv, cfg: cfg}, nil
+	return homeEnv{home: home, fromEnv: fromEnv, id: id, cfg: cfg}, nil
 }
 
 // effectiveLevel is --level, else the config level, else safe.
@@ -303,82 +317,92 @@ func effectiveRules(cfg config.Config) []rules.Rule {
 //
 // The respelling happens before the KIPPLE_HOME guard, and the guard checks
 // the exact path returned, so nothing after the check changes what was
-// checked.
-func resolveHome(rt runtimeEnv) (string, bool, error) {
+// checked. It also returns the identity of the directory it approved (for
+// KIPPLE_HOME, the very one the guard checked), which the scan pins in
+// policy.Env.HomeIdentity so a later swap of home or an ancestor is
+// refused.
+func resolveHome(rt runtimeEnv) (string, bool, homeguard.ID, error) {
+	var none homeguard.ID
 	h := rt.getenv("KIPPLE_HOME")
 	fromEnv := h != ""
 	if !fromEnv {
 		var err error
 		if h, err = rt.userHome(); err != nil {
-			return "", false, fail(codeHome, "cannot determine the home folder: %v", err)
+			return "", false, none, fail(codeHome, "cannot determine the home folder: %v", err)
 		}
 	}
 	if !filepath.IsAbs(h) {
-		return "", fromEnv, fail(codeHome, "home %q is not an absolute path", h)
+		return "", fromEnv, none, fail(codeHome, "home %q is not an absolute path", h)
 	}
 	resolved, err := filepath.EvalSymlinks(h)
 	if err != nil {
-		return "", fromEnv, fail(codeHome, "home %q cannot be resolved: %v", h, err)
+		return "", fromEnv, none, fail(codeHome, "home %q cannot be resolved: %v", h, err)
 	}
 	resolved = filepath.Clean(resolved)
 	final := onDiskCase(resolved)
 	fi, err := os.Lstat(final)
 	if err != nil || !fi.IsDir() {
-		return "", fromEnv, fail(codeHome, "home %q is not a directory", h)
+		return "", fromEnv, none, fail(codeHome, "home %q is not a directory", h)
 	}
 	if fromEnv {
-		if err := guardRealHome(rt, h, resolved, final); err != nil {
-			return "", fromEnv, err
+		id, err := guardRealHome(rt, h, resolved, final)
+		if err != nil {
+			return "", fromEnv, none, err
 		}
+		return final, fromEnv, id, nil
 	}
-	return final, fromEnv, nil
+	c, err := rt.fs().Chain(final, true)
+	if err != nil || len(c) == 0 {
+		return "", fromEnv, none, fail(codeHome, "home %q cannot be identified: %v", h, err)
+	}
+	return final, fromEnv, c[0], nil
 }
 
 // guardRealHome refuses a KIPPLE_HOME that is the real home folder, lies
-// inside it, or contains it. KIPPLE_HOME exists for fixtures and agents'
-// sandboxes; pointed into the real home (say ~/Documents/OldMac), it would
-// sidestep the denylist, which is relative to home.
+// inside it, or contains it, and returns the identity of the directory it
+// approved. KIPPLE_HOME exists for fixtures and agents' sandboxes; pointed
+// into the real home (say ~/Documents/OldMac), it would sidestep the
+// denylist, which is relative to home.
 //
 // Identity decides, not spelling: final (the path kipple will use) and
 // resolved (before respelling) must be the same directory, and neither may
 // relate to any real home location by (dev, ino) (see homeguard.Relate).
-// The case-insensitive string comparison is kept as an extra refusal; it
-// can only refuse more. It fails closed when the real home cannot be
-// determined or any identity lookup fails.
-func guardRealHome(rt runtimeEnv, given, resolved, final string) error {
+// Every check must have seen the same directory, or it is refused as
+// changed mid-check. The case-insensitive string comparison is kept as an
+// extra refusal; it can only refuse more. It fails closed when the real
+// home cannot be determined or any identity lookup fails.
+func guardRealHome(rt runtimeEnv, given, resolved, final string) (homeguard.ID, error) {
+	var pin homeguard.ID
 	reals, err := rt.realHomes()
 	if err != nil || len(reals) == 0 {
-		return fail(codeHome, "KIPPLE_HOME is set but the real home folder cannot be determined to guard against it: %v", err)
+		return pin, fail(codeHome, "KIPPLE_HOME is set but the real home folder cannot be determined to guard against it: %v", err)
 	}
-	fsys := rt.guardFS
-	if fsys.Chain == nil || fsys.Stat == nil || fsys.MountPoint == nil {
-		fsys = homeguard.System()
-	}
-	// The respelled path must be the very directory that was resolved.
-	if final != resolved {
-		a, errA := fsys.Chain(resolved, true)
-		b, errB := fsys.Chain(final, true)
-		if errA != nil || errB != nil || len(a) == 0 || len(b) == 0 || a[0] != b[0] {
-			return fail(codeHome, "KIPPLE_HOME %q changed identity when respelled as %q; refusing", given, final)
-		}
-	}
+	fsys := rt.fs()
+	pinned := false
 	for _, r := range reals {
 		for _, p := range []string{final, resolved} {
-			rel, err := homeguard.Relate(fsys, p, r)
+			rel, id, err := homeguard.RelateID(fsys, p, r)
 			if err != nil {
-				return fail(codeHome, "KIPPLE_HOME %q cannot be checked against the real home folder, so it is refused: %v", given, err)
+				return pin, fail(codeHome, "KIPPLE_HOME %q cannot be checked against the real home folder, so it is refused: %v", given, err)
 			}
 			if rel != homeguard.Separate {
-				return fail(codeHome, "KIPPLE_HOME %q %s (%s); point it at a separate fixture folder", given, rel, r)
+				return pin, fail(codeHome, "KIPPLE_HOME %q %s (%s); point it at a separate fixture folder", given, rel, r)
+			}
+			// The respelled path must be the very directory that was
+			// resolved, and nothing may swap it while it is checked.
+			if !pinned {
+				pin, pinned = id, true
+			} else if id != pin {
+				return pin, fail(codeHome, "KIPPLE_HOME %q changed identity while it was checked (or when respelled as %q); refusing", given, final)
 			}
 		}
 		for _, p := range []string{given, resolved, final} {
 			if within(p, r) || within(r, p) {
-				return fail(codeHome, "KIPPLE_HOME %q is the real home folder, inside it, or contains it (%s); point it at a separate fixture folder", given, r)
+				return pin, fail(codeHome, "KIPPLE_HOME %q is the real home folder, inside it, or contains it (%s); point it at a separate fixture folder", given, r)
 			}
 		}
 	}
-	return nil
+	return pin, nil
 }
 
 // within reports whether p is root or below it, comparing the given and the
@@ -448,8 +472,13 @@ func storedSpelling(dir, name string) string {
 
 // runScan scans home at the effective level.
 func (a *app) runScan(h homeEnv) (plan.Plan, error) {
+	env := h.cfg.PolicyEnv(h.home)
+	env.HomeIdentity = &policy.FileIdentity{Dev: h.id.Dev, Ino: h.id.Ino}
+	if a.rt.beforeScan != nil {
+		a.rt.beforeScan(h.home)
+	}
 	opts := scan.Options{
-		Env:           h.cfg.PolicyEnv(h.home),
+		Env:           env,
 		Rules:         effectiveRules(h.cfg),
 		Level:         a.effectiveLevel(h.cfg),
 		KippleVersion: version,
@@ -462,6 +491,12 @@ func (a *app) runScan(h homeEnv) (plan.Plan, error) {
 		fmt.Fprint(a.stderr, "\r\033[K")
 	}
 	if err != nil {
+		// Home itself unusable, including a home that is no longer the
+		// directory approved above, is a home error like the guard's.
+		var he *policy.HomeError
+		if errors.As(err, &he) {
+			return plan.Plan{}, fail(codeHome, "%v", err)
+		}
 		return plan.Plan{}, fail(codeScan, "%v", err)
 	}
 	return p, nil
@@ -622,7 +657,7 @@ func (a *app) versionCommand() *cobra.Command {
 			// (spec "Test home override"), so a refused one is an error here
 			// as in every other command.
 			if a.rt.getenv("KIPPLE_HOME") != "" {
-				home, _, err := resolveHome(a.rt)
+				home, _, _, err := resolveHome(a.rt)
 				if err != nil {
 					return err
 				}

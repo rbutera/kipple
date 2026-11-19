@@ -836,3 +836,54 @@ func TestSystemFoldersContainRealHome(t *testing.T) {
 		}
 	}
 }
+
+// Review finding (wave 2 re-review): after the guard approves KIPPLE_HOME,
+// its parent is swapped for a symlink to a stand-in. The scan must refuse
+// (exit 1, code home) instead of walking the stand-in.
+func TestHomeSwappedAfterGuardRefused(t *testing.T) {
+	testutil.GuardRealHome(t)
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(base, "a", "home")
+	standIn := filepath.Join(base, "other", "home")
+	for _, d := range []string{home, filepath.Join(standIn, "Library", "Caches", "com.example.app")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(standIn, "Library", "Caches", "com.example.app", "blob"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KIPPLE_HOME", home)
+	t.Setenv("KIPPLE_STATE_DIR", filepath.Join(base, "state"))
+
+	t.Run("Unswapped home scans", func(t *testing.T) {
+		code, out, _ := cli(t, "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if code != exitOK || p.Home != home {
+			t.Fatalf("exit %d home %q", code, p.Home)
+		}
+	})
+	t.Run("Parent swapped between guard and scan", func(t *testing.T) {
+		rt := testEnv(t)
+		swapped := false
+		rt.beforeScan = func(string) {
+			if err := os.Rename(filepath.Join(base, "a"), filepath.Join(base, "a-approved")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(base, "other"), filepath.Join(base, "a")); err != nil {
+				t.Fatal(err)
+			}
+			swapped = true
+		}
+		code, out, errOut := cliWith(t, rt, "scan", "--json")
+		var env errorEnvelope
+		exactlyOneJSON(t, out, &env)
+		if !swapped || code != exitError || env.Error.Code != codeHome || !strings.Contains(errOut, "home_identity_mismatch") {
+			t.Fatalf("swapped=%v exit %d %+v stderr %q", swapped, code, env, errOut)
+		}
+	})
+}

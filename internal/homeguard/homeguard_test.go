@@ -190,3 +190,18 @@ func TestRelateFirmlinks(t *testing.T) {
 		}
 	})
 }
+
+// RelateID returns the identity of the candidate it checked, which callers
+// pin.
+func TestRelateIDReturnsCheckedIdentity(t *testing.T) {
+	base, real := tree(t, "me")
+	fx := filepath.Join(base, "fixture")
+	rel, id, err := homeguard.RelateID(homeguard.System(), fx, real)
+	if err != nil || rel != homeguard.Separate {
+		t.Fatalf("RelateID: %v %v", rel, err)
+	}
+	c, err := homeguard.System().Chain(fx, true)
+	if err != nil || c[0] != id {
+		t.Fatalf("identity %v, chain %v (%v)", id, c, err)
+	}
+}
