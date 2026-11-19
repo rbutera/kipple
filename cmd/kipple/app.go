@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/rbutera/kipple/internal/config"
 	"github.com/rbutera/kipple/internal/homeguard"
@@ -119,8 +120,9 @@ Environment:
 
 // run executes kipple with args and returns the exit code.
 func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {
-	a := &app{rt: rt, stdout: stdout, stderr: stderr, json: wantsJSON(args)}
+	a := &app{rt: rt, stdout: stdout, stderr: stderr}
 	if err := policy.CheckNotRoot(rt.geteuid()); err != nil {
+		a.json = jsonRequested(args)
 		return a.report(&cliError{exit: exitError, code: codeRoot, msg: err.Error()})
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -135,23 +137,30 @@ func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {
 			// Cobra's own errors (unknown command, bad arguments) are usage errors.
 			ce = &cliError{exit: exitUsage, code: codeUsage, msg: err.Error()}
 		}
+		// Cobra sets a.json when it parses --json in any spelling. A flag
+		// error can stop its parse before --json is reached, so parse again,
+		// leniently, with the same flag parser.
+		a.json = a.json || jsonRequested(args)
 		return a.report(ce)
 	}
 	return exitOK
 }
 
-// wantsJSON finds --json before any "--" so errors raised while parsing
-// flags can still be reported as JSON.
-func wantsJSON(args []string) bool {
-	for _, a := range args {
-		if a == "--" {
-			return false
-		}
-		if a == "--json" || a == "--json=true" {
-			return true
-		}
-	}
-	return false
+// jsonRequested reports whether args set --json, parsed by pflag (the
+// parser cobra uses) with unknown flags ignored, so every spelling pflag
+// accepts (--json, --json=1, --json=t, --json=TRUE) counts and parsing
+// stops at "--". It is used only when cobra's own parse did not finish:
+// the root refusal runs before it, and a flag error can end it early.
+func jsonRequested(args []string) bool {
+	fs := pflag.NewFlagSet("kipple", pflag.ContinueOnError)
+	fs.ParseErrorsWhitelist.UnknownFlags = true
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	var j bool
+	fs.BoolVar(&j, "json", false, "")
+	fs.String("level", "", "")
+	_ = fs.Parse(args)
+	return j
 }
 
 // report prints err to stderr and, with --json, the envelope to stdout.
@@ -204,7 +213,7 @@ func (a *app) rootCommand() *cobra.Command {
 		_ = plan.Encode(a.stdout, helpDocument{Command: c.CommandPath(), Help: buf.String()})
 	})
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErr("%v", err) })
-	root.PersistentFlags().BoolVar(&a.json, "json", a.json, "print one JSON document on stdout")
+	root.PersistentFlags().BoolVar(&a.json, "json", false, "print one JSON document on stdout")
 	root.PersistentFlags().StringVar(&a.level, "level", "", `selection level: "safe" (default, or config level) or "review"`)
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(a.scanCommand(), a.rulesCommand(), a.explainCommand(), a.schemaCommand(), a.versionCommand())

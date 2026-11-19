@@ -182,6 +182,14 @@ func TestUsageErrors(t *testing.T) {
 		{"schema", "bogus", "--json"},
 		{"schema"},
 		{"explain"},
+		// Review finding: valid --json spellings other than the bare flag.
+		{"scan", "--bogus", "--json=1"},
+		{"scan", "--json=1", "--bogus"},
+		{"--json=t", "bogus"},
+		{"--json=TRUE", "scan", "extra"},
+		{"--level", "everything", "--json=1", "scan"},
+		{"scan", "--bogus", "--json=false"},
+		{"scan", "--bogus", "--", "--json"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -192,7 +200,7 @@ func TestUsageErrors(t *testing.T) {
 			if errOut == "" {
 				t.Fatal("no message on stderr")
 			}
-			if wantsJSON(args) {
+			if jsonRequested(args) {
 				var env errorEnvelope
 				exactlyOneJSON(t, out, &env)
 				if env.Error.Code != codeUsage || env.Error.Message == "" {
@@ -225,6 +233,8 @@ func TestStdoutIsOnlyJSON(t *testing.T) {
 		{"scan", "--json", "--help"},
 		{"--json", "--help"},
 		{"help", "scan", "--json"},
+		{"scan", "--json=1"},
+		{"rules", "--json=t"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -330,7 +340,7 @@ func TestRunAsRoot(t *testing.T) {
 		if code != exitError || !strings.Contains(errOut, "kipple will not run as root") {
 			t.Fatalf("%v: exit %d stderr %q", args, code, errOut)
 		}
-		if wantsJSON(args) {
+		if jsonRequested(args) {
 			var env errorEnvelope
 			exactlyOneJSON(t, out, &env)
 			if env.Error.Code != codeRoot || env.Error.Message != "kipple will not run as root" {
