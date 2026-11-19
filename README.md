@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/brand/readme-header.svg" alt="kipple: clears the junk your AI tools and dev toolchains leave behind" width="100%"></p>
+
 # kipple
 
 kipple is an open-source (MIT) macOS disk cleaner for the junk that AI coding
