@@ -95,6 +95,7 @@ func TestRelateFailsClosed(t *testing.T) {
 type stub struct {
 	chains map[string][]homeguard.ID
 	stats  map[string]homeguard.ID
+	mounts map[string]string
 	err    error
 }
 
@@ -114,6 +115,7 @@ func (s stub) fs() homeguard.FS {
 			id, ok := s.stats[p]
 			return id, ok, nil
 		},
+		MountPoint: func(p string) (string, error) { return s.mounts[p], nil },
 	}
 }
 
@@ -134,9 +136,14 @@ func TestRelateFirmlinks(t *testing.T) {
 			"/System/Volumes/Data/Users/me":           {me, users, root},
 			"/System/Volumes/Data/Users/me/Documents": {docs, me, users, root},
 			"/System/Volumes/Data/Users":              {users, root},
-			// The Data volume root is not on /Users/me's ".." chain.
+			// The Data volume root is not on /Users/me's ".." chain, and
+			// neither are its ancestors.
 			"/System/Volumes/Data": {data, sysVol, sys, root},
+			"/System/Volumes":      {sysVol, sys, root},
+			"/System":              {sys, root},
+			"/Library":             {{Dev: 1, Ino: 93}, root},
 		},
+		mounts: map[string]string{"/Users/me": "/System/Volumes/Data"},
 		stats: map[string]homeguard.ID{
 			"/System/Volumes/Data/Users/me": me,
 		},
@@ -149,6 +156,9 @@ func TestRelateFirmlinks(t *testing.T) {
 		{"Firmlink spelling inside the real home", "/System/Volumes/Data/Users/me/Documents", homeguard.Inside},
 		{"Firmlink spelling of an ancestor", "/System/Volumes/Data/Users", homeguard.Contains},
 		{"Data volume root reaches the real home by a firmlink", "/System/Volumes/Data", homeguard.Contains},
+		{"Parent of the home's mount point", "/System/Volumes", homeguard.Contains},
+		{"Grandparent of the home's mount point", "/System", homeguard.Contains},
+		{"Unrelated system folder", "/Library", homeguard.Separate},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := homeguard.Relate(s.fs(), tc.candidate, "/Users/me")
@@ -164,6 +174,13 @@ func TestRelateFirmlinks(t *testing.T) {
 		bad := s
 		bad.err = errors.New("boom")
 		if _, err := homeguard.Relate(bad.fs(), "/System/Volumes/Data", "/Users/me"); err == nil {
+			t.Fatal("no error")
+		}
+	})
+	t.Run("Mount point lookup error fails closed", func(t *testing.T) {
+		bad := s.fs()
+		bad.MountPoint = func(string) (string, error) { return "", errors.New("statfs") }
+		if _, err := homeguard.Relate(bad, "/Library", "/Users/me"); err == nil {
 			t.Fatal("no error")
 		}
 	})

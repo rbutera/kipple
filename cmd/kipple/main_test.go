@@ -804,3 +804,35 @@ func scenarioPartialScanCLI(t *testing.T) {
 }
 
 func TestPartialScanCLI(t *testing.T) { t.Run("Partial scan recorded", scenarioPartialScanCLI) }
+
+// Review finding (wave 2 re-review): /System and /System/Volumes contain
+// the real home through the /System/Volumes/Data firmlink. This checks the
+// machine's real home read-only (stat, open and statfs only; kipple does
+// not run against it).
+func TestSystemFoldersContainRealHome(t *testing.T) {
+	if fi, err := os.Stat("/System/Volumes/Data"); err != nil || !fi.IsDir() {
+		t.Skip("no /System/Volumes/Data on this machine")
+	}
+	reals, err := realHomes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, real := range reals {
+		if seen[real] {
+			continue
+		}
+		seen[real] = true
+		for _, cand := range []string{"/System", "/System/Volumes", "/System/Volumes/Data", "/"} {
+			t.Run(cand, func(t *testing.T) {
+				rel, err := homeguard.Relate(homeguard.System(), cand, real)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rel != homeguard.Contains {
+					t.Fatalf("Relate(%q, %q) = %v, want contains", cand, real, rel)
+				}
+			})
+		}
+	}
+}

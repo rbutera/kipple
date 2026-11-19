@@ -351,7 +351,7 @@ func guardRealHome(rt runtimeEnv, given, resolved, final string) error {
 		return fail(codeHome, "KIPPLE_HOME is set but the real home folder cannot be determined to guard against it: %v", err)
 	}
 	fsys := rt.guardFS
-	if fsys.Chain == nil || fsys.Stat == nil {
+	if fsys.Chain == nil || fsys.Stat == nil || fsys.MountPoint == nil {
 		fsys = homeguard.System()
 	}
 	// The respelled path must be the very directory that was resolved.

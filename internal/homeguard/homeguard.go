@@ -56,6 +56,10 @@ type FS struct {
 	// Stat returns the identity of path, following symlinks; ok is false
 	// when path does not exist or a component is not a directory.
 	Stat func(path string) (id ID, ok bool, err error)
+	// MountPoint returns the mount point of the volume holding path
+	// (statfs f_mntonname on macOS, such as /System/Volumes/Data), or ""
+	// where the platform has no firmlinks to alias it.
+	MountPoint func(path string) (string, error)
 }
 
 // ErrUnsupported is returned by System on platforms without directory
@@ -71,9 +75,12 @@ var ErrUnsupported = errors.New("directory identities are not available on this 
 // firmlink's target is not on the ".." chain of the directory it aliases
 // (".." of /Users/<me>/.. is /, never /System/Volumes/Data), candidate
 // joined with each tail of real's path (<me>, Users/<me>, ...) having the
-// real home's identity (contains).
+// real home's identity (contains). Finally, a candidate on the ".." chain
+// of the real home's mount point (/System/Volumes/Data, so also
+// /System/Volumes and /System) contains the real home through that volume,
+// even though no tail of the real path names it from there.
 func Relate(fsys FS, candidate, real string) (Relation, error) {
-	if fsys.Chain == nil || fsys.Stat == nil {
+	if fsys.Chain == nil || fsys.Stat == nil || fsys.MountPoint == nil {
 		return Separate, errors.New("homeguard: incomplete FS")
 	}
 	c, err := fsys.Chain(candidate, true)
@@ -107,6 +114,19 @@ func Relate(fsys FS, candidate, real string) (Relation, error) {
 			return Separate, fmt.Errorf("cannot identify %q: %w", p, err)
 		}
 		if ok && id == r[0] {
+			return Contains, nil
+		}
+	}
+	mp, err := fsys.MountPoint(real)
+	if err != nil {
+		return Separate, fmt.Errorf("cannot find the mount point of the real home %q: %w", real, err)
+	}
+	if mp != "" {
+		m, err := fsys.Chain(mp, false)
+		if err != nil {
+			return Separate, fmt.Errorf("cannot identify the real home's mount point %q: %w", mp, err)
+		}
+		if contains(m, c[0]) {
 			return Contains, nil
 		}
 	}
