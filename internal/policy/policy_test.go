@@ -354,7 +354,7 @@ func TestDenylistContainsSpecMinimum(t *testing.T) {
 	required := []string{
 		"Documents", "Desktop", "Pictures", "Movies", "Music", ".docker", ".ollama",
 		"Library/Safari", "Library/Cookies", "Library/Application Support/Code/User",
-		"**/.git", "**/.envrc", "**/*.pem", "**/id_rsa*", "**/id_ed25519*", "**/*.kdbx", "**/*.p12",
+		"**/.git", "**/.envrc", "**/*.pem", "**/id_rsa*", "**/id_ed25519*", "**/*.kdbx", "**/*.p12", "**/*.env", "**/*.kdb",
 		"Library/Mobile Documents", "Library/CloudStorage", "Library/Mail", "Library/Messages",
 		"Library/Photos", "Pictures/Photos Library.photoslibrary", "Library/Keychains", "Library/Preferences",
 		"Library/Containers", "Library/Group Containers", "Library/Application Support/MobileSync",
@@ -420,6 +420,9 @@ func TestIsDenylisted(t *testing.T) {
 		"Library/Caches/x/server.pem":           true,
 		"Library/Caches/x/id_rsa.pub":           true,
 		"Library/Caches/x/vault.kdbx":           true,
+		"Library/Caches/x/old.kdb":              true,
+		"dev/app/prod.env":                      true,
+		"dev/app/environment":                   false,
 		"Library/Caches/x/cert.p12":             true,
 		".docker":                               true,
 		".docker/machine":                       true,

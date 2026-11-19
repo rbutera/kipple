@@ -117,11 +117,13 @@ var denyPrefixes = [...]string{
 var denyComponents = [...]string{
 	".env",
 	".env.*",
+	"*.env", // prod.env, staging.env
 	".envrc",
 	".git",
 	"*.keychain*",
 	"*.photoslibrary",
 	"*.kdbx",
+	"*.kdb", // KeePass 1
 	"*.pem",
 	"*.p12",
 	"id_rsa*",

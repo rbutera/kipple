@@ -242,14 +242,18 @@ func TestGuard(t *testing.T) {
 		{"keep", "keep", 0, 0, true, ReasonUserProtected, ReasonUserProtected},
 		{"KEEP/inner", "inner", 0, 0, false, ReasonUserProtected, ReasonUserProtected},
 		{"innocent", "innocent", nid.dev, nid.ino, false, ReasonDenylisted, ReasonDenylisted},
-		// Regenerable inside a package cache; protected inside anything else.
+		{"config/prod.env", "prod.env", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"old.kdb", "old.kdb", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		// Signing keys, SSH keys and direnv files block package caches too.
+		{"x/testdata/key.p12", "key.p12", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"x/testdata/id_rsa", "id_rsa", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"x/id_ed25519.pub", "id_ed25519.pub", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"x/.envrc", ".envrc", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		// Regenerable inside a package cache (*.pem; .git is handled for
+		// artifacts separately); protected inside anything else.
 		{".git", ".git", 0, 0, true, "", ReasonDenylisted},
 		{"wt/.git", ".git", 0, 0, false, "", ReasonDenylisted},
 		{"pip/_vendor/certifi/cacert.pem", "cacert.pem", 0, 0, false, "", ReasonDenylisted},
-		{"x/testdata/key.p12", "key.p12", 0, 0, false, "", ReasonDenylisted},
-		{"x/testdata/id_rsa", "id_rsa", 0, 0, false, "", ReasonDenylisted},
-		{"x/id_ed25519.pub", "id_ed25519.pub", 0, 0, false, "", ReasonDenylisted},
-		{"x/.envrc", ".envrc", 0, 0, false, "", ReasonDenylisted},
 		{"plain/file.txt", "file.txt", 0, 0, false, "", ""},
 		{"keeper", "keeper", 0, 0, true, "", ""},
 	}

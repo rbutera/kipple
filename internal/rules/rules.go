@@ -119,10 +119,10 @@ type Rule struct {
 	What      string `json:"what"`
 	IfRemoved string `json:"if_removed"`
 	// PackageCache marks package-manager caches and dependency installs.
-	// Inside their items only irreplaceable secrets (.env, keychains, password
-	// databases, photo libraries) make an item unselectable; inside every
-	// other rule's items the whole deny-component list does (.git, .envrc,
-	// *.pem, *.p12, SSH keys too). See policy.Rule.RulePackageCache.
+	// Inside their items every protected name except *.pem certificates and
+	// .git makes an item unselectable (.env files, .envrc, *.p12, SSH keys,
+	// keychains, password databases, photo libraries); inside every other
+	// rule's items *.pem and .git do too. See policy.Rule.RulePackageCache.
 	PackageCache bool `json:"-"`
 }
 

@@ -156,10 +156,10 @@ type Rule interface {
 	RuleMatchNames() []string
 	RuleMatchMarkers() []string
 	// RulePackageCache marks a rule whose items are package-manager caches
-	// or dependency installs (npm, pip, Go modules, node_modules, venv). Inside
-	// such an item only irreplaceable secrets refuse it (see Guard); every
-	// other rule refuses an item containing anything on the deny-component
-	// list.
+	// or dependency installs (npm, pip, Go modules, node_modules, venv).
+	// Inside such an item every deny component except *.pem and .git
+	// refuses it (see Guard); every other rule refuses an item containing
+	// anything on the deny-component list.
 	RulePackageCache() bool
 }
 

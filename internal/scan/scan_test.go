@@ -65,13 +65,17 @@ func fixtureSpec() testutil.Spec {
 	file("Library/pnpm/store/v3/pkg", 512*kib, old)
 	dir("Library/pnpm/store/v3", old)
 
-	// Regenerable files whose names are denylisted only as item paths.
+	// Certificates (*.pem) inside package caches and dependency installs are
+	// regenerable and do not block them.
 	file(".cache/uv/archive-v0/abc/certifi/cacert.pem", kib, old)
 	dir(".cache/uv/archive-v0/abc/certifi", old)
 	dir(".cache/uv/archive-v0/abc", old)
 	file("dev/py/pyproject.toml", 10, old)
 	file("dev/py/.venv/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem", kib, old)
-	file(".codex/worktrees/wt1/.git", 40, old) // a worktree's .git is a file
+	// A worktree's .git is a file; codex.worktrees is not a package cache, so
+	// it makes the item contains_protected (the pointer-file exemption waits
+	// for wave 3's clean-and-pushed check).
+	file(".codex/worktrees/wt1/.git", 40, old)
 	file(".codex/worktrees/wt1/main.go", 10, old)
 
 	// review
@@ -404,13 +408,18 @@ func TestHomeErrors(t *testing.T) {
 // Review finding: regenerable descendants such as certifi's cacert.pem, Go
 // test keys and a worktree's .git file must not make an item unselectable.
 // Review findings (wave 2): inside package caches and dependency installs
-// only irreplaceable secrets block an item; inside every other rule's item
-// the whole deny-component list does.
+// every protected name except *.pem certificates and .git blocks an item
+// (signing keys and SSH keys left in a build folder included); inside every
+// other rule's item the whole deny-component list does.
 func TestProtectedDescendantsPerRule(t *testing.T) {
 	spec := fixtureSpec()
 	spec.Files = append(spec.Files,
 		testutil.File{Path: "Library/Caches/withenvrc/.envrc", Size: 10, MTime: old},
 		testutil.File{Path: "Library/Caches/withkey/certs/server.p12", Size: 10, MTime: old},
+		testutil.File{Path: ".npm/_cacache/withkey/fixtures/id_rsa", Size: 10, MTime: old},
+		testutil.File{Path: ".npm/_cacache/withenv/config/prod.env", Size: 10, MTime: old},
+		testutil.File{Path: "dev/signed/package.json", Size: 10, MTime: old},
+		testutil.File{Path: "dev/signed/node_modules/app/build/release.p12", Size: 10, MTime: old},
 	)
 	home := testutil.NewHome(t, spec)
 	items := byRel(t, runScan(t, home, rules.LevelReview), home)
@@ -423,6 +432,17 @@ func TestProtectedDescendantsPerRule(t *testing.T) {
 	}
 	if gomod := items["go/pkg/mod/github.com"]; !gomod.Selected {
 		t.Errorf("go module cache with testdata/key.pem not selected at review: %+v", gomod.Reasons)
+	}
+	// Package cache and project artifact: keys and env files still refuse.
+	for rel, want := range map[string]string{
+		".npm/_cacache/withkey":   "fixtures/id_rsa",
+		".npm/_cacache/withenv":   "config/prod.env",
+		"dev/signed/node_modules": "app/build/release.p12",
+	} {
+		it := items[rel]
+		if it.Path == "" || it.Selected || !slices.Contains(it.Reasons, plan.ReasonContainsProtected) || !slices.Equal(it.ProtectedPaths, []string{want}) {
+			t.Errorf("%s: selected=%v reasons=%v protected=%v", rel, it.Selected, it.Reasons, it.ProtectedPaths)
+		}
 	}
 	// Not package caches: .git, .envrc and *.p12 inside refuse the item.
 	wt := items[".codex/worktrees/wt1"]
