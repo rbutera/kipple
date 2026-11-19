@@ -32,6 +32,7 @@ Waves for the /wave skill. Each wave ends with `make check` green (lint, vet, ra
 - [ ] 3.6 Implement `internal/apply` (re-authorise, re-check conditions, lstat type check, owner running skip, `info_tier`, `permanent_not_allowed`, `--only`, plan-file input, receipt, result document with `moved|skipped|untouched`, exit code mapping); verify with fixture tests for every scenario in `specs/clean-apply` using `DirTrasher`, plus a TOCTOU test that modifies a project between scan and apply
 - [ ] 3.7 Wire `kipple clean` (dry run default, `--apply`, `--yes`, `--permanent`, `--plan`, `--only`, TTY confirmation only when TTY and not `--json`), `kipple history`, `kipple restore` (dry run default, `destination_exists`, `trash_item_missing`); verify with CLI tests against fixtures, including piped `clean --apply --json` not prompting and `restore --apply` round trip
 - [ ] 3.8 Add `docs/safety.md` describing the gate, denylist, tiers, re-check, receipts, and what kipple refuses to do; verify the denylist in the doc is generated from `policy.Denylist()` by a test that diffs them
+- [ ] 3.9 Portability seams per design D17: `Trasher`, `Inspector` and `moveNoReplace` live behind interfaces in `_darwin.go` files with non-darwin stubs returning `ErrUnsupported`; verify `GOOS=linux go vet ./...` passes and a test asserts no darwin-only symbol is referenced from a file without a build constraint
 
 ## 4. Wave 4: TUI, docs, release pipeline, v0.1.0
 
