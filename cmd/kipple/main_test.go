@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,7 +159,7 @@ func TestUnknownFlag(t *testing.T) {
 }
 
 // Spec scenario "Plan validates against schema", using kipple schema plan.
-func TestPlanValidatesAgainstPrintedSchema(t *testing.T) {
+func scenarioPlanValidatesAgainstPrintedSchema(t *testing.T) {
 	fixture(t)
 	_, out, _ := cli(t, "scan", "--json", "--level", "review")
 	code, schema, _ := cli(t, "schema", "plan")
@@ -168,6 +169,10 @@ func TestPlanValidatesAgainstPrintedSchema(t *testing.T) {
 	if err := plantest.ValidateWith([]byte(schema), "plan", []byte(out)); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestPlanValidatesAgainstPrintedSchema(t *testing.T) {
+	t.Run("Plan validates against schema", scenarioPlanValidatesAgainstPrintedSchema)
 }
 
 // Spec scenario "Unknown flag" and the JSON error envelope.
@@ -276,7 +281,7 @@ func TestHelpUnderJSON(t *testing.T) {
 }
 
 // Spec scenario "Explain a rule".
-func TestExplainRule(t *testing.T) {
+func scenarioExplainRule(t *testing.T) {
 	fixture(t)
 	code, out, _ := cli(t, "explain", "xcode.deriveddata")
 	if code != exitOK {
@@ -289,6 +294,8 @@ func TestExplainRule(t *testing.T) {
 		}
 	}
 }
+
+func TestExplainRule(t *testing.T) { t.Run("Explain a rule", scenarioExplainRule) }
 
 func TestExplainItem(t *testing.T) {
 	home := fixture(t)
@@ -335,7 +342,7 @@ func scenarioVersion(t *testing.T) {
 }
 
 // Spec scenario "Run as root".
-func TestRunAsRoot(t *testing.T) {
+func scenarioRunAsRoot(t *testing.T) {
 	fixture(t)
 	rt := testEnv(t)
 	rt.geteuid = func() int { return 0 }
@@ -353,6 +360,8 @@ func TestRunAsRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestRunAsRoot(t *testing.T) { t.Run("Run as root", scenarioRunAsRoot) }
 
 // Spec scenario "Dry-run footer".
 func scenarioHumanScan(t *testing.T) {
@@ -753,3 +762,45 @@ func TestHelpTopics(t *testing.T) {
 		}
 	}
 }
+
+// Spec scenario "Partial scan recorded", through the CLI: an item whose walk
+// could not finish is listed with scan_partial, never selected, and the
+// scan itself still succeeds (exit 0).
+func scenarioPartialScanCLI(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{
+		Files: []testutil.File{
+			{Path: "Library/Caches/partial/ok", Size: 2048, MTime: old},
+			{Path: "Library/Caches/partial/locked/x", Size: 1024, MTime: old},
+			{Path: "Library/Caches/whole/blob", Size: 1024, MTime: old},
+		},
+		Dirs: []testutil.Dir{{Path: "Library/Caches/partial/locked", Unreadable: true}},
+	})
+	for _, level := range []string{rules.LevelSafe, rules.LevelReview} {
+		code, out, _ := cli(t, "scan", "--json", "--level", level)
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if code != exitOK {
+			t.Fatalf("level %s: exit %d, want %d", level, code, exitOK)
+		}
+		var partial, whole *plan.Item
+		for i := range p.Items {
+			switch p.Items[i].Path {
+			case home + "/Library/Caches/partial":
+				partial = &p.Items[i]
+			case home + "/Library/Caches/whole":
+				whole = &p.Items[i]
+			}
+		}
+		if partial == nil || whole == nil {
+			t.Fatalf("level %s: items missing: partial=%v whole=%v", level, partial, whole)
+		}
+		if partial.Selected || partial.ScanStatus != plan.ScanPartial || !slices.Contains(partial.Reasons, plan.ReasonScanPartial) {
+			t.Fatalf("level %s: partial item %+v", level, *partial)
+		}
+		if !whole.Selected {
+			t.Fatalf("level %s: complete item not selected: %+v", level, whole.Reasons)
+		}
+	}
+}
+
+func TestPartialScanCLI(t *testing.T) { t.Run("Partial scan recorded", scenarioPartialScanCLI) }

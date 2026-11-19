@@ -224,7 +224,7 @@ func scenarioAbsentRoots(t *testing.T) {
 }
 
 // Spec scenario "Fixture unchanged".
-func TestScanIsReadOnly(t *testing.T) {
+func scenarioScanIsReadOnly(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	// The locked directory cannot be snapshotted; checksum everything else
 	// plus the locked directory's own metadata.
@@ -237,6 +237,8 @@ func TestScanIsReadOnly(t *testing.T) {
 		t.Fatal("scan changed the fixture")
 	}
 }
+
+func TestScanIsReadOnly(t *testing.T) { t.Run("Fixture unchanged", scenarioScanIsReadOnly) }
 
 func scenarioScanIsReadOnlyWholeHome(t *testing.T) {
 	spec := fixtureSpec()
@@ -328,8 +330,8 @@ func scenarioPartialItem(t *testing.T) {
 	}
 }
 
-// Spec scenario "Hard-linked store", across two items.
-func TestHardlinkCountedOncePerScan(t *testing.T) {
+// Spec scenario "Hardlinked store", across two items.
+func scenarioHardlinkCountedOncePerScan(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	items := byRel(t, runScan(t, home, rules.LevelReview), home)
 	store, proj := items["Library/pnpm/store/v3"], items["dev/idle/node_modules"]
@@ -344,7 +346,12 @@ func TestHardlinkCountedOncePerScan(t *testing.T) {
 	}
 }
 
-func TestPlanValidatesAgainstSchema(t *testing.T) {
+func TestHardlinkCountedOncePerScan(t *testing.T) {
+	t.Run("Hardlinked store", scenarioHardlinkCountedOncePerScan)
+}
+
+// Spec scenario "Plan validates against schema".
+func scenarioPlanValidatesAgainstSchema(t *testing.T) {
 	home := testutil.NewHome(t, fixtureSpec())
 	for _, level := range rules.Levels() {
 		var buf bytes.Buffer
@@ -355,6 +362,10 @@ func TestPlanValidatesAgainstSchema(t *testing.T) {
 			t.Fatalf("level %s: %v", level, err)
 		}
 	}
+}
+
+func TestPlanValidatesAgainstSchema(t *testing.T) {
+	t.Run("Plan validates against schema", scenarioPlanValidatesAgainstSchema)
 }
 
 func TestEffectiveProjectRoots(t *testing.T) {
