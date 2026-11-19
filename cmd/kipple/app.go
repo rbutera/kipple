@@ -216,8 +216,26 @@ func (a *app) rootCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print one JSON document on stdout")
 	root.PersistentFlags().StringVar(&a.level, "level", "", `selection level: "safe" (default, or config level) or "review"`)
 	root.CompletionOptions.DisableDefaultCmd = true
+	root.SetHelpCommand(a.helpCommand())
 	root.AddCommand(a.scanCommand(), a.rulesCommand(), a.explainCommand(), a.schemaCommand(), a.versionCommand())
 	return root
+}
+
+// helpCommand replaces cobra's help command, which prints the main help and
+// exits 0 for an unknown topic. Here an unknown topic is a usage error.
+func (a *app) helpCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "help [command]",
+		Short: "Help about any command",
+		RunE: func(c *cobra.Command, args []string) error {
+			target, rest, err := c.Root().Find(args)
+			if err != nil || target == nil || len(rest) > 0 {
+				return usageErr("unknown help topic %q (see kipple --help)", strings.Join(args, " "))
+			}
+			target.InitDefaultHelpFlag()
+			return target.Help()
+		},
+	}
 }
 
 func noArgs(_ *cobra.Command, args []string) error {

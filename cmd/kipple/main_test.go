@@ -190,6 +190,10 @@ func TestUsageErrors(t *testing.T) {
 		{"--level", "everything", "--json=1", "scan"},
 		{"scan", "--bogus", "--json=false"},
 		{"scan", "--bogus", "--", "--json"},
+		// Review finding: unknown help topics are usage errors.
+		{"help", "bogus"},
+		{"help", "bogus", "--json"},
+		{"help", "scan", "extra"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -729,5 +733,23 @@ func TestVersionHome(t *testing.T) {
 	}
 	if code, out, _ := cliWith(t, rt, "version"); code != exitOK || strings.Contains(out, "home ") {
 		t.Fatalf("no KIPPLE_HOME: exit %d %q", code, out)
+	}
+}
+
+// help with a known topic, or none, still prints help and exits 0.
+func TestHelpTopics(t *testing.T) {
+	fixture(t)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"help"}, "Exit codes"},
+		{[]string{"help", "scan"}, "kipple scan"},
+		{[]string{"help", "schema"}, "kipple schema"},
+	} {
+		code, out, _ := cli(t, tc.args...)
+		if code != exitOK || !strings.Contains(out, tc.want) {
+			t.Fatalf("%v: exit %d\n%s", tc.args, code, out)
+		}
 	}
 }
