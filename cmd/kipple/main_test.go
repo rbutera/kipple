@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
@@ -209,7 +211,7 @@ func TestUsageErrors(t *testing.T) {
 			if errOut == "" {
 				t.Fatal("no message on stderr")
 			}
-			if jsonRequested(args) {
+			if wantJSON(args) {
 				var env errorEnvelope
 				exactlyOneJSON(t, out, &env)
 				if env.Error.Code != codeUsage || env.Error.Message == "" {
@@ -351,7 +353,7 @@ func scenarioRunAsRoot(t *testing.T) {
 		if code != exitError || !strings.Contains(errOut, "kipple will not run as root") {
 			t.Fatalf("%v: exit %d stderr %q", args, code, errOut)
 		}
-		if jsonRequested(args) {
+		if wantJSON(args) {
 			var env errorEnvelope
 			exactlyOneJSON(t, out, &env)
 			if env.Error.Code != codeRoot || env.Error.Message != "kipple will not run as root" {
@@ -886,4 +888,50 @@ func TestHomeSwappedAfterGuardRefused(t *testing.T) {
 			t.Fatalf("swapped=%v exit %d %+v stderr %q", swapped, code, env, errOut)
 		}
 	})
+}
+
+// wantJSON is jsonRequested over a fresh command tree.
+func wantJSON(args []string) bool {
+	a := &app{stdout: io.Discard, stderr: io.Discard}
+	return jsonRequested(a.rootCommand(), args)
+}
+
+// Review finding (wave 2 re-review): jsonRequested clones cobra's own flag
+// sets, so flags that take values consume them exactly as cobra does,
+// including flags added later (wave 3).
+func TestJSONRequestedFollowsCobraFlags(t *testing.T) {
+	build := func() *cobra.Command {
+		a := &app{stdout: io.Discard, stderr: io.Discard}
+		root := a.rootCommand()
+		for _, c := range root.Commands() {
+			if c.Name() == "scan" {
+				c.Flags().StringP("older-than", "o", "", "a value flag added later")
+				c.Flags().Bool("yes", false, "a bool flag added later")
+			}
+		}
+		return root
+	}
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"scan", "--json"}, true},
+		{[]string{"scan", "--json=1", "--bogus"}, true},
+		// --older-than takes the next word as its value, even "--json".
+		{[]string{"scan", "--older-than", "--json", "--bogus"}, false},
+		{[]string{"scan", "-o", "--json", "--bogus"}, false},
+		{[]string{"scan", "--older-than", "30", "--json", "--bogus"}, true},
+		// A bool flag takes no value, so --json after it counts.
+		{[]string{"scan", "--yes", "--json", "--bogus"}, true},
+		// --level is an inherited value flag.
+		{[]string{"--level", "--json", "scan", "--bogus"}, false},
+		{[]string{"scan", "--bogus", "--", "--json"}, false},
+		{[]string{"bogus", "--json"}, true},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			if got := jsonRequested(build(), tc.args); got != tc.want {
+				t.Fatalf("jsonRequested = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

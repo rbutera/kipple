@@ -132,15 +132,15 @@ Environment:
 // run executes kipple with args and returns the exit code.
 func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {
 	a := &app{rt: rt, stdout: stdout, stderr: stderr}
+	root := a.rootCommand()
 	if err := policy.CheckNotRoot(rt.geteuid()); err != nil {
-		a.json = jsonRequested(args)
+		a.json = jsonRequested(root, args)
 		return a.report(&cliError{exit: exitError, code: codeRoot, msg: err.Error()})
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	a.ctx = ctx
 
-	root := a.rootCommand()
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		var ce *cliError
@@ -151,7 +151,7 @@ func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {
 		// Cobra sets a.json when it parses --json in any spelling. A flag
 		// error can stop its parse before --json is reached, so parse again,
 		// leniently, with the same flag parser.
-		a.json = a.json || jsonRequested(args)
+		a.json = a.json || jsonRequested(root, args)
 		return a.report(ce)
 	}
 	return exitOK
@@ -162,17 +162,45 @@ func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {
 // accepts (--json, --json=1, --json=t, --json=TRUE) counts and parsing
 // stops at "--". It is used only when cobra's own parse did not finish:
 // the root refusal runs before it, and a flag error can end it early.
-func jsonRequested(args []string) bool {
+//
+// The flag set is cloned from the command cobra resolves for args (its
+// local and inherited flags, including help), keeping each flag's name,
+// shorthand and no-value default, so a flag that takes a value consumes it
+// exactly as cobra would and a new flag cannot make this parse drift.
+func jsonRequested(root *cobra.Command, args []string) bool {
+	c := root
+	if found, _, err := root.Find(args); err == nil && found != nil {
+		c = found
+	}
+	c.InitDefaultHelpFlag()
 	fs := pflag.NewFlagSet("kipple", pflag.ContinueOnError)
 	fs.ParseErrorsWhitelist.UnknownFlags = true
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	var j bool
-	fs.BoolVar(&j, "json", false, "")
-	fs.String("level", "", "")
+	clone := func(f *pflag.Flag) {
+		if fs.Lookup(f.Name) != nil {
+			return
+		}
+		if f.Name == "json" {
+			fs.BoolVarP(&j, f.Name, f.Shorthand, false, "")
+			return
+		}
+		nf := fs.VarPF(anyValue{typ: f.Value.Type()}, f.Name, f.Shorthand, "")
+		nf.NoOptDefVal = f.NoOptDefVal
+	}
+	c.LocalFlags().VisitAll(clone)
+	c.InheritedFlags().VisitAll(clone)
 	_ = fs.Parse(args)
 	return j
 }
+
+// anyValue accepts any value for a cloned flag; only its arity matters.
+type anyValue struct{ typ string }
+
+func (anyValue) Set(string) error { return nil }
+func (anyValue) String() string   { return "" }
+func (v anyValue) Type() string   { return v.typ }
 
 // report prints err to stderr and, with --json, the envelope to stdout.
 func (a *app) report(ce *cliError) int {
