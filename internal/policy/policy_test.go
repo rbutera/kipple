@@ -26,9 +26,9 @@ var (
 	claudeRule      = StaticRule{ID: "hypothetical.claude", Roots: []string{".claude"}, Kind: MatchChildren}
 	anyRule         = StaticRule{ID: "hypothetical.any", Roots: []string{"Library/Caches", "dev", "Library/Logs"}, Kind: MatchChildren}
 	downloadsRule   = StaticRule{ID: "downloads.installers", Roots: []string{"Downloads"}, Kind: MatchExtensions, Extensions: []string{".dmg", ".pkg", ".iso"}}
-	nodeModulesRule = StaticRule{ID: "project.node-modules", Roots: []string{"dev", "code"}, Kind: MatchProjectArtifact, Names: []string{"node_modules"}, Markers: []string{"package.json"}}
-	venvRule        = StaticRule{ID: "project.venv", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{".venv", "venv"}, Markers: []string{"pyproject.toml", "requirements.txt"}}
-	targetRule      = StaticRule{ID: "project.target", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{"target"}, Markers: []string{"Cargo.toml"}}
+	nodeModulesRule = StaticRule{ID: "project.node-modules", Roots: []string{"dev", "code"}, Kind: MatchProjectArtifact, Names: []string{"node_modules"}, Markers: []string{"package.json"}, PackageCache: true}
+	venvRule        = StaticRule{ID: "project.venv", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{".venv", "venv"}, Markers: []string{"pyproject.toml", "requirements.txt"}, PackageCache: true}
+	targetRule      = StaticRule{ID: "project.target", Roots: []string{"dev"}, Kind: MatchProjectArtifact, Names: []string{"target"}, Markers: []string{"Cargo.toml"}, PackageCache: true}
 )
 
 func fixture(t *testing.T) string {

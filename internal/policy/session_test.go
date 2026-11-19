@@ -221,44 +221,62 @@ func TestGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
-	g := s.Guard(cachesRule, home+"/Library/Caches/app")
 	netrc, err := os.Lstat(home + "/.netrc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	nid, _ := identityOf(netrc)
+	// pkg is the expectation inside a package cache, other inside any other
+	// rule's item.
 	cases := []struct {
-		rel, name string
-		dev, ino  uint64
-		dir       bool
-		want      string
+		rel, name  string
+		dev, ino   uint64
+		dir        bool
+		pkg, other string
 	}{
-		{"x/.env", ".env", 0, 0, false, ReasonDenylisted},
-		{"x/.ENV.local", ".ENV.local", 0, 0, false, ReasonDenylisted},
-		{"vault.kdbx", "vault.kdbx", 0, 0, false, ReasonDenylisted},
-		{"login.keychain-db", "login.keychain-db", 0, 0, false, ReasonDenylisted},
-		{"Old.photoslibrary", "Old.photoslibrary", 0, 0, true, ReasonDenylisted},
-		{"keep", "keep", 0, 0, true, ReasonUserProtected},
-		{"KEEP/inner", "inner", 0, 0, false, ReasonUserProtected},
-		{"innocent", "innocent", nid.dev, nid.ino, false, ReasonDenylisted},
-		// Regenerable content that only refuses a path naming it.
-		{".git", ".git", 0, 0, true, ""},
-		{"wt/.git", ".git", 0, 0, false, ""},
-		{"pip/_vendor/certifi/cacert.pem", "cacert.pem", 0, 0, false, ""},
-		{"x/testdata/key.p12", "key.p12", 0, 0, false, ""},
-		{"x/testdata/id_rsa", "id_rsa", 0, 0, false, ""},
-		{"x/id_ed25519.pub", "id_ed25519.pub", 0, 0, false, ""},
-		{"x/.envrc", ".envrc", 0, 0, false, ""},
-		{"plain/file.txt", "file.txt", 0, 0, false, ""},
-		{"keeper", "keeper", 0, 0, true, ""},
+		{"x/.env", ".env", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"x/.ENV.local", ".ENV.local", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"vault.kdbx", "vault.kdbx", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"login.keychain-db", "login.keychain-db", 0, 0, false, ReasonDenylisted, ReasonDenylisted},
+		{"Old.photoslibrary", "Old.photoslibrary", 0, 0, true, ReasonDenylisted, ReasonDenylisted},
+		{"keep", "keep", 0, 0, true, ReasonUserProtected, ReasonUserProtected},
+		{"KEEP/inner", "inner", 0, 0, false, ReasonUserProtected, ReasonUserProtected},
+		{"innocent", "innocent", nid.dev, nid.ino, false, ReasonDenylisted, ReasonDenylisted},
+		// Regenerable inside a package cache; protected inside anything else.
+		{".git", ".git", 0, 0, true, "", ReasonDenylisted},
+		{"wt/.git", ".git", 0, 0, false, "", ReasonDenylisted},
+		{"pip/_vendor/certifi/cacert.pem", "cacert.pem", 0, 0, false, "", ReasonDenylisted},
+		{"x/testdata/key.p12", "key.p12", 0, 0, false, "", ReasonDenylisted},
+		{"x/testdata/id_rsa", "id_rsa", 0, 0, false, "", ReasonDenylisted},
+		{"x/id_ed25519.pub", "id_ed25519.pub", 0, 0, false, "", ReasonDenylisted},
+		{"x/.envrc", ".envrc", 0, 0, false, "", ReasonDenylisted},
+		{"plain/file.txt", "file.txt", 0, 0, false, "", ""},
+		{"keeper", "keeper", 0, 0, true, "", ""},
 	}
-	for _, tc := range cases {
-		t.Run(tc.rel, func(t *testing.T) {
-			got, hit := g.Check(tc.rel, tc.name, tc.dev, tc.ino, tc.dir)
-			if got != tc.want || hit != (tc.want != "") {
-				t.Fatalf("Check(%q) = %q %v, want %q", tc.rel, got, hit, tc.want)
+	pkgRule := cachesRule
+	pkgRule.PackageCache = true
+	for _, branch := range []struct {
+		name string
+		rule Rule
+		pkg  bool
+	}{
+		{"package cache", pkgRule, true},
+		{"other rule", cachesRule, false},
+		{"no rule", nil, false},
+	} {
+		g := s.Guard(branch.rule, home+"/Library/Caches/app")
+		for _, tc := range cases {
+			want := tc.other
+			if branch.pkg {
+				want = tc.pkg
 			}
-		})
+			t.Run(branch.name+"/"+tc.rel, func(t *testing.T) {
+				got, hit := g.Check(tc.rel, tc.name, tc.dev, tc.ino, tc.dir)
+				if got != want || hit != (want != "") {
+					t.Fatalf("Check(%q) = %q %v, want %q", tc.rel, got, hit, want)
+				}
+			})
+		}
 	}
 	// A denylist prefix below the item is found by path.
 	g2 := s.Guard(cachesRule, home+"/Library/Application Support")

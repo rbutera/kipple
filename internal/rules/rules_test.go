@@ -423,3 +423,20 @@ func TestGoldenRulesJSON(t *testing.T) {
 		}
 	}
 }
+
+// Only package-manager caches and dependency installs get the narrow
+// protected-descendant check; every other rule gets the full one.
+func TestPackageCacheRules(t *testing.T) {
+	want := map[string]bool{
+		"swiftpm.cache": true, "homebrew.cache": true, "npm.cache": true, "pnpm.store": true,
+		"yarn.cache": true, "bun.cache": true, "pip.cache": true, "uv.cache": true,
+		"poetry.cache": true, "cargo.registry": true, "go.build-cache": true, "go.mod-cache": true,
+		"gradle.caches": true, "cocoapods.cache": true,
+	}
+	for _, r := range rules.Catalogue() {
+		exp := want[r.ID] || r.Match.Kind == rules.MatchProjectArtifact
+		if r.PackageCache != exp || r.RulePackageCache() != exp {
+			t.Errorf("%s: PackageCache %v, want %v", r.ID, r.PackageCache, exp)
+		}
+	}
+}

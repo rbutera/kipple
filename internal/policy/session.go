@@ -44,6 +44,9 @@ type Guard struct {
 	// artifact is set for project artifact items, where a .git directory
 	// is protected: an artifact never legitimately contains a repository.
 	artifact bool
+	// narrow is set for package-cache rules: only descendantComponents
+	// refuse by name. Otherwise every deny component does.
+	narrow bool
 	// rems are the denylist prefixes and user protections that lie strictly
 	// below the item, as item-relative folded segments, with their reason.
 	rems []guardRem
@@ -54,13 +57,14 @@ type guardRem struct {
 	reason string
 }
 
-// descendantComponents are the deny components that also refuse an item
-// when they appear anywhere inside it: secrets and personal libraries that
-// cannot be regenerated. The other deny components (.git, .envrc, *.pem,
-// *.p12, id_rsa*, id_ed25519*) still refuse a path that names them, but
-// below an item they are routinely regenerable content (certifi's
-// cacert.pem in every virtualenv, test keys in the Go module cache, the .git
-// file of a worktree), so they do not make the item unselectable.
+// descendantComponents are the deny components that refuse a package-cache
+// item (Rule.RulePackageCache) when they appear anywhere inside it: secrets
+// and personal libraries that cannot be regenerated. Inside a package cache
+// the other deny components (.git, .envrc, *.pem, *.p12, id_rsa*,
+// id_ed25519*) are routinely regenerable content (certifi's cacert.pem in
+// every virtualenv, test keys in the Go module cache), so they do not make
+// the item unselectable there. Inside any other rule's item every deny
+// component refuses it.
 var descendantComponents = []string{".env", ".env.*", "*.keychain*", "*.photoslibrary", "*.kdbx"}
 
 // foldedDescendantComponents are descendantComponents folded once.
@@ -72,9 +76,24 @@ var foldedDescendantComponents = func() []string {
 	return out
 }()
 
-// newGuard builds the Guard for item (absolute, clean, below home).
+// foldedDenyComponents are all denyComponents folded once: the descendant
+// patterns for rules that are not package caches.
+var foldedDenyComponents = func() []string {
+	out := make([]string, len(denyComponents))
+	for i, c := range denyComponents {
+		out[i] = foldName(c)
+	}
+	return out
+}()
+
+// newGuard builds the Guard for item (absolute, clean, below home). A nil
+// rule gets the full deny-component set.
 func newGuard(env Env, ids *protectedIDs, rule Rule, item string) *Guard {
-	g := &Guard{ids: ids, artifact: rule != nil && rule.RuleMatchKind() == MatchProjectArtifact}
+	g := &Guard{
+		ids:      ids,
+		artifact: rule != nil && rule.RuleMatchKind() == MatchProjectArtifact,
+		narrow:   rule != nil && rule.RulePackageCache(),
+	}
 	if !strings.HasPrefix(item, env.Home+"/") {
 		return g
 	}
@@ -112,7 +131,8 @@ func newGuard(env Env, ids *protectedIDs, rule Rule, item string) *Guard {
 // item-relative slash path, name its last component, dev and ino its
 // identity, and isDir whether it is a directory. It returns the refusal
 // reason (denylisted or user_protected). An entry is protected when its name
-// matches an irreplaceable-secret pattern (descendantComponents), when it is
+// matches a deny component (only the irreplaceable-secret ones,
+// descendantComponents, for a package-cache rule), when it is
 // a .git directory inside a project artifact, when it lies at or below a
 // denylist prefix or user protection, or when it is the same object as an
 // existing protected location.
@@ -121,7 +141,11 @@ func (g *Guard) Check(rel, name string, dev, ino uint64, isDir bool) (string, bo
 		return "", false
 	}
 	fn := foldName(name)
-	for _, pat := range foldedDescendantComponents {
+	pats := foldedDenyComponents
+	if g.narrow {
+		pats = foldedDescendantComponents
+	}
+	for _, pat := range pats {
 		if ok, err := filepath.Match(pat, fn); err != nil || ok {
 			return ReasonDenylisted, true
 		}

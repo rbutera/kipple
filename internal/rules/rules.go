@@ -118,6 +118,12 @@ type Rule struct {
 	// What and IfRemoved are one sentence each, written for a non-expert.
 	What      string `json:"what"`
 	IfRemoved string `json:"if_removed"`
+	// PackageCache marks package-manager caches and dependency installs.
+	// Inside their items only irreplaceable secrets (.env, keychains, password
+	// databases, photo libraries) make an item unselectable; inside every
+	// other rule's items the whole deny-component list does (.git, .envrc,
+	// *.pem, *.p12, SSH keys too). See policy.Rule.RulePackageCache.
+	PackageCache bool `json:"-"`
 }
 
 // RuleID implements policy.Rule.
@@ -147,6 +153,9 @@ func (r Rule) RuleMatchNames() []string { return r.Match.Names }
 
 // RuleMatchMarkers implements policy.Rule.
 func (r Rule) RuleMatchMarkers() []string { return r.Match.Markers }
+
+// RulePackageCache implements policy.Rule.
+func (r Rule) RulePackageCache() bool { return r.PackageCache }
 
 // agentProcesses are the agent CLIs whose working directory blocks a project
 // artifact (reason tool_running).

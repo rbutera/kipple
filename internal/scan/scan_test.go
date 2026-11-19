@@ -390,8 +390,16 @@ func TestHomeErrors(t *testing.T) {
 
 // Review finding: regenerable descendants such as certifi's cacert.pem, Go
 // test keys and a worktree's .git file must not make an item unselectable.
-func TestRegenerableDescendantsDoNotBlock(t *testing.T) {
-	home := testutil.NewHome(t, fixtureSpec())
+// Review findings (wave 2): inside package caches and dependency installs
+// only irreplaceable secrets block an item; inside every other rule's item
+// the whole deny-component list does.
+func TestProtectedDescendantsPerRule(t *testing.T) {
+	spec := fixtureSpec()
+	spec.Files = append(spec.Files,
+		testutil.File{Path: "Library/Caches/withenvrc/.envrc", Size: 10, MTime: old},
+		testutil.File{Path: "Library/Caches/withkey/certs/server.p12", Size: 10, MTime: old},
+	)
+	home := testutil.NewHome(t, spec)
 	items := byRel(t, runScan(t, home, rules.LevelReview), home)
 	venv := items["dev/py/.venv"]
 	if !slices.Equal(venv.Reasons, []string{plan.ReasonGitUnchecked}) || len(venv.ProtectedPaths) != 0 {
@@ -403,9 +411,16 @@ func TestRegenerableDescendantsDoNotBlock(t *testing.T) {
 	if gomod := items["go/pkg/mod/github.com"]; !gomod.Selected {
 		t.Errorf("go module cache with testdata/key.pem not selected at review: %+v", gomod.Reasons)
 	}
+	// Not package caches: .git, .envrc and *.p12 inside refuse the item.
 	wt := items[".codex/worktrees/wt1"]
-	if wt.Path == "" || !slices.Equal(wt.Reasons, []string{plan.ReasonTierManual}) || len(wt.ProtectedPaths) != 0 {
+	if wt.Selected || !slices.Contains(wt.Reasons, plan.ReasonContainsProtected) || !slices.Equal(wt.ProtectedPaths, []string{".git"}) {
 		t.Errorf("codex worktree with a .git file: %+v", wt)
+	}
+	for rel, want := range map[string]string{"Library/Caches/withenvrc": ".envrc", "Library/Caches/withkey": "certs/server.p12"} {
+		it := items[rel]
+		if it.Selected || !slices.Contains(it.Reasons, plan.ReasonContainsProtected) || !slices.Equal(it.ProtectedPaths, []string{want}) {
+			t.Errorf("%s: selected=%v reasons=%v protected=%v", rel, it.Selected, it.Reasons, it.ProtectedPaths)
+		}
 	}
 }
 
