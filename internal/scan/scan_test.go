@@ -513,3 +513,64 @@ func TestInterruptedWalksFailConditions(t *testing.T) {
 		t.Errorf("mount-interrupted walk satisfied min age: selected=%v reasons=%v", aged.Selected, aged.Reasons)
 	}
 }
+
+// Spec scenario "Recently edited", review finding (wave 2): the idle check
+// skipped every folder named like an artifact at any depth, so a recent
+// edit inside an unrelated target/ left the project looking idle. Only
+// marker-matched artifact directories are skipped now.
+func TestIdleCheckSkipsOnlyArtifacts(t *testing.T) {
+	f := func(p string, mt time.Time) testutil.File { return testutil.File{Path: p, Content: "x", MTime: mt} }
+	spec := testutil.Spec{Files: []testutil.File{
+		// A folder merely named target (no Cargo.toml beside it) holds recent work.
+		f("dev/plain/package.json", old), f("dev/plain/src/a.js", old),
+		f("dev/plain/node_modules/x/i.js", old),
+		f("dev/plain/docs/target/notes.md", recent),
+		// The same at the project root.
+		f("dev/roottarget/package.json", old), f("dev/roottarget/node_modules/x/i.js", old),
+		f("dev/roottarget/target/plan.md", recent),
+		// A sibling artifact with its marker (a fresh .venv) does not count.
+		f("dev/sibling/package.json", old), f("dev/sibling/requirements.txt", old),
+		f("dev/sibling/node_modules/x/i.js", old),
+		f("dev/sibling/.venv/lib/site.py", recent),
+		// A nested install beside its own manifest does not count.
+		f("dev/nested/package.json", old), f("dev/nested/node_modules/x/i.js", old),
+		f("dev/nested/examples/demo/package.json", old),
+		f("dev/nested/examples/demo/node_modules/y/i.js", recent),
+	}}
+	var dirs []testutil.Dir
+	for _, d := range []string{
+		"dev/plain/src", "dev/plain/node_modules/x", "dev/plain/node_modules", "dev/plain/docs/target", "dev/plain/docs", "dev/plain",
+		"dev/roottarget/node_modules/x", "dev/roottarget/node_modules", "dev/roottarget/target", "dev/roottarget",
+		"dev/sibling/node_modules/x", "dev/sibling/node_modules", "dev/sibling/.venv/lib", "dev/sibling/.venv", "dev/sibling",
+		"dev/nested/node_modules/x", "dev/nested/node_modules", "dev/nested/examples/demo/node_modules/y",
+		"dev/nested/examples/demo/node_modules", "dev/nested/examples/demo", "dev/nested/examples", "dev/nested",
+	} {
+		mt := old
+		if strings.HasPrefix(d, "dev/plain/docs") || strings.HasPrefix(d, "dev/roottarget/target") || strings.HasPrefix(d, "dev/sibling/.venv") || strings.HasPrefix(d, "dev/nested/examples/demo/node_modules") {
+			mt = recent
+		}
+		dirs = append(dirs, testutil.Dir{Path: d, MTime: mt})
+	}
+	spec.Dirs = dirs
+	home := testutil.NewHome(t, spec)
+	items := byRel(t, runScan(t, home, rules.LevelReview), home)
+	for _, tc := range []struct {
+		name, rel string
+		active    bool
+	}{
+		{"Recently edited inside a nested folder merely named target", "dev/plain/node_modules", true},
+		{"Recently edited inside a root folder merely named target", "dev/roottarget/node_modules", true},
+		{"Fresh sibling artifact beside its marker is skipped", "dev/sibling/node_modules", false},
+		{"Fresh nested install beside its own manifest is skipped", "dev/nested/node_modules", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			it, ok := items[tc.rel]
+			if !ok {
+				t.Fatalf("%s not listed", tc.rel)
+			}
+			if got := slices.Contains(it.Reasons, plan.ReasonProjectActive); got != tc.active {
+				t.Fatalf("%s: project_active=%v, want %v (reasons %v)", tc.rel, got, tc.active, it.Reasons)
+			}
+		})
+	}
+}

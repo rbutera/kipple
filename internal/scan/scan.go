@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -446,6 +447,13 @@ func (s *scanner) decide(c *candidate, idle map[string]bool) {
 
 // projectIdle reports whether no file in project outside artifact
 // directories changed within days. Results are cached per project.
+//
+// An artifact directory is one named like a project artifact with one of
+// that artifact's markers beside it as a regular file (spec "Marker
+// adjacency"): the candidate itself, its siblings such as .venv beside
+// pyproject.toml, and nested installs with their own manifest. A folder
+// that merely shares a name (a target/ with no Cargo.toml beside it) is
+// project content, so recent edits inside it keep the project active.
 func (s *scanner) projectIdle(project string, days int, cache map[string]bool) bool {
 	key := fmt.Sprintf("%s\x00%d", project, days)
 	if v, ok := cache[key]; ok {
@@ -453,8 +461,19 @@ func (s *scanner) projectIdle(project string, days int, cache map[string]bool) b
 	}
 	idle := false
 	if e, err := s.sess.Open(project); err == nil && e.Dir != nil {
-		names := s.artifactNames()
-		res, err := sizes.MeasureDir(s.ctx, e.Dir, sizes.Options{SkipDir: func(_, name string) bool { return names[name] }})
+		markers := s.artifactMarkers()
+		skip := func(rel, name string) bool {
+			ms, ok := markers[name]
+			if !ok {
+				return false
+			}
+			parent := project
+			if d := path.Dir(rel); d != "." {
+				parent += "/" + d
+			}
+			return s.hasRegularFile(parent, ms)
+		}
+		res, err := sizes.MeasureDir(s.ctx, e.Dir, sizes.Options{SkipDir: skip})
 		_ = e.Dir.Close()
 		// An incomplete walk cannot prove the project idle.
 		idle = err == nil && res.Status == sizes.StatusComplete &&
@@ -462,6 +481,38 @@ func (s *scanner) projectIdle(project string, days int, cache map[string]bool) b
 	}
 	cache[key] = idle
 	return idle
+}
+
+// artifactMarkers maps each project-artifact directory name to the markers
+// that make a directory of that name an artifact.
+func (s *scanner) artifactMarkers() map[string][]string {
+	out := map[string][]string{}
+	for _, r := range s.rules {
+		if r.Match.Kind == rules.MatchProjectArtifact {
+			for _, n := range r.Match.Names {
+				out[n] = append(out[n], r.Match.Markers...)
+			}
+		}
+	}
+	return out
+}
+
+// hasRegularFile reports whether dir holds a regular file named one of
+// names, opened through the session (no symlink is followed).
+func (s *scanner) hasRegularFile(dir string, names []string) bool {
+	for _, n := range names {
+		e, err := s.sess.Open(dir + "/" + n)
+		if err != nil {
+			continue
+		}
+		if e.Dir != nil {
+			_ = e.Dir.Close()
+		}
+		if e.Info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *scanner) artifactNames() map[string]bool {
