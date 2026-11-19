@@ -298,7 +298,7 @@ func TestExplainItem(t *testing.T) {
 		}
 	}
 	code, out, _ := cli(t, "explain", target.ID)
-	if code != exitOK || !strings.Contains(out, target.Path) || !strings.Contains(out, "Selected:   yes") {
+	if code != exitOK || !strings.Contains(out, target.Path) || !strings.Contains(out, "Selected:   yes") || !strings.HasPrefix(out, "Home: "+home+"\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	_, out, _ = cli(t, "explain", target.ID, "--json")
@@ -582,7 +582,7 @@ func TestKippleHomeAliasOfRealHomeRefused(t *testing.T) {
 			t.Skipf("spelling does not resolve on this volume: %v", err)
 		}
 		t.Setenv("KIPPLE_HOME", home)
-		for _, args := range [][]string{{"scan", "--json"}, {"rules", "--json"}} {
+		for _, args := range [][]string{{"scan", "--json"}, {"rules", "--json"}, {"version", "--json"}} {
 			code, out, errOut := cliWith(t, rt, args...)
 			var env errorEnvelope
 			exactlyOneJSON(t, out, &env)
@@ -697,4 +697,37 @@ func TestKippleHomeAliasOfRealHomeRefused(t *testing.T) {
 			t.Fatalf("exit %d home %q", code, p.Home)
 		}
 	})
+}
+
+// Review finding: with KIPPLE_HOME set, version reports a refused home as
+// an error (exit 1, code home) like every other command, and prints the
+// home when it is accepted; without KIPPLE_HOME it needs no home.
+func TestVersionHome(t *testing.T) {
+	home := fixture(t)
+	if code, out, _ := cli(t, "version"); code != exitOK || !strings.Contains(out, "home "+home) {
+		t.Fatalf("accepted home: exit %d %q", code, out)
+	}
+	for _, bad := range []string{fakeRealHome(t), home + "-missing", "relative"} {
+		rt := testEnv(t)
+		rt.realHomes = func() ([]string, error) { return []string{bad}, nil }
+		t.Setenv("KIPPLE_HOME", bad)
+		code, out, errOut := cliWith(t, rt, "version", "--json")
+		var env errorEnvelope
+		exactlyOneJSON(t, out, &env)
+		if code != exitError || env.Error.Code != codeHome || errOut == "" {
+			t.Fatalf("%s: exit %d %+v", bad, code, env)
+		}
+		if code, out, _ := cliWith(t, rt, "version"); code != exitError || out != "" {
+			t.Fatalf("%s human: exit %d stdout %q", bad, code, out)
+		}
+	}
+	t.Setenv("KIPPLE_HOME", "")
+	rt := testEnv(t)
+	rt.userHome = func() (string, error) {
+		t.Error("version without KIPPLE_HOME must not resolve a home")
+		return "", errors.New("no")
+	}
+	if code, out, _ := cliWith(t, rt, "version"); code != exitOK || strings.Contains(out, "home ") {
+		t.Fatalf("no KIPPLE_HOME: exit %d %q", code, out)
+	}
 }

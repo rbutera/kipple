@@ -546,7 +546,12 @@ func (a *app) explainCommand() *cobra.Command {
 				for _, r := range rs {
 					if r.ID == it.Rule {
 						doc := explainDocument{SchemaVersion: plan.SchemaVersion, Home: h.home, Rule: r, Item: &it}
-						return a.emit(doc, func(w io.Writer) error { return output.ExplainItem(w, it, r) })
+						return a.emit(doc, func(w io.Writer) error {
+							if h.fromEnv {
+								fmt.Fprintf(w, "Home: %s\n\n", h.home)
+							}
+							return output.ExplainItem(w, it, r)
+						})
 					}
 				}
 			}
@@ -594,10 +599,16 @@ func (a *app) versionCommand() *cobra.Command {
 		Args:  noArgs,
 		RunE: func(*cobra.Command, []string) error {
 			doc := versionDocument{Version: version, Commit: commit, SchemaVersion: plan.SchemaVersion}
+			// version needs no home, so without KIPPLE_HOME it prints none.
+			// With KIPPLE_HOME set every output names the effective home
+			// (spec "Test home override"), so a refused one is an error here
+			// as in every other command.
 			if a.rt.getenv("KIPPLE_HOME") != "" {
-				if home, _, err := resolveHome(a.rt); err == nil {
-					doc.Home = home
+				home, _, err := resolveHome(a.rt)
+				if err != nil {
+					return err
 				}
+				doc.Home = home
 			}
 			return a.emit(doc, func(w io.Writer) error {
 				_, err := fmt.Fprintf(w, "kipple %s (commit %s, schema_version %d)\n", doc.Version, doc.Commit, doc.SchemaVersion)
