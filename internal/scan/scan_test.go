@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
 	"github.com/rbutera/kipple/internal/policy"
@@ -547,7 +549,17 @@ func TestIdleCheckSkipsOnlyArtifacts(t *testing.T) {
 		f("dev/nested/package.json", old), f("dev/nested/node_modules/x/i.js", old),
 		f("dev/nested/examples/demo/package.json", old),
 		f("dev/nested/examples/demo/node_modules/y/i.js", recent),
-	}}
+		// A marker that is a symlink does not make a sibling an artifact.
+		f("dev/symmarker/package.json", old), f("dev/symmarker/node_modules/x/i.js", old),
+		f("dev/symmarker/real.toml", old),
+		f("dev/symmarker/.venv/lib/site.py", recent),
+		// Nor does a marker whose stored name differs in case.
+		f("dev/casemarker/package.json", old), f("dev/casemarker/node_modules/x/i.js", old),
+		f("dev/casemarker/Cargo.TOML", old),
+		f("dev/casemarker/target/notes.md", recent),
+	},
+		Symlinks: []testutil.Symlink{{Path: "dev/symmarker/pyproject.toml", Target: "~/dev/symmarker/real.toml"}},
+	}
 	var dirs []testutil.Dir
 	for _, d := range []string{
 		"dev/plain/src", "dev/plain/node_modules/x", "dev/plain/node_modules", "dev/plain/docs/target", "dev/plain/docs", "dev/plain",
@@ -555,15 +567,23 @@ func TestIdleCheckSkipsOnlyArtifacts(t *testing.T) {
 		"dev/sibling/node_modules/x", "dev/sibling/node_modules", "dev/sibling/.venv/lib", "dev/sibling/.venv", "dev/sibling",
 		"dev/nested/node_modules/x", "dev/nested/node_modules", "dev/nested/examples/demo/node_modules/y",
 		"dev/nested/examples/demo/node_modules", "dev/nested/examples/demo", "dev/nested/examples", "dev/nested",
+		"dev/symmarker/node_modules/x", "dev/symmarker/node_modules", "dev/symmarker/.venv/lib", "dev/symmarker/.venv", "dev/symmarker",
+		"dev/casemarker/node_modules/x", "dev/casemarker/node_modules", "dev/casemarker/target", "dev/casemarker",
 	} {
 		mt := old
-		if strings.HasPrefix(d, "dev/plain/docs") || strings.HasPrefix(d, "dev/roottarget/target") || strings.HasPrefix(d, "dev/sibling/.venv") || strings.HasPrefix(d, "dev/nested/examples/demo/node_modules") {
+		if strings.HasPrefix(d, "dev/plain/docs") || strings.HasPrefix(d, "dev/roottarget/target") || strings.HasPrefix(d, "dev/sibling/.venv") || strings.HasPrefix(d, "dev/nested/examples/demo/node_modules") ||
+			strings.HasPrefix(d, "dev/symmarker/.venv") || strings.HasPrefix(d, "dev/casemarker/target") {
 			mt = recent
 		}
 		dirs = append(dirs, testutil.Dir{Path: d, MTime: mt})
 	}
 	spec.Dirs = dirs
 	home := testutil.NewHome(t, spec)
+	// The symlink's own mtime is now; age it so only the marker decides.
+	tv := []unix.Timeval{unix.NsecToTimeval(old.UnixNano()), unix.NsecToTimeval(old.UnixNano())}
+	if err := unix.Lutimes(home+"/dev/symmarker/pyproject.toml", tv); err != nil {
+		t.Fatal(err)
+	}
 	items := byRel(t, runScan(t, home, rules.LevelReview), home)
 	for _, tc := range []struct {
 		name, rel string
@@ -573,6 +593,8 @@ func TestIdleCheckSkipsOnlyArtifacts(t *testing.T) {
 		{"Recently edited inside a root folder merely named target", "dev/roottarget/node_modules", true},
 		{"Fresh sibling artifact beside its marker is skipped", "dev/sibling/node_modules", false},
 		{"Fresh nested install beside its own manifest is skipped", "dev/nested/node_modules", false},
+		{"Recently edited beside a symlinked marker", "dev/symmarker/node_modules", true},
+		{"Recently edited beside a wrong-case marker", "dev/casemarker/node_modules", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			it, ok := items[tc.rel]
