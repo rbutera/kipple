@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rbutera/kipple/internal/config"
+	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
@@ -49,7 +50,10 @@ type runtimeEnv struct {
 	// KIPPLE_HOME set, kipple refuses a KIPPLE_HOME that is, is inside, or
 	// contains any of them.
 	realHomes func() ([]string, error)
-	isTTY     func(io.Writer) bool
+	// guardFS looks up directory identities for that guard; the zero value
+	// means the real file system.
+	guardFS homeguard.FS
+	isTTY   func(io.Writer) bool
 }
 
 // cliError carries an exit code and a machine-readable code.
@@ -269,6 +273,10 @@ func effectiveRules(cfg config.Config) []rules.Rule {
 // and each component spelled as stored on disk, so the policy's
 // byte-identical name checks match (design D3). This is the only place
 // kipple reads the real home.
+//
+// The respelling happens before the KIPPLE_HOME guard, and the guard checks
+// the exact path returned, so nothing after the check changes what was
+// checked.
 func resolveHome(rt runtimeEnv) (string, bool, error) {
 	h := rt.getenv("KIPPLE_HOME")
 	fromEnv := h != ""
@@ -285,39 +293,70 @@ func resolveHome(rt runtimeEnv) (string, bool, error) {
 	if err != nil {
 		return "", fromEnv, fail(codeHome, "home %q cannot be resolved: %v", h, err)
 	}
-	fi, err := os.Lstat(resolved)
+	resolved = filepath.Clean(resolved)
+	final := onDiskCase(resolved)
+	fi, err := os.Lstat(final)
 	if err != nil || !fi.IsDir() {
 		return "", fromEnv, fail(codeHome, "home %q is not a directory", h)
 	}
 	if fromEnv {
-		if err := guardRealHome(rt, resolved); err != nil {
+		if err := guardRealHome(rt, h, resolved, final); err != nil {
 			return "", fromEnv, err
 		}
 	}
-	return onDiskCase(filepath.Clean(resolved)), fromEnv, nil
+	return final, fromEnv, nil
 }
 
 // guardRealHome refuses a KIPPLE_HOME that is the real home folder, lies
 // inside it, or contains it. KIPPLE_HOME exists for fixtures and agents'
 // sandboxes; pointed into the real home (say ~/Documents/OldMac), it would
-// sidestep the denylist, which is relative to home. It fails closed when the
-// real home cannot be determined.
-func guardRealHome(rt runtimeEnv, home string) error {
+// sidestep the denylist, which is relative to home.
+//
+// Identity decides, not spelling: final (the path kipple will use) and
+// resolved (before respelling) must be the same directory, and neither may
+// relate to any real home location by (dev, ino) (see homeguard.Relate).
+// The case-insensitive string comparison is kept as an extra refusal; it
+// can only refuse more. It fails closed when the real home cannot be
+// determined or any identity lookup fails.
+func guardRealHome(rt runtimeEnv, given, resolved, final string) error {
 	reals, err := rt.realHomes()
 	if err != nil || len(reals) == 0 {
 		return fail(codeHome, "KIPPLE_HOME is set but the real home folder cannot be determined to guard against it: %v", err)
 	}
+	fsys := rt.guardFS
+	if fsys.Chain == nil || fsys.Stat == nil {
+		fsys = homeguard.System()
+	}
+	// The respelled path must be the very directory that was resolved.
+	if final != resolved {
+		a, errA := fsys.Chain(resolved, true)
+		b, errB := fsys.Chain(final, true)
+		if errA != nil || errB != nil || len(a) == 0 || len(b) == 0 || a[0] != b[0] {
+			return fail(codeHome, "KIPPLE_HOME %q changed identity when respelled as %q; refusing", given, final)
+		}
+	}
 	for _, r := range reals {
-		if within(home, r) || within(r, home) {
-			return fail(codeHome, "KIPPLE_HOME %q is the real home folder, inside it, or contains it (%s); point it at a separate fixture folder", home, r)
+		for _, p := range []string{final, resolved} {
+			rel, err := homeguard.Relate(fsys, p, r)
+			if err != nil {
+				return fail(codeHome, "KIPPLE_HOME %q cannot be checked against the real home folder, so it is refused: %v", given, err)
+			}
+			if rel != homeguard.Separate {
+				return fail(codeHome, "KIPPLE_HOME %q %s (%s); point it at a separate fixture folder", given, rel, r)
+			}
+		}
+		for _, p := range []string{given, resolved, final} {
+			if within(p, r) || within(r, p) {
+				return fail(codeHome, "KIPPLE_HOME %q is the real home folder, inside it, or contains it (%s); point it at a separate fixture folder", given, r)
+			}
 		}
 	}
 	return nil
 }
 
 // within reports whether p is root or below it, comparing the given and the
-// symlink-resolved forms case-insensitively (APFS is case-insensitive by
-// default).
+// symlink-resolved forms case-insensitively. It is a second, spelling-based
+// refusal; homeguard.Relate is the identity check that decides.
 func within(p, root string) bool {
 	forms := func(x string) []string {
 		out := []string{filepath.Clean(x)}

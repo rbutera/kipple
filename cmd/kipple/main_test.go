@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
 	"github.com/rbutera/kipple/internal/rules"
@@ -554,6 +555,136 @@ func TestKippleHomeInsideRealHomeRefused(t *testing.T) {
 		rt.realHomes = func() ([]string, error) { return nil, errors.New("unknown") }
 		if code, _, _ := cliWith(t, rt, "scan"); code != exitError {
 			t.Fatalf("exit %d", code)
+		}
+	})
+}
+
+// Review finding (wave 2): the KIPPLE_HOME guard compared spellings, so
+// APFS aliases of the real home passed it and were then respelled to the
+// real folder. Identity decides now. Each case below names a directory in
+// the stand-in real home through an alias that the old string comparison
+// accepted.
+func TestKippleHomeAliasOfRealHomeRefused(t *testing.T) {
+	fixture(t)
+	refused := func(t *testing.T, rt runtimeEnv, home string) {
+		t.Helper()
+		if fi, err := os.Stat(home); err != nil || !fi.IsDir() {
+			t.Skipf("spelling does not resolve on this volume: %v", err)
+		}
+		t.Setenv("KIPPLE_HOME", home)
+		for _, args := range [][]string{{"scan", "--json"}, {"rules", "--json"}} {
+			code, out, errOut := cliWith(t, rt, args...)
+			var env errorEnvelope
+			exactlyOneJSON(t, out, &env)
+			if code != exitError || env.Error.Code != codeHome || !strings.Contains(errOut, "real home") {
+				t.Fatalf("%v: exit %d %+v stderr %q", args, code, env, errOut)
+			}
+		}
+	}
+	mkReal := func(t *testing.T, name string) (string, string) {
+		t.Helper()
+		base, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		real := filepath.Join(base, "Users", name)
+		if err := os.MkdirAll(filepath.Join(real, "Documents", "OldMac", "Library", "Caches", "com.example.app"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return base, real
+	}
+	withReal := func(t *testing.T, real string) runtimeEnv {
+		rt := testEnv(t)
+		rt.realHomes = func() ([]string, error) { return []string{real}, nil }
+		return rt
+	}
+
+	t.Run("Long s spelling inside the real home", func(t *testing.T) {
+		base, real := mkReal(t, "me")
+		refused(t, withReal(t, real), filepath.Join(base, "U\u017fers", "me", "Documents", "OldMac"))
+	})
+	t.Run("Long s spelling of the real home", func(t *testing.T) {
+		base, real := mkReal(t, "me")
+		refused(t, withReal(t, real), filepath.Join(base, "U\u017fers", "me"))
+	})
+	t.Run("Long s spelling of an ancestor", func(t *testing.T) {
+		base, real := mkReal(t, "me")
+		refused(t, withReal(t, real), filepath.Join(base, "U\u017fers"))
+	})
+	t.Run("NFD spelling inside the real home", func(t *testing.T) {
+		base, real := mkReal(t, "m\u00e9") // stored precomposed (NFC)
+		refused(t, withReal(t, real), filepath.Join(base, "Users", "me\u0301", "Documents", "OldMac"))
+	})
+
+	// Firmlinks (/System/Volumes/Data/Users/<me> is /Users/<me>) cannot be
+	// made in a temp folder, so a stub identity function models them over
+	// real directories.
+	firmlinked := func(t *testing.T, alias func(sys homeguard.FS, fixture, real string) homeguard.FS) {
+		t.Helper()
+		_, real := mkReal(t, "me")
+		home := fixture(t)
+		rt := withReal(t, real)
+		rt.guardFS = alias(homeguard.System(), home, real)
+		refused(t, rt, home)
+	}
+	t.Run("Firmlink spelling inside the real home", func(t *testing.T) {
+		firmlinked(t, func(sys homeguard.FS, fx, real string) homeguard.FS {
+			chain := sys.Chain
+			sys.Chain = func(dir string, nofollow bool) ([]homeguard.ID, error) {
+				if dir != fx {
+					return chain(dir, nofollow)
+				}
+				r, err := chain(real, false)
+				if err != nil {
+					return nil, err
+				}
+				return append([]homeguard.ID{{Dev: r[0].Dev, Ino: 1 << 40}}, r...), nil
+			}
+			return sys
+		})
+	})
+	t.Run("Firmlink spelling of the real home", func(t *testing.T) {
+		firmlinked(t, func(sys homeguard.FS, fx, real string) homeguard.FS {
+			chain := sys.Chain
+			sys.Chain = func(dir string, nofollow bool) ([]homeguard.ID, error) {
+				if dir == fx {
+					dir, nofollow = real, false
+				}
+				return chain(dir, nofollow)
+			}
+			return sys
+		})
+	})
+	t.Run("Data volume root reaching the real home by a firmlink", func(t *testing.T) {
+		firmlinked(t, func(sys homeguard.FS, fx, real string) homeguard.FS {
+			stat, chain := sys.Stat, sys.Chain
+			sys.Stat = func(p string) (homeguard.ID, bool, error) {
+				if p == filepath.Join(fx, "Users", "me") {
+					r, err := chain(real, false)
+					if err != nil {
+						return homeguard.ID{}, false, err
+					}
+					return r[0], true, nil
+				}
+				return stat(p)
+			}
+			return sys
+		})
+	})
+	t.Run("Identity lookup failure fails closed", func(t *testing.T) {
+		firmlinked(t, func(sys homeguard.FS, _, _ string) homeguard.FS {
+			sys.Chain = func(string, bool) ([]homeguard.ID, error) { return nil, errors.New("no identity") }
+			return sys
+		})
+	})
+	t.Run("Separate fixture with identities is accepted", func(t *testing.T) {
+		_, real := mkReal(t, "me")
+		home := fixture(t)
+		code, out, _ := cliWith(t, withReal(t, real), "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if code != exitOK || p.Home != home {
+			t.Fatalf("exit %d home %q", code, p.Home)
 		}
 	})
 }

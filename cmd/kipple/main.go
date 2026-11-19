@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/user"
+
+	"github.com/rbutera/kipple/internal/homeguard"
 )
 
 // Set with -ldflags "-X main.version=... -X main.commit=...".
@@ -26,6 +28,7 @@ func system() runtimeEnv {
 		geteuid:   os.Geteuid,
 		userHome:  os.UserHomeDir,
 		realHomes: realHomes,
+		guardFS:   homeguard.System(),
 		isTTY:     isTerminal,
 	}
 }
