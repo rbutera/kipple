@@ -2,7 +2,7 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 
-.PHONY: all build test test-permanent lint vet fmt-check check check-no-real-home
+.PHONY: all build test test-permanent lint vet fmt-check check check-no-real-home release-snapshot agent-flow-check
 
 all: check
 
@@ -39,3 +39,8 @@ check-no-real-home:
 
 check: fmt-check vet lint check-no-real-home test test-permanent build
 	@echo "make check: OK"
+
+# Builds the release archives into dist/ exactly as a tag would, without
+# signing or publishing anything.
+release-snapshot:
+	goreleaser release --snapshot --clean --skip=sign

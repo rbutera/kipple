@@ -12,10 +12,12 @@ import (
 	"github.com/rbutera/kipple/internal/procs"
 )
 
-// Set with -ldflags "-X main.version=... -X main.commit=...".
+// Set with -ldflags "-X main.version=... -X main.commit=... -X main.date=..."
+// (see .goreleaser.yaml).
 var (
 	version = "dev"
 	commit  = "none"
+	date    = ""
 )
 
 func main() {

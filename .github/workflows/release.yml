@@ -1,0 +1,76 @@
+name: Release
+
+# A v* tag publishes a GitHub Release built by goreleaser, but only when the
+# CI workflow concluded success for the very commit the tag points at.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci-green:
+    name: CI is green on this commit
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Wait for the CI workflow on ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Poll for up to 30 minutes while a CI run for this commit is
+          # queued or in progress. Pass only on a completed, successful run;
+          # fail on a failed run or when CI never ran for this commit.
+          for attempt in $(seq 1 60); do
+            runs=$(gh api "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=50" \
+              --jq '[.workflow_runs[] | {status, conclusion}]')
+            echo "attempt ${attempt}: ${runs}"
+            if echo "${runs}" | jq -e 'any(.[]; .status == "completed" and .conclusion == "success")' >/dev/null; then
+              echo "CI succeeded for ${SHA}."
+              exit 0
+            fi
+            if ! echo "${runs}" | jq -e 'any(.[]; .status != "completed")' >/dev/null; then
+              echo "::error::No successful CI run for ${SHA}; refusing to release."
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::CI for ${SHA} did not finish within 30 minutes; refusing to release."
+          exit 1
+
+  release:
+    name: Build, sign and publish
+    needs: ci-green
+    runs-on: macos-latest
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # cosign keyless signing (GitHub OIDC)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@v3
+        with:
+          # cosign 2.x writes the detached checksums.txt.sig and
+          # checksums.txt.pem that the README's verify command uses.
+          cosign-release: v2.4.3
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

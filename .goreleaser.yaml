@@ -1,0 +1,99 @@
+# kipple release configuration (goreleaser v2).
+#
+# Local check, which signs nothing and publishes nothing:
+#   make release-snapshot   # goreleaser release --snapshot --clean --skip=sign
+#
+# The release workflow (.github/workflows/release.yml) runs this on a v* tag
+# once CI is green for the same commit, and signs checksums.txt with cosign
+# keyless (GitHub OIDC). v0.1.0 ships the CLI only; the GUI comes later.
+version: 2
+
+project_name: kipple
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: kipple
+    main: ./cmd/kipple
+    binary: kipple
+    # The NSFileManager Trash fallback (internal/trash) is cgo.
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin]
+    goarch: [arm64, amd64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }} -X main.date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    hooks:
+      post:
+        # Ad-hoc signature. Developer ID signing and notarisation are on the
+        # roadmap; until then macOS may still ask before the first run.
+        - cmd: codesign --force --sign - "{{ .Path }}"
+          output: true
+
+universal_binaries:
+  - id: kipple-universal
+    ids: [kipple]
+    name_template: kipple
+    replace: false
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    hooks:
+      post:
+        - cmd: codesign --force --sign - "{{ .Path }}"
+          output: true
+
+archives:
+  - id: kipple
+    ids: [kipple, kipple-universal]
+    formats: [tar.gz]
+    # kipple_0.1.0_darwin_arm64.tar.gz, ..._amd64, ..._universal
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+      - docs/safety.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+signs:
+  # Keyless: cosign gets a short-lived certificate for the workflow's OIDC
+  # identity and records the signature in the Rekor transparency log.
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - --yes
+      - ${artifact}
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^tests?:"
+      - "^ci:"
+
+release:
+  github:
+    owner: rbutera
+    name: kipple
+  prerelease: auto
+  footer: |
+    Verify the download before you run it: see "Install" in the README
+    (sha256 checksums signed with cosign keyless by this repository's
+    release workflow).

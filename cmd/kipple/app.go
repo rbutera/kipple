@@ -766,6 +766,7 @@ func (a *app) schemaCommand() *cobra.Command {
 type versionDocument struct {
 	Version       string `json:"version"`
 	Commit        string `json:"commit"`
+	Date          string `json:"date,omitempty"`
 	SchemaVersion int    `json:"schema_version"`
 	Home          string `json:"home,omitempty"`
 }
@@ -776,7 +777,7 @@ func (a *app) versionCommand() *cobra.Command {
 		Short: "Print the version, commit and document schema version",
 		Args:  noArgs,
 		RunE: func(*cobra.Command, []string) error {
-			doc := versionDocument{Version: version, Commit: commit, SchemaVersion: plan.SchemaVersion}
+			doc := versionDocument{Version: version, Commit: commit, Date: date, SchemaVersion: plan.SchemaVersion}
 			// version needs no home, so without KIPPLE_HOME it prints none.
 			// With KIPPLE_HOME set every output names the effective home
 			// (spec "Test home override"), so a refused one is an error here
@@ -789,7 +790,11 @@ func (a *app) versionCommand() *cobra.Command {
 				doc.Home = home
 			}
 			return a.emit(doc, func(w io.Writer) error {
-				_, err := fmt.Fprintf(w, "kipple %s (commit %s, schema_version %d)\n", doc.Version, doc.Commit, doc.SchemaVersion)
+				built := ""
+				if doc.Date != "" {
+					built = ", built " + doc.Date
+				}
+				_, err := fmt.Fprintf(w, "kipple %s (commit %s%s, schema_version %d)\n", doc.Version, doc.Commit, built, doc.SchemaVersion)
 				if err == nil && doc.Home != "" {
 					_, err = fmt.Fprintf(w, "home %s\n", doc.Home)
 				}
