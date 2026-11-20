@@ -71,4 +71,29 @@ func TestScreenshots(t *testing.T) {
 	u.update()
 	capture(t, u, out, "gui-done-light.png")
 	assertDoneFits(t, u)
+	setVariant(u, true)
+	capture(t, u, out, "gui-done-dark.png")
+	u.win.Resize(fyne.NewSize(760, 520))
+	u.update()
+	capture(t, u, out, "gui-done-min-dark.png")
+	assertDoneFits(t, u)
+	setVariant(u, false)
+	capture(t, u, out, "gui-done-min-light.png")
+	u.win.Resize(fyne.NewSize(960, 640))
+	u.update()
+
+	// Put back, from the done screen.
+	u.m.OpenPutBack()
+	u.update()
+	capture(t, u, out, "gui-putback-light.png")
+	if err := u.m.PutBackNow(); err != nil {
+		t.Fatal(err)
+	}
+	u.update()
+	capture(t, u, out, "gui-restored-light.png")
+	assertDoneFits(t, u)
+	u.win.Resize(fyne.NewSize(760, 520))
+	u.update()
+	capture(t, u, out, "gui-restored-min-light.png")
+	assertDoneFits(t, u)
 }

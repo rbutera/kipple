@@ -355,7 +355,7 @@ func assertDoneFits(t *testing.T, u *ui) {
 	}
 }
 
-func TestDoneFitsDefaultWindow(t *testing.T) {
+func TestDoneFitsTheWindow(t *testing.T) {
 	fixture(t)
 	u := newTestUI(t, false)
 	u.m.ScanNow()
@@ -364,9 +364,12 @@ func TestDoneFitsDefaultWindow(t *testing.T) {
 	if err := u.m.ApplyNow(); err != nil {
 		t.Fatal(err)
 	}
-	u.update()
-	_ = u.win.Canvas().Capture()
-	assertDoneFits(t, u)
+	for _, size := range []fyne.Size{fyne.NewSize(960, 640), fyne.NewSize(760, 520)} {
+		u.win.Resize(size)
+		u.update()
+		_ = u.win.Canvas().Capture()
+		assertDoneFits(t, u)
+	}
 }
 
 // Open Trash and Open receipt pass /usr/bin/open only a real folder and a

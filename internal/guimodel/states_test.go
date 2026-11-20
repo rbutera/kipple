@@ -117,3 +117,54 @@ func TestMissingTrashNote(t *testing.T) {
 		t.Fatalf("%+v", v)
 	}
 }
+
+// After Put back the done screen reports the put back, not the move; when
+// something could not go back (its place is taken), Put back is offered
+// again, and a second run adds up with the first.
+func TestPartialPutBackAndRetry(t *testing.T) {
+	f := newFx(t, fixtureSpec())
+	m := f.scanned()
+	m.OpenConfirm()
+	if err := m.ApplyNow(); err != nil {
+		t.Fatal(err)
+	}
+	total := len(m.Result().Moved)
+	blocker := testutil.Abs(f.home, "Library/Logs/app")
+	if err := os.Mkdir(blocker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.OpenPutBack()
+	if err := m.PutBackNow(); err != nil {
+		t.Fatal(err)
+	}
+	d := m.Done()
+	want := "Put back " + itoa(total-1) + " of " + itoa(total) + " items"
+	if d.Title != want || d.SpaceLine != "is back where it was." || d.MovedLabel != "PUT BACK" || d.SkippedLabel != "STILL IN THE TRASH" {
+		t.Fatalf("%+v", d)
+	}
+	if strings.Contains(d.SpaceLine+d.SharedNote, "Empty the Trash") || d.SharedNote != "1 item is still in the Trash; the list says why." {
+		t.Fatalf("space line %q note %q", d.SpaceLine, d.SharedNote)
+	}
+	if len(d.Skipped) != 1 || d.Skipped[0].Text != "Something is already at its original path." || !d.CanPutBack || d.ChangedMind == "" {
+		t.Fatalf("%+v", d)
+	}
+	m.OpenPutBack()
+	if v := m.PutBack(); v.Title != "Put 1 item back?" {
+		t.Fatalf("%+v", v)
+	}
+	m.CancelPutBack()
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	m.OpenPutBack()
+	if err := m.PutBackNow(); err != nil {
+		t.Fatal(err)
+	}
+	d = m.Done()
+	if d.Title != "Put back "+itoa(total)+" items" || len(d.Skipped) != 0 || d.CanPutBack || d.ChangedMind != "" || len(d.Moved)+d.MovedMore != total {
+		t.Fatalf("%+v", d)
+	}
+	if entries, _ := os.ReadDir(testutil.Abs(f.home, ".Trash")); len(entries) != 0 {
+		t.Fatalf("Trash still holds %d", len(entries))
+	}
+}

@@ -236,10 +236,14 @@ func (u *ui) receiptCard(c guimodel.ReceiptCard, buttons bool) fyne.CanvasObject
 		return container.NewBorder(nil, nil, l, nil, value)
 	}
 	plain := func(s string) fyne.CanvasObject { return container.NewCenter(text(s, cInk, sizeBody, false)) }
-	id := text(c.ID, cInk, sizeBody, false)
-	id.TextStyle.Monospace = true
+	// The ID wraps (by character) rather than push Copy out of a narrow card.
+	id := widget.NewRichText(&widget.TextSegment{Text: c.ID, Style: widget.RichTextStyle{ColorName: cInk, SizeName: "kipple.caption", Inline: true, TextStyle: fyne.TextStyle{Monospace: true}}})
+	id.Wrapping = fyne.TextWrapBreak
 	rows := container.NewVBox(text("RECEIPT", cMuted, sizeCaption, true))
-	rows.Add(row("Receipt", container.NewHBox(container.NewCenter(id), linkButton("Copy", func() { u.copyText(c.ID) }))))
+	idLabel := container.New(fixed{80, 0}, container.NewVBox(layout.NewSpacer(), text("Receipt", cMuted, sizeCaption, false), layout.NewSpacer()))
+	copyID := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() { u.copyText(c.ID) })
+	copyID.Importance = widget.LowImportance
+	rows.Add(container.NewBorder(nil, nil, idLabel, container.NewCenter(copyID), id))
 	rows.Add(row("Moved", plain(c.Moved)))
 	if c.Skipped > 0 {
 		rows.Add(row("Skipped", plain(itoa(c.Skipped))))
@@ -301,46 +305,73 @@ func (a *absLayout) Layout(objs []fyne.CanvasObject, _ fyne.Size) {
 
 func (u *ui) done() fyne.CanvasObject {
 	d := u.m.Done()
-	head := container.NewVBox(line(d.Title, cInk, "kipple.heading", true))
-	if d.Total != "" {
-		head.Add(container.NewHBox(line(d.Total, cInk, szDisplay, true), container.NewCenter(para(d.SpaceLine, cMuted, theme.SizeNameText, false))))
-		if d.SharedNote != "" {
-			head.Add(para(d.SharedNote, cMuted, theme.SizeNameText, false))
+	// In a short window (the 760x520 minimum) the total joins the title so
+	// the whole result still fits without scrolling.
+	compact := u.win.Canvas().Size().Height < 600
+	head := container.NewVBox()
+	mark := float32(56)
+	switch {
+	case compact:
+		mark = 36
+		title := d.Title
+		if d.Total != "" {
+			title += " · " + d.Total
+		}
+		head.Add(line(title, cInk, "kipple.heading", true))
+		if d.SpaceLine != "" {
+			head.Add(para(d.SpaceLine, cMuted, theme.SizeNameText, false))
+		}
+	default:
+		head.Add(line(d.Title, cInk, "kipple.heading", true))
+		if d.Total != "" {
+			head.Add(container.NewHBox(line(d.Total, cInk, szDisplay, true), container.NewCenter(para(d.SpaceLine, cMuted, theme.SizeNameText, false))))
 		}
 	}
-	top := container.NewBorder(nil, nil, pad(recessMark(56), 4, 0, 0, space4), nil, head)
+	if d.SharedNote != "" {
+		head.Add(para(d.SharedNote, cMuted, theme.SizeNameText, false))
+	}
+	top := container.NewBorder(nil, nil, pad(recessMark(mark), 4, 0, 0, space4), nil, head)
 
 	// Left: the receipt and how to change your mind. Right: what moved and
 	// what was skipped. The whole result fits the default 960x640 window.
 	left := container.NewVBox(u.receiptCard(d.Card, true))
-	if d.ChangedMind != "" {
-		left.Add(spacer(1, 4))
-		left.Add(line("Changed your mind?", cInk, "kipple.subheading", true))
-		left.Add(para(d.ChangedMind, cMuted, theme.SizeNameText, false))
-		left.Add(container.NewBorder(nil, nil, nil, container.NewVBox(linkButton("Copy", func() { u.copyText(d.Command) })), monoPara(d.Command, cInk)))
+	// "Changed your mind?" sits under the receipt card; in a short window it
+	// runs across the full width below both cards, where it needs fewer lines.
+	mind := container.NewVBox()
+	switch {
+	case d.ChangedMind != "" && compact:
+		// One paragraph led by the heading, to save lines.
+		mind.Add(rich(seg("Changed your mind? ", cInk, theme.SizeNameText, true), seg(d.ChangedMind, cMuted, theme.SizeNameText, false)))
+	case d.ChangedMind != "":
+		mind.Add(spacer(1, 4))
+		mind.Add(line("Changed your mind?", cInk, "kipple.subheading", true))
+		mind.Add(para(d.ChangedMind, cMuted, theme.SizeNameText, false))
 	}
-	if d.Restored != nil {
-		left.Add(spacer(1, 4))
-		left.Add(para(d.Restored.Title, cInk, "kipple.subheading", true))
-		for _, s := range d.Restored.Skipped {
-			left.Add(skipLine(s))
-		}
+	if d.ChangedMind != "" {
+		mind.Add(container.NewBorder(nil, nil, nil, container.NewVBox(linkButton("Copy", func() { u.copyText(d.Command) })), monoPara(d.Command, cInk)))
+	}
+	if !compact {
+		left.Add(mind)
 	}
 	right := container.NewVBox()
 	if len(d.Moved) > 0 {
-		right.Add(container.NewBorder(nil, nil, line("MOVED", cMuted, "kipple.caption", true), line(d.Total, cMuted, "kipple.caption", true)))
-		for _, l := range d.Moved {
+		right.Add(container.NewBorder(nil, nil, line(d.MovedLabel, cMuted, "kipple.caption", true), line(d.Total, cMuted, "kipple.caption", true)))
+		rows, more := d.Moved, d.MovedMore
+		if compact && len(rows) > 4 && !u.m.ShowingAllMoved() {
+			rows, more = rows[:4], more+len(rows)-4
+		}
+		for _, l := range rows {
 			right.Add(container.NewBorder(nil, nil, nil, text(l.Text, cMuted, sizeBody, false), newPathText(l.Path, cInk, sizeBody)))
 		}
-		if d.MovedMore > 0 {
-			right.Add(container.NewBorder(nil, nil, text("and "+itoa(d.MovedMore)+" more", cMuted, sizeBody, false), linkButton("Show ›", func() { u.m.ShowAllMoved(); u.update() })))
+		if more > 0 {
+			right.Add(container.NewBorder(nil, nil, text("and "+itoa(more)+" more", cMuted, sizeBody, false), linkButton("Show ›", func() { u.m.ShowAllMoved(); u.update() })))
 		}
 	}
 	if len(d.Skipped) > 0 || d.NotTried > 0 {
 		if len(right.Objects) > 0 {
 			right.Add(spacer(1, space3))
 		}
-		right.Add(line("SKIPPED", cMuted, "kipple.caption", true))
+		right.Add(line(d.SkippedLabel, cMuted, "kipple.caption", true))
 		for _, s := range d.Skipped {
 			right.Add(skipLine(s))
 		}
@@ -359,7 +390,17 @@ func (u *ui) done() fyne.CanvasObject {
 		rightCol.Add(para("Warning: "+w, cInk, theme.SizeNameText, false))
 	}
 	cols := container.New(halves{space5}, left, rightCol)
-	u.doneScroll = container.NewVScroll(pad(container.NewVBox(top, spacer(1, space3), cols), space3, space3, space6, space6))
+	gap := float32(space3)
+	if compact {
+		gap = 4
+	}
+	body := container.NewVBox(top, spacer(1, gap), cols)
+	padTop, padBottom := float32(space3), float32(space5)
+	if compact {
+		body.Add(mind)
+		padTop, padBottom = 8, space3
+	}
+	u.doneScroll = container.NewVScroll(pad(body, padTop, padBottom, space6, space6))
 	return u.doneScroll
 }
 

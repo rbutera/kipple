@@ -103,6 +103,9 @@ type DoneView struct {
 	CanPutBack bool
 	// Restored summarises a put back, once it has run.
 	Restored *RestoredView
+	// MovedLabel and SkippedLabel head the two lists: MOVED and SKIPPED,
+	// or after Put back, PUT BACK and STILL IN THE TRASH.
+	MovedLabel, SkippedLabel string
 }
 
 // RestoredView is the result of Put back.
@@ -119,7 +122,7 @@ func (m *Model) Done() DoneView {
 		bytes += mv.Bytes
 		reclaim += mv.ReclaimableBytes
 	}
-	v := DoneView{Card: m.receiptCard()}
+	v := DoneView{Card: m.receiptCard(), MovedLabel: "MOVED", SkippedLabel: "SKIPPED"}
 	moved := len(r.Moved)
 	tried := moved
 	for _, s := range r.Skipped {
@@ -183,30 +186,64 @@ func (m *Model) Done() DoneView {
 		// macOS's Trash command did not have it, and Finder's Put Back
 		// works for those items, so the app offers Put back only after a
 		// run that moved items straight into the Trash folder.
-		v.CanPutBack = rename && m.restored == nil
+		v.CanPutBack = rename && (m.restored == nil || len(m.restored.Skipped) > 0)
 	}
 	if m.restored != nil {
-		rv := &RestoredView{}
-		n := len(m.restored.Restored)
-		switch {
-		case n == 0:
-			rv.Title = "Nothing was put back."
-		case len(m.restored.Skipped) > 0:
-			rv.Title = "Put back " + itoa(n) + " of " + words.Items(n+len(m.restored.Skipped)) + "."
-		default:
-			rv.Title = "Put back " + words.Items(n) + "."
-		}
-		for _, s := range m.restored.Skipped {
-			sentence, next := words.Skip(s.Reason)
-			rv.Skipped = append(rv.Skipped, Line{Path: m.Rel(s.Path), Text: sentence, Next: next})
-		}
-		v.Restored = rv
+		m.restoredView(&v)
 	}
 	return v
 }
 
+// restoredView turns the done screen into the put back's result: what went
+// back and what is still in the Trash, with why. The receipt card stays.
+// Put back stays offered while anything is still in the Trash.
+func (m *Model) restoredView(v *DoneView) {
+	rs := m.restored
+	n, k := len(rs.Restored), len(rs.Skipped)
+	rv := &RestoredView{}
+	switch {
+	case n == 0:
+		rv.Title = "Nothing was put back."
+	case k > 0:
+		rv.Title = "Put back " + itoa(n) + " of " + words.Items(n+k) + "."
+	default:
+		rv.Title = "Put back " + words.Items(n) + "."
+	}
+	var bytes int64
+	v.Moved, v.Skipped, v.NotTried = nil, nil, 0
+	for i, it := range rs.Restored {
+		bytes += it.Bytes
+		if i < 6 || m.showAllMove {
+			v.Moved = append(v.Moved, Line{Path: m.Rel(it.Path), Text: output.Bytes(it.Bytes)})
+		}
+	}
+	v.MovedMore = n - len(v.Moved)
+	for _, sk := range rs.Skipped {
+		sentence, next := words.Skip(sk.Reason)
+		l := Line{Path: m.Rel(sk.Path), Text: sentence, Next: next}
+		rv.Skipped = append(rv.Skipped, l)
+		v.Skipped = append(v.Skipped, l)
+	}
+	v.Restored = rv
+	v.Title = strings.TrimSuffix(rv.Title, ".")
+	v.MovedLabel, v.SkippedLabel = "PUT BACK", "STILL IN THE TRASH"
+	v.Total, v.SpaceLine, v.SharedNote = "", "", ""
+	if n > 0 {
+		v.Total = output.Bytes(bytes)
+		v.SpaceLine = "is back where it was."
+	}
+	if k > 0 {
+		v.SharedNote = words.Items(k) + " " + isAre(k) + " still in the Trash; the list says why."
+	} else {
+		v.ChangedMind, v.Command = "", ""
+	}
+}
+
 // ShowAllMoved expands the moved list in place.
 func (m *Model) ShowAllMoved() { m.showAllMove = true }
+
+// ShowingAllMoved reports whether the moved list is expanded.
+func (m *Model) ShowingAllMoved() bool { return m.showAllMove }
 
 // Result returns the latest apply result.
 func (m *Model) Result() plan.Result { return m.result }
@@ -239,6 +276,9 @@ type PutBackView struct {
 // PutBack describes the put-back confirmation.
 func (m *Model) PutBack() PutBackView {
 	n := len(m.result.Moved) + len(m.result.Displaced) + len(m.pending)
+	if m.restored != nil {
+		n = len(m.restored.Skipped)
+	}
 	return PutBackView{
 		Title: "Put " + words.Items(n) + " back?",
 		Body:  "Each item goes back to where it was, but only if that place is free and the item in the Trash is the one kipple moved there. Nothing is overwritten. This is what kipple restore " + output.SafeText(m.result.ReceiptID) + " --apply does.",
@@ -303,7 +343,19 @@ func (m *Model) PutBackDone(res plan.Result, err error) {
 		})
 		return
 	}
-	m.restored = &res
+	// Put back may run again for what is left; Restore skips the items it
+	// already put back (already_restored), so the results add up.
+	merged := plan.Result{Skipped: []plan.SkippedItem{}}
+	if m.restored != nil {
+		merged.Restored = append(merged.Restored, m.restored.Restored...)
+	}
+	merged.Restored = append(merged.Restored, res.Restored...)
+	for _, sk := range res.Skipped {
+		if sk.Reason != plan.SkipAlreadyRestored {
+			merged.Skipped = append(merged.Skipped, sk)
+		}
+	}
+	m.restored = &merged
 	m.sheet = SheetNone
 	m.hint = strings.TrimSuffix(m.Done().Restored.Title, ".") + ". The receipt records it."
 }
