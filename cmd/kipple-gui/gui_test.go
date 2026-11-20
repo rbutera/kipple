@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -335,5 +336,62 @@ func TestShortcutNeedsTheSheetUpForASecond(t *testing.T) {
 	u.moveToTrash()
 	if u.m.Sheet() != guimodel.SheetConfirm || testutil.Checksum(t, home) != before {
 		t.Fatalf("sheet %d: ⌘⌫ confirmed after 0.6 s", u.m.Sheet())
+	}
+}
+
+// assertDoneFits checks the done screen needs no scrolling in the window.
+func assertDoneFits(t *testing.T, u *ui) {
+	t.Helper()
+	if u.doneScroll == nil {
+		t.Fatal("not on the done screen")
+	}
+	if need, have := u.doneScroll.Content.MinSize().Height, u.doneScroll.Size().Height; need > have {
+		t.Errorf("the done screen needs %.0f pt but the window shows %.0f", need, have)
+	}
+}
+
+func TestDoneFitsDefaultWindow(t *testing.T) {
+	fixture(t)
+	u := newTestUI(t, false)
+	u.m.ScanNow()
+	u.update()
+	u.m.OpenConfirm()
+	if err := u.m.ApplyNow(); err != nil {
+		t.Fatal(err)
+	}
+	u.update()
+	_ = u.win.Canvas().Capture()
+	assertDoneFits(t, u)
+}
+
+// Open Trash and Open receipt pass /usr/bin/open only a real folder and a
+// real file: a receipt's trash_dir that has become a link is refused.
+func TestOpenChecksPaths(t *testing.T) {
+	home := fixture(t)
+	u := newTestUI(t, false)
+	var opened [][]string
+	u.open = func(args ...string) { opened = append(opened, args) }
+	u.m.ScanNow()
+	u.update()
+	u.m.OpenConfirm()
+	if err := u.m.ApplyNow(); err != nil {
+		t.Fatal(err)
+	}
+	u.update()
+	u.openTrash()
+	u.openReceipt()
+	if len(opened) != 2 || opened[0][0] != home+"/.Trash" || opened[1][0] != "-R" {
+		t.Fatalf("opened %v", opened)
+	}
+	trash := filepath.Join(home, ".Trash")
+	if err := os.Rename(trash, trash+"-real"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(trash+"-real", trash); err != nil {
+		t.Fatal(err)
+	}
+	u.openTrash()
+	if len(opened) != 2 || !strings.Contains(u.m.Status(), "it is not a folder") {
+		t.Fatalf("opened %v status %q", opened, u.m.Status())
 	}
 }

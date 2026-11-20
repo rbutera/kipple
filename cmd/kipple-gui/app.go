@@ -4,6 +4,7 @@ package main
 
 import (
 	"image/color"
+	"os"
 	"os/exec"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/rbutera/kipple/internal/guimodel"
+	"github.com/rbutera/kipple/internal/output"
 )
 
 // ui is the window and the model behind it. Every model change happens
@@ -32,11 +34,13 @@ type ui struct {
 	// quit ends the app.
 	quit func()
 
-	list      *widget.List
-	listRows  int
-	sheet     fyne.CanvasObject
-	sheetKind guimodel.Sheet
-	last      map[string]time.Time
+	list *widget.List
+	// doneScroll is the done screen's scroll (tests check it fits).
+	doneScroll *container.Scroll
+	listRows   int
+	sheet      fyne.CanvasObject
+	sheetKind  guimodel.Sheet
+	last       map[string]time.Time
 	// now is the clock (time.Now; tests replace it).
 	now func() time.Time
 	// confirmAt is when the confirmation opened, and keyReleased whether a
@@ -355,17 +359,34 @@ func (u *ui) card() *guimodel.ReceiptCard {
 
 // openTrash opens the Trash folder the receipt names (a KIPPLE_HOME run
 // opens its own test Trash, never the real one).
+//
+// The receipt is a file on disk, so its path is checked first: it must be
+// a real folder, not a symbolic link or anything else.
 func (u *ui) openTrash() {
-	if c := u.card(); c != nil && c.TrashDir != "" {
-		u.open(c.TrashDir)
+	c := u.card()
+	if c == nil || c.TrashDir == "" {
+		return
 	}
+	if fi, err := os.Lstat(c.TrashDir); err != nil || !fi.IsDir() {
+		u.m.SetHint("kipple won't open " + output.SafeText(c.TrashDir) + ": it is not a folder.")
+		u.update()
+		return
+	}
+	u.open(c.TrashDir)
 }
 
 // openReceipt reveals the receipt file in Finder.
 func (u *ui) openReceipt() {
-	if c := u.card(); c != nil && c.Path != "" {
-		u.open("-R", c.Path)
+	c := u.card()
+	if c == nil || c.Path == "" {
+		return
 	}
+	if fi, err := os.Lstat(c.Path); err != nil || !fi.Mode().IsRegular() {
+		u.m.SetHint("kipple won't reveal " + output.SafeText(c.Path) + ": it is not a file.")
+		u.update()
+		return
+	}
+	u.open("-R", c.Path)
 }
 
 func (u *ui) openPrivacy() {

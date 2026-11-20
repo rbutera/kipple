@@ -70,4 +70,5 @@ func TestScreenshots(t *testing.T) {
 	}
 	u.update()
 	capture(t, u, out, "gui-done-light.png")
+	assertDoneFits(t, u)
 }

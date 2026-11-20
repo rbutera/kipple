@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -196,7 +197,7 @@ func cardBox(o fyne.CanvasObject) fyne.CanvasObject {
 	bg := canvas.NewRectangle(col(cSurface))
 	bg.CornerRadius = sz(10)
 	bg.StrokeColor, bg.StrokeWidth = col(cSep), 1
-	return container.NewStack(bg, pad(o, space4, space4, space4, space4))
+	return container.NewStack(bg, pad(o, space3, space3, space4, space4))
 }
 
 // field is a labelled value with an 80pt label column.
@@ -222,26 +223,40 @@ func withButton(v fyne.CanvasObject, b fyne.CanvasObject) fyne.CanvasObject {
 }
 
 func (u *ui) receiptCard(c guimodel.ReceiptCard, buttons bool) fyne.CanvasObject {
-	rows := container.NewVBox(line("RECEIPT", cMuted, "kipple.caption", true))
-	rows.Add(field("Receipt", withButton(monoLine(c.ID, cInk), linkButton("Copy", func() { u.copyText(c.ID) }))))
-	rows.Add(field("Moved", line(c.Moved, cInk, theme.SizeNameText, false)))
+	// Single-line values are drawn without RichText's padding so the card
+	// stays compact; only How may wrap.
+	row := func(label string, value fyne.CanvasObject) fyne.CanvasObject {
+		l := container.New(fixed{80, 0}, container.NewVBox(layout.NewSpacer(), text(label, cMuted, sizeCaption, false), layout.NewSpacer()))
+		// The left inset matches RichText's, so rows line up with How.
+		return container.NewBorder(nil, nil, l, nil, pad(container.NewHBox(value), 0, 0, 8, 0))
+	}
+	// wrapped is a row whose value may wrap: the label sits on its first line.
+	wrapped := func(label string, value fyne.CanvasObject) fyne.CanvasObject {
+		l := container.New(fixed{80, 0}, container.NewVBox(spacer(1, 6), text(label, cMuted, sizeCaption, false), layout.NewSpacer()))
+		return container.NewBorder(nil, nil, l, nil, value)
+	}
+	plain := func(s string) fyne.CanvasObject { return container.NewCenter(text(s, cInk, sizeBody, false)) }
+	id := text(c.ID, cInk, sizeBody, false)
+	id.TextStyle.Monospace = true
+	rows := container.NewVBox(text("RECEIPT", cMuted, sizeCaption, true))
+	rows.Add(row("Receipt", container.NewHBox(container.NewCenter(id), linkButton("Copy", func() { u.copyText(c.ID) }))))
+	rows.Add(row("Moved", plain(c.Moved)))
 	if c.Skipped > 0 {
-		rows.Add(field("Skipped", line(itoa(c.Skipped), cInk, theme.SizeNameText, false)))
+		rows.Add(row("Skipped", plain(itoa(c.Skipped))))
 	}
 	if c.Displaced > 0 {
-		rows.Add(field("Displaced", line(itoa(c.Displaced), cInk, theme.SizeNameText, false)))
+		rows.Add(row("Displaced", plain(itoa(c.Displaced))))
 	}
 	if c.Pending > 0 {
-		rows.Add(field("Pending", para(itoa(c.Pending)+" · "+c.PendingPath, cInk, theme.SizeNameText, false)))
+		rows.Add(wrapped("Pending", para(itoa(c.Pending)+" · "+c.PendingPath, cInk, theme.SizeNameText, false)))
 	}
 	if c.NotTried > 0 {
-		rows.Add(field("Not tried", line(itoa(c.NotTried), cInk, theme.SizeNameText, false)))
+		rows.Add(row("Not tried", plain(itoa(c.NotTried))))
 	}
 	if c.How != "" {
-		rows.Add(field("How", para(c.How, cMuted, theme.SizeNameText, false)))
+		rows.Add(wrapped("How", para(c.How, cMuted, theme.SizeNameText, false)))
 	}
 	if buttons {
-		rows.Add(spacer(1, 4))
 		rows.Add(container.NewHBox(newButton("Open Trash", false, u.openTrash), newButton("Open receipt", false, u.openReceipt)))
 	}
 	return cardBox(rows)
@@ -286,37 +301,34 @@ func (a *absLayout) Layout(objs []fyne.CanvasObject, _ fyne.Size) {
 
 func (u *ui) done() fyne.CanvasObject {
 	d := u.m.Done()
-	head := container.NewVBox(para(d.Title, cInk, "kipple.heading", true))
+	head := container.NewVBox(line(d.Title, cInk, "kipple.heading", true))
 	if d.Total != "" {
-		head.Add(line(d.Total, cInk, szDisplay, true))
-		head.Add(para(d.SpaceLine, cMuted, theme.SizeNameText, false))
+		head.Add(container.NewHBox(line(d.Total, cInk, szDisplay, true), container.NewCenter(para(d.SpaceLine, cMuted, theme.SizeNameText, false))))
 		if d.SharedNote != "" {
 			head.Add(para(d.SharedNote, cMuted, theme.SizeNameText, false))
 		}
 	}
-	top := container.NewBorder(nil, nil, pad(recessMark(72), 0, 0, 0, space5), nil, head)
+	top := container.NewBorder(nil, nil, pad(recessMark(56), 4, 0, 0, space4), nil, head)
+
+	// Left: the receipt and how to change your mind. Right: what moved and
+	// what was skipped. The whole result fits the default 960x640 window.
 	left := container.NewVBox(u.receiptCard(d.Card, true))
+	if d.ChangedMind != "" {
+		left.Add(spacer(1, 4))
+		left.Add(line("Changed your mind?", cInk, "kipple.subheading", true))
+		left.Add(para(d.ChangedMind, cMuted, theme.SizeNameText, false))
+		left.Add(container.NewBorder(nil, nil, nil, container.NewVBox(linkButton("Copy", func() { u.copyText(d.Command) })), monoPara(d.Command, cInk)))
+	}
 	if d.Restored != nil {
-		left.Add(spacer(1, space4))
+		left.Add(spacer(1, 4))
 		left.Add(para(d.Restored.Title, cInk, "kipple.subheading", true))
 		for _, s := range d.Restored.Skipped {
 			left.Add(skipLine(s))
 		}
 	}
-	if d.Displaced != "" {
-		left.Add(spacer(1, space3))
-		left.Add(container.NewBorder(nil, nil, container.NewVBox(widget.NewIcon(theme.WarningIcon())), nil, para(d.Displaced, cInk, theme.SizeNameText, false)))
-	}
-	for _, w := range d.Warnings {
-		left.Add(para("Warning: "+w, cInk, theme.SizeNameText, false))
-	}
 	right := container.NewVBox()
 	if len(d.Moved) > 0 {
-		var total string
-		if d.Total != "" {
-			total = d.Total
-		}
-		right.Add(container.NewBorder(nil, nil, line("MOVED", cMuted, "kipple.caption", true), line(total, cMuted, "kipple.caption", true)))
+		right.Add(container.NewBorder(nil, nil, line("MOVED", cMuted, "kipple.caption", true), line(d.Total, cMuted, "kipple.caption", true)))
 		for _, l := range d.Moved {
 			right.Add(container.NewBorder(nil, nil, nil, text(l.Text, cMuted, sizeBody, false), newPathText(l.Path, cInk, sizeBody)))
 		}
@@ -325,7 +337,9 @@ func (u *ui) done() fyne.CanvasObject {
 		}
 	}
 	if len(d.Skipped) > 0 || d.NotTried > 0 {
-		right.Add(spacer(1, space3))
+		if len(right.Objects) > 0 {
+			right.Add(spacer(1, space3))
+		}
 		right.Add(line("SKIPPED", cMuted, "kipple.caption", true))
 		for _, s := range d.Skipped {
 			right.Add(skipLine(s))
@@ -334,21 +348,19 @@ func (u *ui) done() fyne.CanvasObject {
 			right.Add(text("Not tried "+itoa(d.NotTried), cInk, sizeBody, false))
 		}
 	}
-	// Restore guidance sits under the moved list, so the whole result fits
-	// in the default window.
-	mind := container.NewVBox()
-	if d.ChangedMind != "" {
-		mind.Add(spacer(1, space3))
-		mind.Add(line("Changed your mind?", cInk, "kipple.subheading", true))
-		mind.Add(para(d.ChangedMind, cMuted, theme.SizeNameText, false))
-		mind.Add(container.NewBorder(nil, nil, nil, container.NewVBox(linkButton("Copy", func() { u.copyText(d.Command) })), monoPara(d.Command, cInk)))
-	}
-	rightCol := container.NewVBox(mind)
+	rightCol := container.NewVBox()
 	if len(right.Objects) > 0 {
-		rightCol = container.NewVBox(cardBox(right), mind)
+		rightCol.Add(cardBox(right))
+	}
+	if d.Displaced != "" {
+		rightCol.Add(container.NewBorder(nil, nil, container.NewVBox(widget.NewIcon(theme.WarningIcon())), nil, para(d.Displaced, cInk, theme.SizeNameText, false)))
+	}
+	for _, w := range d.Warnings {
+		rightCol.Add(para("Warning: "+w, cInk, theme.SizeNameText, false))
 	}
 	cols := container.New(halves{space5}, left, rightCol)
-	return container.NewVScroll(pad(container.NewVBox(top, spacer(1, space4), cols), space4, space4, space6, space6))
+	u.doneScroll = container.NewVScroll(pad(container.NewVBox(top, spacer(1, space3), cols), space3, space3, space6, space6))
+	return u.doneScroll
 }
 
 func skipLine(s guimodel.Line) fyne.CanvasObject {

@@ -3,8 +3,6 @@
 package main
 
 import (
-	"strings"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
@@ -323,5 +321,3 @@ func (u *ui) detail() fyne.CanvasObject {
 	v.Add(field("ID", withButton(monoLine(d.ID, cMuted), linkButton("Copy", u.copyID))))
 	return v
 }
-
-var _ = strings.TrimSpace
