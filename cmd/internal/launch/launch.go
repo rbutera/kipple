@@ -6,15 +6,19 @@
 package launch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rbutera/kipple/internal/apply"
 	"github.com/rbutera/kipple/internal/config"
+	"github.com/rbutera/kipple/internal/gitstate"
 	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
@@ -397,4 +401,24 @@ func storedSpelling(dir, name string) string {
 		return name
 	}
 	return match
+}
+
+// CommandLineTools reports whether Apple's Command Line Tools (or Xcode)
+// are installed. Without them /usr/bin/git is a shim that pops up an
+// install dialog every time it runs, so a front end started from Finder
+// checks first and, when they are missing, scans with NoGit. It runs
+// /usr/bin/xcode-select -p, which only prints a folder path.
+func CommandLineTools() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "/usr/bin/xcode-select", "-p").Run() == nil
+}
+
+// NoGit is a git inspector that never runs git: every repository is
+// git_unavailable, so project items stay unselectable.
+type NoGit struct{}
+
+// Inspect implements scan.GitInspector.
+func (NoGit) Inspect(context.Context, string) gitstate.Result {
+	return gitstate.Result{State: gitstate.StateUnavailable, Detail: "Apple's Command Line Tools are not installed, so kipple did not run git"}
 }
