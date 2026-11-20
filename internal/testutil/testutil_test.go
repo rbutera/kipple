@@ -335,3 +335,23 @@ func TestGuardRealHomeByIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestContentChecksum(t *testing.T) {
+	home := NewHome(t, Spec{Files: []File{{Path: "a/b/f", Content: "x"}, {Path: ".Trash/old", Content: "y"}}})
+	sum := ContentChecksum(t, home, ".Trash")
+	if err := os.Chtimes(filepath.Join(home, "a"), time.Unix(1, 0), time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".Trash/new"), []byte("z"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ContentChecksum(t, home, ".Trash") != sum {
+		t.Fatal("directory mtimes or skipped entries changed the checksum")
+	}
+	if err := os.WriteFile(filepath.Join(home, "a/b/f"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ContentChecksum(t, home, ".Trash") == sum {
+		t.Fatal("a content change was not detected")
+	}
+}

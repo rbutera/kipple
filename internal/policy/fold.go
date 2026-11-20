@@ -77,6 +77,12 @@ func foldName(s string) string {
 	return b.String()
 }
 
+// FoldName folds name the way APFS compares names (case folding with the
+// expansions above and the normalisation singletons). Two names with the
+// same FoldName may open the same entry; NFC and NFD spellings are not
+// folded together, so callers comparing names also compare identities.
+func FoldName(name string) string { return foldName(name) }
+
 // isConfusable reports whether r folds differently from strings.ToLower, or
 // folds to ASCII without being ASCII. Such runes let a name alias a different
 // ASCII name on APFS, so rule roots and config paths may not contain them.

@@ -20,3 +20,6 @@ func openConfig(path string) (*os.File, error) {
 	}
 	return os.Open(path)
 }
+
+// describeOpenError returns err unchanged here.
+func describeOpenError(_ string, err error) error { return err }

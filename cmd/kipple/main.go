@@ -9,6 +9,7 @@ import (
 	"os/user"
 
 	"github.com/rbutera/kipple/internal/homeguard"
+	"github.com/rbutera/kipple/internal/procs"
 )
 
 // Set with -ldflags "-X main.version=... -X main.commit=...".
@@ -30,6 +31,8 @@ func system() runtimeEnv {
 		realHomes: realHomes,
 		guardFS:   homeguard.System(),
 		isTTY:     isTerminal,
+		stdin:     os.Stdin,
+		procs:     procs.New(),
 	}
 }
 

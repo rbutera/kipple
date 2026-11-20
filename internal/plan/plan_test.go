@@ -152,6 +152,7 @@ func TestEverySchemaCompilesAndValidates(t *testing.T) {
 			r.Normalize()
 			return r
 		}(),
+		"history": History{SchemaVersion: SchemaVersion, Home: "/h", ReceiptsDir: "/s/receipts", Receipts: []Receipt{}, Warnings: []string{}},
 	}
 	for _, name := range Schemas() {
 		t.Run(name, func(t *testing.T) {

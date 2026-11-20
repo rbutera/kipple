@@ -1,0 +1,357 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/rbutera/kipple/internal/apply"
+	"github.com/rbutera/kipple/internal/output"
+	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/receipt"
+	"github.com/rbutera/kipple/internal/rules"
+)
+
+// stateDir is $KIPPLE_STATE_DIR, or ~/Library/Application Support/kipple
+// under the effective home.
+func (a *app) stateDir(h homeEnv) (string, error) {
+	if d := a.rt.getenv("KIPPLE_STATE_DIR"); d != "" {
+		if !filepath.IsAbs(d) {
+			return "", fail(codeReceipt, "KIPPLE_STATE_DIR %q is not an absolute path", d)
+		}
+		return filepath.Clean(d), nil
+	}
+	return filepath.Join(h.home, "Library", "Application Support", "kipple"), nil
+}
+
+func (a *app) store(h homeEnv) (receipt.Store, error) {
+	dir, err := a.stateDir(h)
+	if err != nil {
+		return receipt.Store{}, err
+	}
+	s, err := receipt.Open(dir)
+	if err != nil {
+		return receipt.Store{}, fail(codeReceipt, "%v", err)
+	}
+	return s, nil
+}
+
+// parseIDs splits --only values on commas and checks each is an item ID.
+func parseIDs(values []string) ([]string, error) {
+	var ids []string
+	for _, v := range values {
+		for _, id := range strings.Split(v, ",") {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if !itemIDPattern.MatchString(id) {
+				return nil, usageErr("--only: %q is not an item ID (12 characters a-z and 2-7, as printed by kipple scan)", id)
+			}
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// readPlan reads a plan document from path, or from stdin for "-". It must
+// be a regular file (or stdin), at most plan.MaxDocumentSize bytes.
+func (a *app) readPlan(path string) (plan.Plan, error) {
+	var r io.Reader
+	if path == "-" {
+		if a.rt.stdin == nil {
+			return plan.Plan{}, fail(codePlan, "no standard input to read the plan from")
+		}
+		r = a.rt.stdin
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return plan.Plan{}, fail(codePlan, "cannot read the plan: %v", err)
+		}
+		defer func() { _ = f.Close() }()
+		if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+			return plan.Plan{}, fail(codePlan, "%s is not a regular file", path)
+		}
+		r = f
+	}
+	p, err := plan.Decode(r)
+	if err != nil {
+		return plan.Plan{}, fail(codePlan, "%v", err)
+	}
+	return p, nil
+}
+
+func (a *app) cleanCommand() *cobra.Command {
+	var (
+		doApply, yes, permanent bool
+		planFile                string
+		only                    []string
+	)
+	c := &cobra.Command{
+		Use:   "clean",
+		Short: "Move the selected items to the Trash (a dry run unless --apply)",
+		Long: `clean lists exactly what scan lists and moves nothing, unless --apply is
+given. With --apply every item is authorised again, its conditions are
+re-checked and it is confirmed to be the object that was scanned,
+immediately before it is moved to the Trash; anything that fails a check is
+skipped with a reason and the run exits 4. A receipt is written for every
+--apply run (see kipple history and kipple restore).
+
+--only <id,...> acts only on those items, including manual and review items
+(never info items). --plan <file|-> acts on a plan from kipple scan --json;
+it is untrusted: items are matched by ID against a scan made now, and an
+item whose path, identity or rule root changed is refused. --permanent
+deletes safe items instead of trashing them and skips every other tier.
+
+On a terminal, --apply asks for confirmation unless --yes is given. With
+--json, or when stdout is not a terminal, it never prompts: --apply is the
+consent.`,
+		Args: noArgs,
+		RunE: func(*cobra.Command, []string) error {
+			if permanent && !doApply {
+				return usageErr("--permanent needs --apply")
+			}
+			ids, err := parseIDs(only)
+			if err != nil {
+				return err
+			}
+			h, err := a.resolve()
+			if err != nil {
+				return err
+			}
+			level := a.effectiveLevel(h.cfg)
+			var src *plan.Plan
+			if planFile != "" {
+				p, err := a.readPlan(planFile)
+				if err != nil {
+					return err
+				}
+				if p.Home != h.home {
+					return fail(codePlan, "the plan is for home %s, not %s", p.Home, h.home)
+				}
+				if a.level == "" {
+					if p.Level != rules.LevelSafe && p.Level != rules.LevelReview {
+						return fail(codePlan, "the plan's level %q is not safe or review", p.Level)
+					}
+					level = p.Level
+				}
+				src = &p
+			}
+			fresh, err := a.runScanAt(h, level)
+			if err != nil {
+				return err
+			}
+			target := fresh
+			if src != nil {
+				target = *src
+			}
+			if !doApply {
+				p := apply.Preview(target, ids)
+				return a.emit(p, func(w io.Writer) error {
+					if err := output.Plan(w, p, titles()); err != nil {
+						return err
+					}
+					_, err := fmt.Fprintln(w, output.DryRunLine)
+					return err
+				})
+			}
+			if a.rt.isTTY(a.stdout) && !a.json && !yes {
+				ok, err := a.confirm(apply.Preview(target, ids), permanent)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					fmt.Fprintln(a.stdout, "Nothing was moved.")
+					a.exit = exitNothing
+					return nil
+				}
+			}
+			store, err := a.store(h)
+			if err != nil {
+				return err
+			}
+			opts := apply.Options{
+				Env:           policyEnv(h),
+				Rules:         effectiveRules(h.cfg),
+				Plan:          target,
+				Only:          ids,
+				Permanent:     permanent,
+				Receipts:      store,
+				KippleVersion: version,
+				Procs:         a.rt.procs,
+			}
+			if src != nil {
+				opts.Fresh = &fresh
+			}
+			if a.rt.isTTY(a.stderr) {
+				opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", msg) }
+			}
+			res, err := apply.Run(a.ctx, opts)
+			if opts.Progress != nil {
+				fmt.Fprint(a.stderr, "\r\033[K")
+			}
+			if err != nil {
+				return fail(codeApply, "%v", err)
+			}
+			for _, w := range res.Warnings {
+				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", w)
+			}
+			a.exit = apply.ExitCode(res)
+			return a.emit(res, func(w io.Writer) error { return output.CleanResult(w, res) })
+		},
+	}
+	f := c.Flags()
+	f.BoolVar(&doApply, "apply", false, "move the selected items (without it, clean is a dry run)")
+	f.BoolVar(&yes, "yes", false, "do not ask for confirmation on a terminal")
+	f.BoolVar(&permanent, "permanent", false, "delete safe items instead of moving them to the Trash (needs --apply)")
+	f.StringVar(&planFile, "plan", "", "act on this plan (from kipple scan --json; - reads stdin)")
+	f.StringSliceVar(&only, "only", nil, "act only on these item IDs (comma-separated or repeated)")
+	return c
+}
+
+// confirm shows the selected total and asks for y on the terminal.
+func (a *app) confirm(p plan.Plan, permanent bool) (bool, error) {
+	n, total := p.Totals.SelectedCount, output.Bytes(p.Totals.SelectedBytes)
+	if permanent {
+		fmt.Fprintf(a.stdout, "Delete %d safe items (%s) permanently, not to the Trash? This cannot be undone. [y/N] ", n, total)
+	} else {
+		fmt.Fprintf(a.stdout, "Move %d items (%s) to the Trash? [y/N] ", n, total)
+	}
+	if a.rt.stdin == nil {
+		return false, nil
+	}
+	line, err := bufio.NewReader(a.rt.stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return false, nil
+	}
+	ans := strings.ToLower(strings.TrimSpace(line))
+	return ans == "y" || ans == "yes", nil
+}
+
+func (a *app) historyCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "history",
+		Short: "List clean receipts, newest first",
+		Args:  noArgs,
+		RunE: func(*cobra.Command, []string) error {
+			h, err := a.resolve()
+			if err != nil {
+				return err
+			}
+			store, err := a.store(h)
+			if err != nil {
+				return err
+			}
+			list, errs := store.List()
+			doc := plan.History{SchemaVersion: plan.SchemaVersion, Home: h.home, ReceiptsDir: store.Dir(), Receipts: []plan.Receipt{}, Warnings: []string{}}
+			for _, e := range list {
+				doc.Receipts = append(doc.Receipts, e.Receipt)
+			}
+			for _, err := range errs {
+				doc.Warnings = append(doc.Warnings, err.Error())
+				fmt.Fprintf(a.stderr, "kipple: warning: %v\n", err)
+			}
+			return a.emit(doc, func(w io.Writer) error {
+				if h.fromEnv {
+					fmt.Fprintf(w, "Home: %s\n\n", h.home)
+				}
+				return output.History(w, doc)
+			})
+		},
+	}
+}
+
+func (a *app) restoreCommand() *cobra.Command {
+	var (
+		doApply bool
+		only    []string
+	)
+	c := &cobra.Command{
+		Use:   "restore <receipt-id|receipt-file|item-id>",
+		Short: "Put items from a receipt back where they were (a dry run unless --apply)",
+		Long: `restore moves items recorded in a receipt from the Trash back to their
+original paths. It is a dry run unless --apply is given. An item is put back
+only if its original folder still exists, the original path is free, the
+path passes the safety policy for the item's rule, and the Trash entry is
+the very item kipple moved there; otherwise it is skipped with a reason
+(destination_exists, trash_item_missing, ...) and the run exits 4.
+
+The argument is a receipt ID (from kipple history), a receipt file, or an
+item ID, which restores that item from the newest receipt that moved it.`,
+		Args: exactArgs(1, "one receipt ID, receipt file or item ID"),
+		RunE: func(_ *cobra.Command, args []string) error {
+			ids, err := parseIDs(only)
+			if err != nil {
+				return err
+			}
+			h, err := a.resolve()
+			if err != nil {
+				return err
+			}
+			store, err := a.store(h)
+			if err != nil {
+				return err
+			}
+			e, inStore, extra, err := a.findReceipt(store, args[0])
+			if err != nil {
+				return err
+			}
+			ids = append(ids, extra...)
+			opts := apply.RestoreOptions{
+				Env:     policyEnv(h),
+				Rules:   effectiveRules(h.cfg),
+				Receipt: e,
+				Only:    ids,
+				Apply:   doApply,
+			}
+			if inStore {
+				opts.Store = &store
+			}
+			res, err := apply.Restore(a.ctx, opts)
+			if err != nil {
+				return fail(codeApply, "%v", err)
+			}
+			a.exit = apply.ExitCode(res)
+			return a.emit(res, func(w io.Writer) error { return output.RestoreResult(w, res) })
+		},
+	}
+	c.Flags().BoolVar(&doApply, "apply", false, "move the items back (without it, restore is a dry run)")
+	c.Flags().StringSliceVar(&only, "only", nil, "restore only these item IDs (comma-separated or repeated)")
+	return c
+}
+
+// findReceipt resolves restore's argument. It returns the receipt, whether
+// it came from the store (and may be annotated), and the item IDs an item-ID
+// argument adds to --only.
+func (a *app) findReceipt(store receipt.Store, arg string) (receipt.Entry, bool, []string, error) {
+	switch {
+	case receipt.ValidID(arg):
+		e, err := store.Load(arg)
+		if err != nil {
+			return e, false, nil, fail(codeNotFound, "%v", err)
+		}
+		return e, true, nil, nil
+	case itemIDPattern.MatchString(arg):
+		list, _ := store.List()
+		for _, e := range list {
+			for _, m := range e.Receipt.Moved {
+				if m.ID == arg && m.RestoredAt == nil && !m.Permanent {
+					return e, true, []string{arg}, nil
+				}
+			}
+		}
+		return receipt.Entry{}, false, nil, fail(codeNotFound, "no receipt in %s has item %s waiting to be restored", store.Dir(), arg)
+	default:
+		e, err := receipt.LoadFile(arg)
+		if err != nil {
+			return e, false, nil, fail(codeNotFound, "%v", err)
+		}
+		inStore := filepath.Dir(e.Path) == store.Dir() && filepath.Base(e.Path) == e.Receipt.ID+".json"
+		return e, inStore, nil, nil
+	}
+}

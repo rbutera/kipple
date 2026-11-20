@@ -254,7 +254,7 @@ type RulesDocument struct {
 func (RulesDocument) JSONSchemaExtend(s *jsonschema.Schema) { pinVersion(s) }
 
 // Schemas lists the documents kipple schema can print.
-func Schemas() []string { return []string{"plan", "rules", "receipt", "result"} }
+func Schemas() []string { return []string{"plan", "rules", "receipt", "result", "history"} }
 
 // Schema returns the JSON Schema for the named document.
 func Schema(name string) ([]byte, error) {
@@ -268,6 +268,8 @@ func Schema(name string) ([]byte, error) {
 		v = &Receipt{}
 	case "result":
 		v = &Result{}
+	case "history":
+		v = &History{}
 	default:
 		return nil, fmt.Errorf("unknown schema %q (want one of %s)", name, strings.Join(Schemas(), ", "))
 	}

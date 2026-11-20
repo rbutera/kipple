@@ -36,6 +36,8 @@ func testEnv(t *testing.T) runtimeEnv {
 		// A stand-in real home in its own temp folder, never the machine's.
 		realHomes: func() ([]string, error) { return []string{fakeRealHome(t)}, nil },
 		isTTY:     func(io.Writer) bool { return false },
+		stdin:     failingReader{t},
+		procs:     idleProcs{},
 	}
 }
 

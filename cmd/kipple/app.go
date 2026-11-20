@@ -14,21 +14,25 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/rbutera/kipple/internal/apply"
 	"github.com/rbutera/kipple/internal/config"
 	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
+	"github.com/rbutera/kipple/internal/procs"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/scan"
 )
 
-// Exit codes (design D11). 3 (nothing to do) and 4 (partial) are produced
-// by clean and restore in wave 3.
+// Exit codes (design D11). 3 (nothing to do) and 4 (partial) come from
+// clean and restore (apply.ExitCode).
 const (
-	exitOK    = 0
-	exitError = 1
-	exitUsage = 2
+	exitOK      = 0
+	exitError   = 1
+	exitUsage   = 2
+	exitNothing = apply.ExitNothing
+	exitPartial = apply.ExitPartial
 )
 
 // Error codes in the JSON error envelope.
@@ -40,6 +44,9 @@ const (
 	codeNotFound = "not_found"
 	codeScan     = "scan"
 	codeInternal = "internal"
+	codePlan     = "plan"
+	codeApply    = "apply"
+	codeReceipt  = "receipt"
 )
 
 // runtimeEnv is the process environment, injectable for tests.
@@ -55,6 +62,10 @@ type runtimeEnv struct {
 	// means the real file system.
 	guardFS homeguard.FS
 	isTTY   func(io.Writer) bool
+	// stdin is read only for the clean --apply confirmation on a TTY.
+	stdin io.Reader
+	// procs answers owner and agent checks (procs.New() when nil).
+	procs procs.Inspector
 	// beforeScan, when set, runs after home is resolved and guarded and
 	// before the scan opens it. Tests use it to swap the directory.
 	beforeScan func(home string)
@@ -107,12 +118,16 @@ type app struct {
 	json   bool
 	level  string
 	ctx    context.Context
+	// exit is the code a command that succeeded asks run to return (3 or
+	// 4 from clean and restore).
+	exit int
 }
 
 const rootHelp = `kipple lists rebuildable caches and developer junk under your home folder,
-explains each item, and (from v0.1 clean) moves only what you approve to the
-Trash. Every command is a dry run unless --apply is given; scan never moves
-anything.
+explains each item, and moves only what you approve to the Trash. Every
+command is a dry run unless --apply is given; scan never moves anything.
+clean --apply re-checks every item immediately before moving it and writes a
+receipt; restore puts items back from a receipt.
 
 Exit codes:
   0  success
@@ -127,7 +142,8 @@ goes to stderr. Errors are also reported on stdout as
 
 Environment:
   KIPPLE_HOME       use this folder as home (for tests and agents)
-  KIPPLE_STATE_DIR  where receipts are kept`
+  KIPPLE_STATE_DIR  where receipts are kept, in its receipts folder
+                    (default ~/Library/Application Support/kipple)`
 
 // run executes kipple with args and returns the exit code.
 func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {
@@ -154,7 +170,7 @@ func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {
 		a.json = a.json || jsonRequested(root, args)
 		return a.report(ce)
 	}
-	return exitOK
+	return a.exit
 }
 
 // jsonRequested reports whether args set --json, parsed by pflag (the
@@ -256,7 +272,8 @@ func (a *app) rootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.level, "level", "", `selection level: "safe" (default, or config level) or "review"`)
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetHelpCommand(a.helpCommand())
-	root.AddCommand(a.scanCommand(), a.rulesCommand(), a.explainCommand(), a.schemaCommand(), a.versionCommand())
+	root.AddCommand(a.scanCommand(), a.cleanCommand(), a.historyCommand(), a.restoreCommand(),
+		a.rulesCommand(), a.explainCommand(), a.schemaCommand(), a.versionCommand())
 	return root
 }
 
@@ -316,11 +333,35 @@ func (a *app) resolve() (homeEnv, error) {
 	if err != nil {
 		return homeEnv{}, err
 	}
-	cfg, err := config.Load(home)
+	cfg, err := loadConfig(home, id)
 	if err != nil {
-		return homeEnv{}, fail(codeConfig, "%v", err)
+		return homeEnv{}, err
 	}
 	return homeEnv{home: home, fromEnv: fromEnv, id: id, cfg: cfg}, nil
+}
+
+// loadConfig reads the config file relative to the approved home's
+// descriptor (a policy session pinned to its identity), so a home swapped
+// after it was approved cannot supply the config.
+func loadConfig(home string, id homeguard.ID) (config.Config, error) {
+	sess, err := policy.NewSession(policy.Env{Home: home, HomeIdentity: &policy.FileIdentity{Dev: id.Dev, Ino: id.Ino}})
+	defer func() { _ = sess.Close() }()
+	if err != nil {
+		return config.Config{}, fail(codeHome, "%v", err)
+	}
+	cfg, err := config.LoadWith(home, sess.OpenUnderHome)
+	if err != nil {
+		return config.Config{}, fail(codeConfig, "%v", err)
+	}
+	return cfg, nil
+}
+
+// policyEnv is the policy environment for h: config protections and the
+// pinned home identity.
+func policyEnv(h homeEnv) policy.Env {
+	env := h.cfg.PolicyEnv(h.home)
+	env.HomeIdentity = &policy.FileIdentity{Dev: h.id.Dev, Ino: h.id.Ino}
+	return env
 }
 
 // effectiveLevel is --level, else the config level, else safe.
@@ -470,6 +511,15 @@ func onDiskCase(p string) string {
 	return cur
 }
 
+// storedSpelling returns the name under which dir stores the entry that
+// name opens. A byte-identical entry wins. Otherwise the candidates are
+// entries that fold to the same name (policy.FoldName: APFS case folding,
+// long s, sharp s, ligatures) or, for names with non-ASCII letters, any
+// non-ASCII entry, since NFC and NFD spellings of a name differ in bytes but
+// open the same entry. A candidate counts only if it is the very object name
+// opens (same dev and inode, checked with lstat), so the result is the
+// stored spelling of that object, never a look-alike. Without exactly one
+// such entry the name is kept as given.
 func storedSpelling(dir, name string) string {
 	f, err := os.Open(dir)
 	if err != nil {
@@ -480,17 +530,34 @@ func storedSpelling(dir, name string) string {
 	if err != nil {
 		return name
 	}
+	target, err := os.Lstat(filepath.Join(dir, name))
+	if err != nil {
+		return name
+	}
+	nonASCII := func(s string) bool {
+		for i := 0; i < len(s); i++ {
+			if s[i] >= 0x80 {
+				return true
+			}
+		}
+		return false
+	}
 	match := ""
 	for _, n := range names {
 		if n == name {
 			return name
 		}
-		if strings.EqualFold(n, name) {
-			if match != "" {
-				return name // ambiguous on a case-sensitive volume
-			}
-			match = n
+		if policy.FoldName(n) != policy.FoldName(name) && (!nonASCII(name) || !nonASCII(n)) {
+			continue
 		}
+		fi, err := os.Lstat(filepath.Join(dir, n))
+		if err != nil || !os.SameFile(fi, target) {
+			continue
+		}
+		if match != "" {
+			return name // two entries for one object: keep the given spelling
+		}
+		match = n
 	}
 	if match == "" {
 		return name
@@ -500,15 +567,19 @@ func storedSpelling(dir, name string) string {
 
 // runScan scans home at the effective level.
 func (a *app) runScan(h homeEnv) (plan.Plan, error) {
-	env := h.cfg.PolicyEnv(h.home)
-	env.HomeIdentity = &policy.FileIdentity{Dev: h.id.Dev, Ino: h.id.Ino}
+	return a.runScanAt(h, a.effectiveLevel(h.cfg))
+}
+
+// runScanAt scans home at level.
+func (a *app) runScanAt(h homeEnv, level string) (plan.Plan, error) {
+	env := policyEnv(h)
 	if a.rt.beforeScan != nil {
 		a.rt.beforeScan(h.home)
 	}
 	opts := scan.Options{
 		Env:           env,
 		Rules:         effectiveRules(h.cfg),
-		Level:         a.effectiveLevel(h.cfg),
+		Level:         level,
 		KippleVersion: version,
 	}
 	if a.rt.isTTY(a.stderr) {

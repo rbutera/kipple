@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -76,9 +77,22 @@ func Path(home string) string {
 // MaxSize is the largest config file Load reads.
 const MaxSize = 64 << 10
 
-// Load reads and validates Path(home). A missing file yields Default().
+// RelPath is the config file's location relative to home.
+const RelPath = ".config/kipple/config.toml"
+
+// Load reads and validates Path(home), opened by path. A missing file
+// yields Default(). cmd/ uses LoadWith instead, to read the file relative to
+// the pinned home descriptor.
 func Load(home string) (Config, error) {
-	data, err := readConfig(Path(home))
+	return LoadWith(home, func(rel string) (*os.File, error) { return openConfig(filepath.Join(home, rel)) })
+}
+
+// LoadWith reads and validates the config file through open, which opens a
+// home-relative path without following a symlink at its final component
+// (policy.Session.OpenUnderHome does, from the pinned home descriptor). A
+// missing file yields Default().
+func LoadWith(home string, open func(rel string) (*os.File, error)) (Config, error) {
+	data, err := readConfig(Path(home), func() (*os.File, error) { return open(RelPath) })
 	if errors.Is(err, fs.ErrNotExist) {
 		return Default(), nil
 	}
@@ -89,10 +103,10 @@ func Load(home string) (Config, error) {
 }
 
 // readConfig reads a regular, non-symlinked file of at most MaxSize bytes.
-func readConfig(path string) ([]byte, error) {
-	f, err := openConfig(path)
+func readConfig(path string, open func() (*os.File, error)) ([]byte, error) {
+	f, err := open()
 	if err != nil {
-		return nil, err
+		return nil, describeOpenError(path, err)
 	}
 	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()

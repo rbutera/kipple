@@ -216,3 +216,15 @@ func (SkippedItem) JSONSchemaExtend(s *jsonschema.Schema) {
 		}
 	}
 }
+
+// History is the JSON output of kipple history: every receipt, newest first.
+type History struct {
+	SchemaVersion int       `json:"schema_version"`
+	Home          string    `json:"home"`
+	ReceiptsDir   string    `json:"receipts_dir"`
+	Receipts      []Receipt `json:"receipts"`
+	Warnings      []string  `json:"warnings" jsonschema:"description=Receipt files that could not be read."`
+}
+
+// JSONSchemaExtend pins schema_version.
+func (History) JSONSchemaExtend(s *jsonschema.Schema) { pinVersion(s) }

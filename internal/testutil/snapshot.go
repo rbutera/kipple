@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -93,4 +94,31 @@ func hashFile(p string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ContentChecksum is Checksum without directory modification times, and
+// without the entries at or below the root-relative slash paths in skip.
+// Moving an item out and back changes its parent folders' mtimes, which
+// nothing in kipple promises to preserve; every file's content, size, mode
+// and mtime, every directory's existence and mode, and every symlink target
+// must still match.
+func ContentChecksum(t testing.TB, root string, skip ...string) string {
+	t.Helper()
+	h := sha256.New()
+	for _, e := range Snapshot(t, root) {
+		skipped := false
+		for _, s := range skip {
+			skipped = skipped || e.Path == s || strings.HasPrefix(e.Path, s+"/")
+		}
+		if skipped {
+			continue
+		}
+		mtime := e.MTime.UnixNano()
+		if e.Type == "dir" {
+			mtime = 0
+		}
+		fmt.Fprintf(h, "%s\x00%s\x00%d\x00%o\x00%d\x00%s\x00%s\n",
+			e.Path, e.Type, e.Size, uint32(e.Mode), mtime, e.Target, e.SHA256)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
