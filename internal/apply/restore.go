@@ -96,6 +96,22 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	// Concurrent restores (and saves) of one receipt must not overwrite each
+	// other's annotations: hold the receipt's lock for the whole restore and
+	// work from the receipt as saved now, not as the caller loaded it.
+	if o.Store != nil {
+		unlock, err := o.Store.Lock(rc.ID)
+		if err != nil {
+			return res, fmt.Errorf("restore: %w", err)
+		}
+		defer unlock()
+		e, err := o.Store.Load(rc.ID)
+		if err != nil {
+			return res, fmt.Errorf("restore: %w", err)
+		}
+		rc = e.Receipt
+		rc.Normalize()
+	}
 	sess, err := policy.NewSession(o.Env)
 	if err != nil {
 		_ = sess.Close()
@@ -107,16 +123,18 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 		res.Skipped = append(res.Skipped, plan.SkippedItem{ID: m.ID, Rule: m.Rule, Path: m.Path, Reason: reason, Detail: detail})
 	}
 	var all []*plan.MovedItem
+	kind := map[*plan.MovedItem]string{}
 	for i := range rc.Moved {
 		all = append(all, &rc.Moved[i])
+		kind[&rc.Moved[i]] = "moved"
 	}
 	for i := range rc.Displaced {
 		all = append(all, &rc.Displaced[i])
+		kind[&rc.Displaced[i]] = "displaced"
 	}
-	pending := map[*plan.MovedItem]bool{}
 	for i := range rc.Pending {
 		all = append(all, &rc.Pending[i])
-		pending[&rc.Pending[i]] = true
+		kind[&rc.Pending[i]] = "pending"
 	}
 	asked := all
 	if len(o.Only) > 0 {
@@ -185,13 +203,14 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			skip(m, plan.SkipMoveFailed, "not attempted: interrupted")
 			continue
 		}
-		if pending[m] {
+		switch {
+		case kind[m] == "pending":
 			// The run stopped between saving this item as pending and
 			// recording its move. Find it in the Trash by its identity; the
 			// tag and identity checks below still apply.
 			name, ok := findInTrash(tr.Fd(), m.Dev, m.Ino)
 			if !ok {
-				if stillAt(m.Path, m.Dev, m.Ino) {
+				if stillAt(sess, m.Path, m.Dev, m.Ino) {
 					skip(m, plan.SkipNotFound, "pending: the move did not happen; the item is still at its original path")
 				} else {
 					skip(m, plan.SkipTrashItemMissing, "pending: the item is not in the Trash")
@@ -199,6 +218,13 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 				continue
 			}
 			m.TrashPath = tr.Path() + "/" + name
+		case filepath.Dir(m.TrashPath) == tr.Path() && !entryIs(tr.Fd(), filepath.Base(m.TrashPath), m.Dev, m.Ino):
+			// Not at its recorded name (a restore interrupted after staging
+			// it, or a rename in the Trash): find it by identity; the tag
+			// and identity checks still apply.
+			if name, ok := findInTrash(tr.Fd(), m.Dev, m.Ino); ok {
+				m.TrashPath = tr.Path() + "/" + name
+			}
 		}
 		reason, detail, done := restoreOne(sess, tr, ruleByID[m.Rule], m, tagValue(rc.ID, m.ID, o.Env.HomeIdentity), o)
 		switch {
@@ -206,11 +232,11 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			now := o.Now().UTC()
 			m.RestoredAt = &now
 			annotated = true
-			res.Restored = append(res.Restored, plan.RestoredItem{ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
+			res.Restored = append(res.Restored, plan.RestoredItem{Kind: kind[m], ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
 		case reason == "would":
-			res.Restored = append(res.Restored, plan.RestoredItem{ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
+			res.Restored = append(res.Restored, plan.RestoredItem{Kind: kind[m], ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
 		default:
-			if reason == plan.SkipTrashItemMismatch && (detail == restoreSwapNote || strings.HasPrefix(detail, "a different object reached")) {
+			if reason == plan.SkipTrashItemMismatch && (strings.HasPrefix(detail, restoreSwapNote) || strings.HasPrefix(detail, "a different object reached")) {
 				m.RestoreNote = detail
 				annotated = true
 			}
@@ -256,6 +282,9 @@ func restoreOne(sess *policy.Session, tr *trash.DirTrasher, r rules.Rule, m *pla
 	if !d.Allowed {
 		if d.Reason == policy.ReasonDestinationExists {
 			return plan.SkipDestinationExists, "something is at " + m.Path, false
+		}
+		if d.Reason == policy.ReasonPermissionDenied {
+			return plan.SkipPermissionDenied, "the system refused access to the original folder", false
 		}
 		return plan.Refused(d.Reason), "the original path cannot take the item back", false
 	}
@@ -321,4 +350,18 @@ type entryInfo struct {
 	dev, ino uint64
 	size     int64
 	mtime    time.Time
+}
+
+// stillAt reports whether path, reached by the session's verified walk
+// (never following a symlink), is the object (dev, ino).
+func stillAt(sess *policy.Session, path string, dev, ino uint64) bool {
+	e, err := sess.Open(path)
+	if err != nil {
+		return false
+	}
+	if e.Dir != nil {
+		_ = e.Dir.Close()
+	}
+	d, i, ok := policy.Identity(e.Info)
+	return ok && d == dev && i == ino
 }

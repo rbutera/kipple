@@ -39,6 +39,6 @@ func dupFile(int, string) (*os.File, error) { return nil, trash.ErrUnsupported }
 
 func findInTrash(int, uint64, uint64) (string, bool) { return "", false }
 
-func stillAt(string, uint64, uint64) bool { return false }
+func entryIs(int, string, uint64, uint64) bool { return false }
 
 func tagDisplaced(string, uint64, uint64, []byte) error { return trash.ErrUnsupported }

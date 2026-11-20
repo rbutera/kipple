@@ -180,15 +180,48 @@ func TestUntrustedReceipts(t *testing.T) {
 		}
 	})
 	t.Run("symlinked receipt file is refused", func(t *testing.T) {
-		link := filepath.Join(filepath.Dir(s.Dir()), "link.json")
-		if err := os.Symlink(s.PathOf(r.ID), link); err != nil {
+		other := sample("/fx/home", t0.Add(time.Hour))
+		other.ID = "20261120T103000Z-zzzzzz"
+		data, err := encode(&other)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := LoadFile(link); err == nil {
-			t.Fatal("LoadFile followed a symlink")
-		}
-		if _, err := LoadFile(s.PathOf(r.ID)); err != nil {
+		outside := filepath.Join(filepath.Dir(s.Dir()), "outside.json")
+		if err := os.WriteFile(outside, data, 0o600); err != nil {
 			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, s.PathOf(other.ID)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Load(other.ID); err == nil {
+			t.Fatal("Load followed a symlinked receipt file")
+		}
+		if _, err := s.Load(r.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("symlinked receipts folder is refused for Load", func(t *testing.T) {
+		home := testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: "elsewhere"}}})
+		state := testutil.StateDir(home)
+		elsewhere := filepath.Join(home, "elsewhere")
+		other := sample(home, t0)
+		other.ID = "20261120T093000Z-yyyyyy"
+		data, err := encode(&other)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(elsewhere, other.ID+".json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(elsewhere, filepath.Join(state, DirName)); err != nil {
+			t.Fatal(err)
+		}
+		s2, _ := Open(state)
+		if _, err := s2.Load(other.ID); err == nil {
+			t.Fatal("Load read through a symlinked receipts folder")
+		}
+		if _, err := s2.Lock(other.ID); err == nil {
+			t.Fatal("Lock used a symlinked receipts folder")
 		}
 	})
 	t.Run("unknown fields and other versions are refused", func(t *testing.T) {

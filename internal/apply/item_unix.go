@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 
@@ -45,7 +46,7 @@ func fstatat(dirfd int, name string, st *unix.Stat_t) error {
 func openItem(f *policy.Fresh, dev, ino uint64) (*os.File, error) {
 	fd, err := openDirAt(f.ParentFd, f.Name)
 	if err != nil {
-		return nil, fmt.Errorf("the item could not be opened: %v", err)
+		return nil, fmt.Errorf("the item could not be opened: %w", err)
 	}
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil || uint64(st.Dev) != dev || uint64(st.Ino) != ino {
@@ -181,7 +182,8 @@ type errRestoreArrived struct{ note string }
 
 func (e *errRestoreArrived) Error() string { return e.note }
 
-// restoreSwapNote explains a restore that met a different object.
+// restoreSwapNote explains a restore that met a different object; the
+// Trash name it was put back under follows.
 const restoreSwapNote = "a different object was at the Trash name at the moment of the move; it was put back in the Trash"
 
 // Test hooks for restore's moves.
@@ -197,11 +199,24 @@ var (
 	afterRestoreRename func()
 )
 
-// stagingName returns a fresh, unpredictable name inside the Trash.
-func stagingName(prefix string) string {
-	var b [8]byte
+// stagingName returns a fresh, unpredictable, visible name inside the
+// Trash for the entry name: "<name> (kipple <what> <hex>)". No leading dot,
+// so an entry stranded there (a restore killed midway) or put back there
+// stays visible in Finder's Trash window; restore also finds it again by
+// identity. The name is kept within NAME_MAX.
+func stagingName(name, what string) string {
+	var b [6]byte
 	_, _ = rand.Read(b[:])
-	return prefix + hex.EncodeToString(b[:])
+	suffix := " (kipple " + what + " " + hex.EncodeToString(b[:]) + ")"
+	const nameMax = 255
+	if len(name)+len(suffix) > nameMax {
+		cut := nameMax - len(suffix)
+		for cut > 0 && !utf8.RuneStart(name[cut]) {
+			cut--
+		}
+		name = name[:cut]
+	}
+	return name + suffix
 }
 
 // moveBack restores the Trash entry name to the authorised destination.
@@ -215,24 +230,29 @@ func moveBack(trashFd int, name string, dst *policy.Fresh, want entryInfo, tag [
 	if beforeStage != nil {
 		beforeStage()
 	}
-	staging := stagingName(".kipple-restore-")
+	staging := stagingName(name, "restoring")
 	if err := trash.MoveNoReplace(trashFd, name, trashFd, staging); err != nil {
 		return err
 	}
-	putBack := func() {
-		if trash.MoveNoReplace(trashFd, staging, trashFd, name) != nil {
-			_ = trash.MoveNoReplace(trashFd, staging, trashFd, stagingName(".kipple-returned-"))
+	// putBack returns the staged object to the Trash name, or to a visible
+	// "returned" name if that is taken, and says where it is.
+	putBack := func() string {
+		if trash.MoveNoReplace(trashFd, staging, trashFd, name) == nil {
+			return name
 		}
+		ret := stagingName(name, "returned")
+		if trash.MoveNoReplace(trashFd, staging, trashFd, ret) == nil {
+			return ret
+		}
+		return staging
 	}
 	sfd, got, err := openEntry(trashFd, staging)
 	if err != nil {
-		putBack()
-		return &errRestoreArrived{note: restoreSwapNote}
+		return &errRestoreArrived{note: restoreSwapNote + " as " + putBack()}
 	}
 	defer func() { _ = unix.Close(sfd) }()
 	if got.dev != want.dev || got.ino != want.ino || got.size != want.size || !got.mtime.Equal(want.mtime) || !tagMatches(sfd, tag) {
-		putBack()
-		return &errRestoreArrived{note: restoreSwapNote}
+		return &errRestoreArrived{note: restoreSwapNote + " as " + putBack()}
 	}
 	if afterStage != nil {
 		afterStage()
@@ -246,7 +266,7 @@ func moveBack(trashFd int, name string, dst *policy.Fresh, want entryInfo, tag [
 		}
 	}
 	if err != nil {
-		putBack()
+		_ = putBack()
 		return err
 	}
 	if afterRestoreRename != nil {
@@ -259,10 +279,11 @@ func moveBack(trashFd int, name string, dst *policy.Fresh, want entryInfo, tag [
 	}
 	// A different object reached the destination: put it straight back in
 	// the Trash under a fresh name.
-	if berr := trash.MoveNoReplace(dst.ParentFd, dst.Name, trashFd, stagingName(".kipple-returned-")); berr != nil {
+	ret := stagingName(name, "returned")
+	if berr := trash.MoveNoReplace(dst.ParentFd, dst.Name, trashFd, ret); berr != nil {
 		return &errRestoreArrived{note: "a different object reached " + dst.Name + " at the moment of the move and could not be put back in the Trash (" + berr.Error() + ")"}
 	}
-	return &errRestoreArrived{note: restoreSwapNote}
+	return &errRestoreArrived{note: restoreSwapNote + " as " + ret}
 }
 
 func closeFd(fd int) { _ = unix.Close(fd) }
@@ -300,11 +321,11 @@ func findInTrash(trashFd int, dev, ino uint64) (string, bool) {
 	}
 }
 
-// stillAt reports whether path (reached without following a final
-// symlink) is the object (dev, ino).
-func stillAt(path string, dev, ino uint64) bool {
+// entryIs reports whether name in the Trash folder open at trashFd is the
+// object (dev, ino), without following a link.
+func entryIs(trashFd int, name string, dev, ino uint64) bool {
 	var st unix.Stat_t
-	return unix.Lstat(path, &st) == nil && uint64(st.Dev) == dev && uint64(st.Ino) == ino
+	return fstatat(trashFd, name, &st) == nil && uint64(st.Dev) == dev && uint64(st.Ino) == ino
 }
 
 // tagDisplaced tags a displaced object through a descriptor: the path is

@@ -304,7 +304,14 @@ func (a *applier) save() {
 	if write == nil {
 		write = a.o.Receipts.Save
 	}
-	if err := write(*a.rc); err != nil && a.saveErr == nil {
+	// Saves hold the receipt's lock, so a concurrent restore of the same
+	// receipt never interleaves with them.
+	unlock, err := a.o.Receipts.Lock(a.rc.ID)
+	if err == nil {
+		defer unlock()
+		err = write(*a.rc)
+	}
+	if err != nil && a.saveErr == nil {
 		a.saveErr = err
 	}
 }
@@ -473,7 +480,11 @@ func (a *applier) one(t target) {
 	if f.Info.IsDir() {
 		var err error
 		if dir, err = openItem(f, dev, ino); err != nil {
-			a.skip(it, plan.SkipIdentityChanged, err.Error())
+			if isPermission(err) {
+				a.skip(it, plan.SkipPermissionDenied, err.Error())
+			} else {
+				a.skip(it, plan.SkipIdentityChanged, err.Error())
+			}
 			return
 		}
 		defer func() { _ = dir.Close() }()

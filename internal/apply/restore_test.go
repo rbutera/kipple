@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -39,8 +41,14 @@ func cleaned(t *testing.T) (*fx, receipt.Entry, map[string]string) {
 	return f, e, sums
 }
 
+// restore runs Restore with the store, as the CLI does. The receipt is
+// first saved to the store, since Restore works from the receipt as saved
+// (a forged receipt in these tests is one written to the receipts folder).
 func (f *fx) restore(e receipt.Entry, apply bool, only ...string) plan.Result {
 	f.t.Helper()
+	if err := f.store.Save(e.Receipt); err != nil {
+		f.t.Fatal(err)
+	}
 	store := f.store
 	res, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Only: only, Apply: apply, Now: func() time.Time { return now }})
 	if err != nil {
@@ -195,16 +203,18 @@ func TestRestoreForgedReceiptForeignTrashEntry(t *testing.T) {
 	stale.Mtime = stale.Mtime.Add(time.Second)
 	forged.Receipt.Moved[1] = stale
 	res := f.restore(forged, true, forged.Receipt.Moved[0].ID, stale.ID)
-	if len(res.Restored) != 0 || len(res.Skipped) != 2 {
+	// The entry re-pointed at the foreign file is found again by its
+	// identity and tag (it is still in the Trash under its own name) and
+	// restored; the foreign file is never touched. The entry with a stale
+	// mtime matches nothing and is refused.
+	if len(res.Restored) != 1 || res.Restored[0].ID != forged.Receipt.Moved[0].ID || len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipTrashItemMismatch {
 		t.Fatalf("%+v", res)
 	}
-	for _, s := range res.Skipped {
-		if s.Reason != plan.SkipTrashItemMismatch {
-			t.Errorf("%s: %s, want %s", s.ID, s.Reason, plan.SkipTrashItemMismatch)
-		}
-	}
-	if !exists(foreign) || exists(forged.Receipt.Moved[0].Path) {
+	if b, err := os.ReadFile(foreign); err != nil || string(b) != "not kipple's" {
 		t.Fatal("the foreign Trash entry was moved")
+	}
+	if _, err := os.Stat(forged.Receipt.Moved[0].Path + "/blob"); err != nil {
+		t.Fatal("the restored item is not kipple's own")
 	}
 }
 
@@ -549,8 +559,84 @@ func TestRestoreLeavesNoStagingNames(t *testing.T) {
 	}
 	entries, _ := os.ReadDir(f.abs(".Trash"))
 	for _, de := range entries {
-		if strings.HasPrefix(de.Name(), ".kipple-") {
+		if strings.Contains(de.Name(), "(kipple ") {
 			t.Fatalf("staging name left behind: %s", de.Name())
+		}
+	}
+}
+
+// Must-fix 1 (F2): a restore that dies after staging the entry leaves it
+// under a visible "(kipple restoring ...)" name; the next restore finds it
+// by identity and tag and puts it back.
+func TestRestoreFindsAnInterruptedStagingEntry(t *testing.T) {
+	f, e, sums := cleaned(t)
+	m := e.Receipt.Moved[0]
+	afterStage = func() { runtime.Goexit() } // the process "dies" here
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = f.restore(e, true, m.ID)
+	}()
+	<-done
+	afterStage = nil
+	var staged string
+	entries, _ := os.ReadDir(f.abs(".Trash"))
+	for _, de := range entries {
+		if strings.Contains(de.Name(), "(kipple restoring ") {
+			staged = de.Name()
+		}
+	}
+	if staged == "" || strings.HasPrefix(staged, ".") || exists(m.TrashPath) {
+		t.Fatalf("expected a visible staging entry, got %q", staged)
+	}
+	reloaded, err := f.store.Load(e.Receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := f.restore(reloaded, true, m.ID)
+	if len(res.Restored) != 1 || testutil.Checksum(t, m.Path) != sums[m.Path] {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// Should-fix 4 (O1): restore labels a destination it may not inspect
+// permission_denied, as clean does.
+func TestRestoreDestinationPermissionDenied(t *testing.T) {
+	f, e, _ := cleaned(t)
+	m := e.Receipt.Moved[1] // Library/Logs/app
+	if err := os.Chmod(f.abs("Library/Logs"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.abs("Library/Logs"), 0o755) })
+	res := f.restore(e, true, m.ID)
+	if len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipPermissionDenied {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// Must-fix 5 (F5): two restores of one receipt at once never lose each
+// other's restored_at annotations.
+func TestConcurrentRestoresKeepEveryAnnotation(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		f, e, _ := cleaned(t)
+		store := f.store
+		var wg sync.WaitGroup
+		for j := 0; j < 2; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, _ = Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true})
+			}()
+		}
+		wg.Wait()
+		after, err := f.store.Load(e.Receipt.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range after.Receipt.Moved {
+			if m.RestoredAt == nil || !exists(m.Path) {
+				t.Fatalf("run %d: %s restored=%v at home=%v", i, m.Path, m.RestoredAt != nil, exists(m.Path))
+			}
 		}
 	}
 }

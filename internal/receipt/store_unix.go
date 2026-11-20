@@ -96,39 +96,76 @@ func (s Store) names() ([]string, error) {
 	return f.Readdirnames(-1)
 }
 
-// read decodes the receipt file name in the receipts folder.
+// read decodes the receipt file name in the receipts folder. The folder
+// is opened without following a symlink (openDir) and the file relative to
+// it, also without following one, so a receipt is only ever read from
+// kipple's own receipts folder. It must be a regular file of at most
+// plan.MaxDocumentSize bytes; a FIFO does not block the open.
 func (s Store) read(name string) (plan.Receipt, error) {
-	data, err := readFile(filepath.Join(s.dir, name))
+	dfd, err := s.openDir()
 	if err != nil {
 		return plan.Receipt{}, err
+	}
+	defer func() { _ = unix.Close(dfd) }()
+	path := filepath.Join(s.dir, name)
+	fd, err := unix.Openat(dfd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ELOOP) {
+		return plan.Receipt{}, fmt.Errorf("%s is a symbolic link; refusing to read it", path)
+	}
+	if err != nil {
+		return plan.Receipt{}, err
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return plan.Receipt{}, err
+	}
+	if !fi.Mode().IsRegular() {
+		return plan.Receipt{}, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, plan.MaxDocumentSize+1))
+	if err != nil {
+		return plan.Receipt{}, err
+	}
+	if len(data) > plan.MaxDocumentSize {
+		return plan.Receipt{}, fmt.Errorf("%s is larger than %d bytes", path, plan.MaxDocumentSize)
 	}
 	return plan.DecodeReceipt(bytes.NewReader(data))
 }
 
-// readFile reads a regular, non-symlinked file of at most
-// plan.MaxDocumentSize bytes without blocking on a FIFO.
-func readFile(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
-	if errors.Is(err, unix.ELOOP) {
-		return nil, fmt.Errorf("%s is a symbolic link; refusing to read it", path)
+// Lock takes an exclusive lock (flock) on the receipt id, held until the
+// returned function is called, so concurrent restores and saves of one
+// receipt never overwrite each other's changes. The lock file .<id>.lock
+// lives in the receipts folder, opened without following a symlink.
+func (s Store) Lock(id string) (func(), error) {
+	if !ValidID(id) {
+		return nil, fmt.Errorf("receipt: invalid ID %q", id)
 	}
-	if err != nil {
+	if err := s.ensureDir(); err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-	fi, err := f.Stat()
+	dfd, err := s.openDir()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("receipt: %w", err)
 	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, plan.MaxDocumentSize+1))
+	defer func() { _ = unix.Close(dfd) }()
+	fd, err := unix.Openat(dfd, "."+id+".lock", unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("receipt: lock %s: %w", id, err)
 	}
-	if len(data) > plan.MaxDocumentSize {
-		return nil, fmt.Errorf("%s is larger than %d bytes", path, plan.MaxDocumentSize)
+	for {
+		err = unix.Flock(fd, unix.LOCK_EX)
+		if err != unix.EINTR {
+			break
+		}
 	}
-	return data, nil
+	if err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("receipt: lock %s: %w", id, err)
+	}
+	return func() {
+		_ = unix.Flock(fd, unix.LOCK_UN)
+		_ = unix.Close(fd)
+	}, nil
 }

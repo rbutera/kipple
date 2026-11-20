@@ -168,20 +168,6 @@ func (s Store) Load(id string) (Entry, error) {
 	return Entry{Path: s.PathOf(id), Receipt: r}, nil
 }
 
-// LoadFile reads a receipt from any path (for kipple restore <file>). The
-// file must be a regular file; a symlink is refused.
-func LoadFile(path string) (Entry, error) {
-	data, err := readFile(path)
-	if err != nil {
-		return Entry{}, fmt.Errorf("receipt: %w", err)
-	}
-	r, err := plan.DecodeReceipt(bytes.NewReader(data))
-	if err != nil {
-		return Entry{}, fmt.Errorf("%s: %w", path, err)
-	}
-	return Entry{Path: path, Receipt: r}, nil
-}
-
 // MarkRestored sets RestoredAt on the moved item with the given ID and
 // reports whether it was found. The caller saves the receipt.
 func MarkRestored(r *plan.Receipt, id string, at time.Time) bool {

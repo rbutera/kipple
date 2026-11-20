@@ -716,3 +716,19 @@ func TestUnreadableParentIsPermissionDenied(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+// Must-fix 4 (F3): an item folder the system will not let kipple open
+// (mode 000) is permission_denied, not identity_changed.
+func TestUnreadableItemFolderIsPermissionDenied(t *testing.T) {
+	f := newFx(t, threeSafe())
+	p := f.scan("")
+	item := f.abs("Library/Caches/com.example.a")
+	if err := os.Chmod(item, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(item, 0o755) })
+	res := f.run(f.opts(p))
+	if s, ok := skipFor(res, item); !ok || s.Reason != plan.SkipPermissionDenied {
+		t.Fatalf("skipped %+v", res.Skipped)
+	}
+}

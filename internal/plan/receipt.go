@@ -170,6 +170,8 @@ type SkippedItem struct {
 // RestoredItem is an item kipple restore moved back (or, in a dry run,
 // would move back).
 type RestoredItem struct {
+	// Kind is the receipt list the entry came from.
+	Kind      string `json:"kind,omitempty" jsonschema:"enum=moved,enum=pending,enum=displaced"`
 	ID        string `json:"id"`
 	Rule      string `json:"rule"`
 	Path      string `json:"path"`

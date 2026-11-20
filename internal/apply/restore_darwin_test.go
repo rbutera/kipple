@@ -4,6 +4,7 @@ package apply
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -63,7 +64,7 @@ func TestRestoreSwapAtTheTrashName(t *testing.T) {
 	beforeStage = func() { swapPaths(t, m.TrashPath, pr) }
 	defer func() { beforeStage = nil }()
 	res := f.restore(e, true, m.ID)
-	if len(res.Restored) != 0 || len(res.Skipped) != 1 || res.Skipped[0].Detail != restoreSwapNote {
+	if len(res.Restored) != 0 || len(res.Skipped) != 1 || !strings.HasPrefix(res.Skipped[0].Detail, restoreSwapNote) {
 		t.Fatalf("%+v", res)
 	}
 	if exists(m.Path) {
@@ -73,7 +74,7 @@ func TestRestoreSwapAtTheTrashName(t *testing.T) {
 		t.Fatal("the foreign folder is not back at the Trash name")
 	}
 	after, _ := f.store.Load(e.Receipt.ID)
-	if after.Receipt.Moved[0].RestoreNote != restoreSwapNote {
+	if !strings.HasPrefix(after.Receipt.Moved[0].RestoreNote, restoreSwapNote) {
 		t.Fatalf("receipt note %q", after.Receipt.Moved[0].RestoreNote)
 	}
 }
@@ -87,7 +88,7 @@ func TestRestoreSwapAtTheStagingName(t *testing.T) {
 	afterStage = func() {
 		entries, _ := os.ReadDir(f.abs(".Trash"))
 		for _, de := range entries {
-			if len(de.Name()) > 16 && de.Name()[:16] == ".kipple-restore-" {
+			if strings.Contains(de.Name(), "(kipple restoring ") {
 				swapPaths(t, f.abs(".Trash/"+de.Name()), pr)
 				return
 			}
@@ -96,20 +97,24 @@ func TestRestoreSwapAtTheStagingName(t *testing.T) {
 	}
 	defer func() { afterStage = nil }()
 	res := f.restore(e, true, m.ID)
-	if len(res.Restored) != 0 || len(res.Skipped) != 1 || res.Skipped[0].Detail != restoreSwapNote {
+	if len(res.Restored) != 0 || len(res.Skipped) != 1 || !strings.HasPrefix(res.Skipped[0].Detail, restoreSwapNote) {
 		t.Fatalf("%+v", res)
 	}
 	if exists(m.Path) {
 		t.Fatal("the foreign folder stayed at the destination")
 	}
-	found := false
+	// Must-fix 1c: the returned object has a visible name, given in the note.
+	returned := ""
 	entries, _ := os.ReadDir(f.abs(".Trash"))
 	for _, de := range entries {
 		if b, err := os.ReadFile(f.abs(".Trash/" + de.Name() + "/thesis.txt")); err == nil && string(b) == "irreplaceable" {
-			found = true
+			returned = de.Name()
 		}
 	}
-	if !found {
-		t.Fatal("the foreign folder was not put back in the Trash")
+	if returned == "" || strings.HasPrefix(returned, ".") || !strings.Contains(returned, "(kipple returned ") {
+		t.Fatalf("the foreign folder was not put back under a visible name: %q", returned)
+	}
+	if !strings.HasSuffix(res.Skipped[0].Detail, " as "+returned) {
+		t.Fatalf("the note does not name %q: %s", returned, res.Skipped[0].Detail)
 	}
 }
