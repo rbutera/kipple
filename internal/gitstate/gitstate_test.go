@@ -13,8 +13,6 @@ import (
 
 func TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }
 
-var old = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-
 func commit(files ...string) testutil.Commit {
 	var c testutil.Commit
 	for _, f := range files {
