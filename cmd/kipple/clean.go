@@ -322,7 +322,7 @@ func (a *app) restoreCommand() *cobra.Command {
 		only    []string
 	)
 	c := &cobra.Command{
-		Use:   "restore <receipt-id|receipt-file|item-id>",
+		Use:   "restore <receipt-id|item-id>",
 		Short: "Put items from a receipt back where they were (a dry run unless --apply)",
 		Long: `restore moves items recorded in a receipt from the Trash back to their
 original paths. It is a dry run unless --apply is given. An item is put back
@@ -331,9 +331,11 @@ path passes the safety policy for the item's rule, and the Trash entry is
 the very item kipple moved there; otherwise it is skipped with a reason
 (destination_exists, trash_item_missing, ...) and the run exits 4.
 
-The argument is a receipt ID (from kipple history), a receipt file, or an
-item ID, which restores that item from the newest receipt that moved it.`,
-		Args: exactArgs(1, "one receipt ID, receipt file or item ID"),
+The argument is a receipt ID (from kipple history) or an item ID, which
+restores that item from the newest receipt that moved it. Only receipts in
+kipple's own receipts folder are used; receipt files elsewhere are not
+accepted.`,
+		Args: exactArgs(1, "one receipt ID or item ID"),
 		RunE: func(_ *cobra.Command, args []string) error {
 			ids, err := parseIDs(only)
 			if err != nil {
@@ -397,11 +399,6 @@ func (a *app) findReceipt(store receipt.Store, arg string) (receipt.Entry, bool,
 		}
 		return receipt.Entry{}, false, nil, fail(codeNotFound, "no receipt in %s has item %s waiting to be restored", store.Dir(), arg)
 	default:
-		e, err := receipt.LoadFile(arg)
-		if err != nil {
-			return e, false, nil, fail(codeNotFound, "%v", err)
-		}
-		inStore := filepath.Dir(e.Path) == store.Dir() && filepath.Base(e.Path) == e.Receipt.ID+".json"
-		return e, inStore, nil, nil
+		return receipt.Entry{}, false, nil, usageErr("restore takes a receipt ID (from kipple history) or an item ID; receipt files are not accepted, only receipts in %s", store.Dir())
 	}
 }

@@ -72,6 +72,14 @@ type RestoreOptions struct {
 //     object that arrives is not the entry it goes straight back into the
 //     Trash and the receipt notes it.
 //
+// What these checks protect against: stale or mistaken receipts (a
+// receipt for another home, an entry the user emptied or replaced, an
+// entry that is not the object kipple moved, a destination the policy no
+// longer allows). They do not stop a process running as the same user that
+// can already edit kipple's receipts folder: it can compute the tag, which
+// carries no secret (a Keychain-held MAC is on the roadmap). The CLI only
+// restores from receipts inside that folder.
+//
 // Without access to the Trash folder (macOS TCC, no Full Disk Access),
 // Restore returns ErrTrashAccess and moves nothing.
 func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {

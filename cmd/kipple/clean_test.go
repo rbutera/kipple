@@ -451,3 +451,25 @@ func TestTrashAccessError(t *testing.T) {
 		t.Fatal("something moved")
 	}
 }
+
+// Must-fix 4 (F2): restore uses only receipts in kipple's own receipts
+// folder; a receipt file elsewhere is a usage error and moves nothing.
+func TestRestoreRefusesReceiptFiles(t *testing.T) {
+	home := cleanFixture(t)
+	_, out, _ := cli(t, "clean", "--apply", "--json")
+	var res plan.Result
+	exactlyOneJSON(t, out, &res)
+	copyPath := filepath.Join(filepath.Dir(home), "elsewhere.json")
+	if err := os.WriteFile(copyPath, mustRead(t, res.ReceiptPath), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := cli(t, "restore", copyPath, "--apply", "--json")
+	var env errorEnvelope
+	exactlyOneJSON(t, out, &env)
+	if code != exitUsage || env.Error.Code != codeUsage || !strings.Contains(env.Error.Message, "receipt files are not accepted") {
+		t.Fatalf("exit %d %+v", code, env)
+	}
+	if _, err := os.Lstat(res.Moved[0].Path); !os.IsNotExist(err) {
+		t.Fatal("something was restored")
+	}
+}
