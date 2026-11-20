@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -14,7 +15,8 @@ import (
 )
 
 // System is the macOS Inspector: lsappinfo for GUI apps, pgrep -x for
-// process names, lsof for working directories.
+// process names, lsof for working directories, each run by absolute path
+// (toolPaths) with a fixed environment.
 type System struct {
 	// Run executes a command (os/exec with Timeout when nil).
 	Run Runner
@@ -43,17 +45,34 @@ func (s System) run(ctx context.Context, name string, args ...string) ([]byte, e
 	return out, err
 }
 
+// toolPaths are the absolute paths of the system tools System runs. They
+// are never looked up on PATH, so a program named pgrep earlier on PATH
+// cannot answer "not running". A tool missing at its path is an unknown
+// answer.
+var toolPaths = map[string]string{
+	"lsappinfo": "/usr/bin/lsappinfo",
+	"pgrep":     "/usr/bin/pgrep",
+	"lsof":      "/usr/sbin/lsof",
+}
+
+// toolEnv is the environment the tools run with: nothing inherited.
+var toolEnv = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C", "LANG=C"}
+
 func execRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	path, err := exec.LookPath(name)
-	if err != nil {
-		return nil, err
+	path, ok := toolPaths[name]
+	if !ok {
+		return nil, fmt.Errorf("%s is not a known system tool", name)
+	}
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
+		return nil, fmt.Errorf("%s is not available: %w", path, exec.ErrNotFound)
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = "/"
+	cmd.Env = toolEnv
 	cmd.WaitDelay = time.Second
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	err = cmd.Run()
+	err := cmd.Run()
 	return out.Bytes(), err
 }
 

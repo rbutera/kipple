@@ -5,7 +5,9 @@ package procs
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -132,6 +134,39 @@ func TestTimeoutIsUnknown(t *testing.T) {
 		return nil, ctx.Err()
 	}}
 	if _, err := s.RunningBundleIDs(context.Background()); !errors.Is(err, ErrUnknown) {
+		t.Fatalf("err = %v, want ErrUnknown", err)
+	}
+}
+
+// A pgrep (or lsof, lsappinfo) earlier on PATH is never used: the tools run
+// by absolute path.
+func TestToolsIgnorePATH(t *testing.T) {
+	dir := t.TempDir()
+	canary := filepath.Join(dir, "ran")
+	for _, tool := range []string{"pgrep", "lsof", "lsappinfo"} {
+		script := "#!/bin/sh\ntouch " + canary + "\necho 1\n"
+		if err := os.WriteFile(filepath.Join(dir, tool), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	got, err := (System{}).RunningNames(context.Background(), []string{"kipple-no-such-process-7f3a"})
+	if err != nil || got["kipple-no-such-process-7f3a"] {
+		t.Fatalf("RunningNames = %v, %v", got, err)
+	}
+	if _, err := (System{}).ProcessCwds(context.Background(), []string{"kipple-no-such-process-7f3a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(canary); err == nil {
+		t.Fatal("a tool from PATH was run")
+	}
+}
+
+func TestMissingToolIsUnknown(t *testing.T) {
+	saved := toolPaths["pgrep"]
+	toolPaths["pgrep"] = "/nonexistent/pgrep"
+	defer func() { toolPaths["pgrep"] = saved }()
+	if _, err := (System{}).RunningNames(context.Background(), []string{"x"}); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("err = %v, want ErrUnknown", err)
 	}
 }
