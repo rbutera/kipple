@@ -253,6 +253,9 @@ func (a *app) applyError(err error) error {
 	if errors.Is(err, apply.ErrTrashAccess) {
 		return fail(codeTrashAccess, "%s (%v)", trashAccessHelp, err)
 	}
+	if errors.Is(err, apply.ErrReceipt) {
+		return fail(codeReceipt, "%v", err)
+	}
 	return fail(codeApply, "%v", err)
 }
 

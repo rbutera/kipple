@@ -34,3 +34,7 @@ func (e *errRestoreArrived) Error() string { return e.note }
 func closeFd(int) {}
 
 func dupFile(int, string) (*os.File, error) { return nil, trash.ErrUnsupported }
+
+func findInTrash(int, uint64, uint64) (string, bool) { return "", false }
+
+func stillAt(string, uint64, uint64) bool { return false }

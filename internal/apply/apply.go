@@ -136,6 +136,9 @@ type Options struct {
 	beforeMove func(plan.Item)
 	// openTrash, in tests, replaces opening the home .Trash.
 	openTrash func() (*trash.DirTrasher, error)
+	// saveReceipt, in tests, replaces Receipts.Save (to fail on the Nth
+	// save, as a full disk would).
+	saveReceipt func(plan.Receipt) error
 }
 
 // ErrTrashAccess: the Trash folder cannot be opened (macOS protects
@@ -163,6 +166,12 @@ type applier struct {
 	res       *plan.Result
 	// receiptID names the run's receipt in the tags set on moved items.
 	receiptID string
+	// rc is the receipt, saved before and after every move (write-ahead).
+	rc *plan.Receipt
+	// pending holds the item whose move is in progress.
+	pending []plan.MovedItem
+	// saveErr is the first failure to save the receipt; no move follows it.
+	saveErr error
 }
 
 // Run executes o.Plan and returns the result. It returns an error, having
@@ -251,9 +260,9 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	res.ReceiptID, res.ReceiptPath = rc.ID, path
 	a.receiptID = rc.ID
 
-	saveErr := error(nil)
+	a.rc = &rc
 	for _, t := range targets {
-		if saveErr != nil {
+		if a.saveErr != nil {
 			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the receipt could not be saved")
 			continue
 		}
@@ -263,18 +272,41 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		}
 		a.progress("checking " + t.item.Path)
 		a.one(t)
-		rc.Moved, rc.Skipped, rc.Displaced = res.Moved, res.Skipped, res.Displaced
-		if err := o.Receipts.Save(rc); err != nil {
-			saveErr = err
-			res.Warnings = append(res.Warnings, "the receipt could not be saved; stopping: "+err.Error())
+		if a.saveErr == nil {
+			a.save()
 		}
 	}
-	rc.Moved, rc.Skipped, rc.Displaced, rc.Complete = res.Moved, res.Skipped, res.Displaced, true
-	if err := o.Receipts.Save(rc); err != nil && saveErr == nil {
-		res.Warnings = append(res.Warnings, "the receipt could not be completed: "+err.Error())
+	if a.saveErr == nil {
+		rc.Complete = true
+		if a.save(); a.saveErr != nil {
+			res.Warnings = append(res.Warnings, "the receipt could not be completed: "+a.saveErr.Error())
+			a.saveErr = nil
+		}
 	}
 	res.Normalize()
+	if a.saveErr != nil {
+		return res, fmt.Errorf("%w (%s, after %d moves): %v; any item it lists as pending can be recovered with kipple restore %s --apply",
+			ErrReceipt, path, len(res.Moved), a.saveErr, rc.ID)
+	}
 	return res, nil
+}
+
+// ErrReceipt: the receipt could not be saved, so apply stopped. Items it
+// was about to move are listed as pending in the receipt on disk.
+var ErrReceipt = errors.New("the receipt could not be saved, so kipple stopped moving items")
+
+// save writes the receipt with the current moved, skipped, displaced and
+// pending lists, recording the first failure in a.saveErr.
+func (a *applier) save() {
+	a.rc.Moved, a.rc.Skipped, a.rc.Displaced = a.res.Moved, a.res.Skipped, a.res.Displaced
+	a.rc.Pending = append([]plan.MovedItem(nil), a.pending...)
+	write := a.o.saveReceipt
+	if write == nil {
+		write = a.o.Receipts.Save
+	}
+	if err := write(*a.rc); err != nil && a.saveErr == nil {
+		a.saveErr = err
+	}
 }
 
 func (a *applier) progress(msg string) {
@@ -478,6 +510,15 @@ func (a *applier) one(t target) {
 		a.res.Moved = append(a.res.Moved, moved)
 		return
 	}
+	// Write-ahead: the item is in the receipt as pending before it moves.
+	// If that cannot be saved, it does not move.
+	a.pending = []plan.MovedItem{moved}
+	if a.save(); a.saveErr != nil {
+		a.pending = nil
+		a.skip(it, plan.SkipMoveFailed, "not moved: the receipt could not be saved first: "+a.saveErr.Error())
+		return
+	}
+	defer func() { a.pending = nil }()
 	a.progress("moving " + it.Path)
 	var err error
 	if a.o.Permanent {

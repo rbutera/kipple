@@ -344,3 +344,79 @@ func TestDisplacedObjectIsRecordedAndRestorable(t *testing.T) {
 		t.Fatal("the displaced object was not restored")
 	}
 }
+
+// failOn returns a receipt writer that fails on its nth call and every call
+// after it, as a full disk would; earlier calls save normally.
+func failOn(f *fx, n int) func(plan.Receipt) error {
+	calls := 0
+	return func(r plan.Receipt) error {
+		calls++
+		if calls >= n {
+			return errors.New("no space left on device")
+		}
+		return f.store.Save(r)
+	}
+}
+
+// Must-fix 2 (write-ahead): if the receipt cannot be saved with the item
+// as pending, the item does not move and apply stops with ErrReceipt.
+func TestReceiptSaveFailsBeforeTheMove(t *testing.T) {
+	f := newFx(t, threeSafe())
+	p := f.scan("")
+	o := f.opts(p)
+	o.saveReceipt = failOn(f, 1)
+	res, err := Run(context.Background(), o)
+	if !errors.Is(err, ErrReceipt) || len(res.Moved) != 0 {
+		t.Fatalf("err %v result %+v", err, res)
+	}
+	for _, it := range p.Items {
+		if !exists(it.Path) {
+			t.Fatalf("%s moved without a pending receipt entry", it.Path)
+		}
+	}
+}
+
+// Must-fix 2: the receipt cannot be saved after a move (disk full, or the
+// process killed): the item stays pending in the receipt on disk, nothing
+// more moves, and restore finds it in the Trash by tag and identity.
+func TestPendingItemIsRestored(t *testing.T) {
+	f := newFx(t, threeSafe())
+	p := f.scan("")
+	sums := map[string]string{}
+	for _, it := range p.Items {
+		sums[it.Path] = testutil.Checksum(t, it.Path)
+	}
+	o := f.opts(p)
+	o.saveReceipt = failOn(f, 2)
+	res, err := Run(context.Background(), o)
+	if !errors.Is(err, ErrReceipt) || len(res.Moved) != 1 {
+		t.Fatalf("err %v result %+v", err, res)
+	}
+	e, lerr := f.store.Load(res.ReceiptID)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(e.Receipt.Moved) != 0 || len(e.Receipt.Pending) != 1 || e.Receipt.Pending[0].Path != res.Moved[0].Path || e.Receipt.Complete {
+		t.Fatalf("on-disk receipt %+v", e.Receipt)
+	}
+	moved := res.Moved[0]
+	if exists(moved.Path) || !exists(moved.TrashPath) {
+		t.Fatal("fixture: the first item should be in the Trash")
+	}
+	for _, it := range p.Items[1:] {
+		if it.Path != moved.Path && !exists(it.Path) {
+			t.Fatalf("%s moved after the receipt failed", it.Path)
+		}
+	}
+	rr := f.restore(e, true)
+	if len(rr.Restored) != 1 || rr.Restored[0].Path != moved.Path {
+		t.Fatalf("restore %+v", rr)
+	}
+	if testutil.Checksum(t, moved.Path) != sums[moved.Path] {
+		t.Fatal("not restored intact")
+	}
+	after, _ := f.store.Load(res.ReceiptID)
+	if after.Receipt.Pending[0].RestoredAt == nil {
+		t.Fatal("the pending entry was not annotated")
+	}
+}

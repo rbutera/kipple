@@ -232,3 +232,33 @@ func dupFile(fd int, name string) (*os.File, error) {
 	unix.CloseOnExec(d)
 	return os.NewFile(uintptr(d), name), nil
 }
+
+// findInTrash returns the name of the entry in the Trash folder open at
+// trashFd whose (dev, ino) is the given identity, without following links.
+func findInTrash(trashFd int, dev, ino uint64) (string, bool) {
+	lfd, err := openDirAt(trashFd, ".")
+	if err != nil {
+		return "", false
+	}
+	f := os.NewFile(uintptr(lfd), ".Trash")
+	defer func() { _ = f.Close() }()
+	for {
+		names, err := f.Readdirnames(1024)
+		for _, n := range names {
+			var st unix.Stat_t
+			if fstatat(trashFd, n, &st) == nil && uint64(st.Dev) == dev && uint64(st.Ino) == ino {
+				return n, true
+			}
+		}
+		if err != nil {
+			return "", false
+		}
+	}
+}
+
+// stillAt reports whether path (reached without following a final
+// symlink) is the object (dev, ino).
+func stillAt(path string, dev, ino uint64) bool {
+	var st unix.Stat_t
+	return unix.Lstat(path, &st) == nil && uint64(st.Dev) == dev && uint64(st.Ino) == ino
+}

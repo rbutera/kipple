@@ -49,8 +49,9 @@ type RestoreOptions struct {
 	openTrash func() (*trash.DirTrasher, error)
 }
 
-// Restore moves entries recorded in a receipt (moved items and displaced
-// objects) from the Trash back to their original paths. Receipts are
+// Restore moves entries recorded in a receipt (moved items, displaced
+// objects, and pending items, which it finds in the Trash by identity)
+// from the Trash back to their original paths. Receipts are
 // untrusted, so for each entry:
 //
 //   - its ID must be the one its rule and path give (plan.ID);
@@ -101,6 +102,11 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 	}
 	for i := range rc.Displaced {
 		all = append(all, &rc.Displaced[i])
+	}
+	pending := map[*plan.MovedItem]bool{}
+	for i := range rc.Pending {
+		all = append(all, &rc.Pending[i])
+		pending[&rc.Pending[i]] = true
 	}
 	asked := all
 	if len(o.Only) > 0 {
@@ -168,6 +174,21 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 		if err := ctx.Err(); err != nil {
 			skip(m, plan.SkipMoveFailed, "not attempted: interrupted")
 			continue
+		}
+		if pending[m] {
+			// The run stopped between saving this item as pending and
+			// recording its move. Find it in the Trash by its identity; the
+			// tag and identity checks below still apply.
+			name, ok := findInTrash(tr.Fd(), m.Dev, m.Ino)
+			if !ok {
+				if stillAt(m.Path, m.Dev, m.Ino) {
+					skip(m, plan.SkipNotFound, "pending: the move did not happen; the item is still at its original path")
+				} else {
+					skip(m, plan.SkipTrashItemMissing, "pending: the item is not in the Trash")
+				}
+				continue
+			}
+			m.TrashPath = tr.Path() + "/" + name
 		}
 		reason, detail, done := restoreOne(sess, tr, ruleByID[m.Rule], m, tagValue(rc.ID, m.ID, o.Env.HomeIdentity), o)
 		switch {

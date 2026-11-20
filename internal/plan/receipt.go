@@ -113,6 +113,13 @@ type Receipt struct {
 	// Trash call ran). Each entry names the item it displaced (ID, rule,
 	// path it was taken from) and where it is now; restore can put it back.
 	Displaced []MovedItem `json:"displaced"`
+	// Pending lists items whose move was about to happen when the receipt
+	// was last saved (write-ahead): apply saves an item here before moving
+	// it and moves it to moved or displaced after. An entry still pending
+	// means the run stopped in between (disk full, killed); its move may or
+	// may not have happened. kipple restore looks for it in the Trash by its
+	// tag and identity.
+	Pending []MovedItem `json:"pending"`
 }
 
 // MovedItem is an item that went to the Trash, or was deleted with
@@ -219,6 +226,9 @@ func (r *Receipt) Normalize() {
 	}
 	if r.Displaced == nil {
 		r.Displaced = []MovedItem{}
+	}
+	if r.Pending == nil {
+		r.Pending = []MovedItem{}
 	}
 	if r.Skipped == nil {
 		r.Skipped = []SkippedItem{}

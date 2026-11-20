@@ -3,7 +3,7 @@
   "id": "20261120T093000Z-abc123",
   "kipple_version": "test",
   "created_at": "2026-11-20T09:30:00Z",
-  "complete": true,
+  "complete": false,
   "home": "/fx/home",
   "level": "safe",
   "permanent": false,
@@ -47,7 +47,45 @@
       "rule": "caches.user",
       "path": "/fx/home/Library/Caches/c",
       "reason": "owner_running"
+    },
+    {
+      "id": "dddddddddddd",
+      "rule": "caches.user",
+      "path": "/fx/home/Library/Caches/d",
+      "reason": "identity_changed",
+      "detail": "NSFileManager moved something other than the approved item"
     }
   ],
-  "displaced": []
+  "displaced": [
+    {
+      "id": "dddddddddddd",
+      "rule": "caches.user",
+      "path": "/fx/home/Library/Caches/d",
+      "trash_path": "/fx/home/.Trash/d",
+      "bytes": 0,
+      "reclaimable_bytes": 0,
+      "dev": 1,
+      "ino": 9,
+      "size": 64,
+      "mtime": "2026-11-20T08:30:00Z",
+      "mover": "nsfilemanager",
+      "moved_at": "2026-11-20T09:30:00Z"
+    }
+  ],
+  "pending": [
+    {
+      "id": "eeeeeeeeeeee",
+      "rule": "logs.user",
+      "path": "/fx/home/Library/Logs/e",
+      "trash_path": "",
+      "bytes": 4096,
+      "reclaimable_bytes": 0,
+      "dev": 1,
+      "ino": 10,
+      "size": 96,
+      "mtime": "2026-11-20T08:30:00Z",
+      "mover": "rename",
+      "moved_at": "0001-01-01T00:00:00Z"
+    }
+  ]
 }

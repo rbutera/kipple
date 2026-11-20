@@ -40,6 +40,17 @@ func sample(home string, created time.Time) plan.Receipt {
 	}
 }
 
+// withDisplacedAndPending adds a displaced object and a pending item, as a
+// run that lost a swap race and was then interrupted would leave them.
+func withDisplacedAndPending(r plan.Receipt, home string) plan.Receipt {
+	at := r.CreatedAt
+	r.Skipped = append(r.Skipped, plan.SkippedItem{ID: "dddddddddddd", Rule: "caches.user", Path: home + "/Library/Caches/d", Reason: plan.SkipIdentityChanged, Detail: "NSFileManager moved something other than the approved item"})
+	r.Displaced = []plan.MovedItem{{ID: "dddddddddddd", Rule: "caches.user", Path: home + "/Library/Caches/d", TrashPath: home + "/.Trash/d", Dev: 1, Ino: 9, Size: 64, Mtime: at.Add(-time.Hour), Mover: plan.MoverNSFileManager, MovedAt: at}}
+	r.Pending = []plan.MovedItem{{ID: "eeeeeeeeeeee", Rule: "logs.user", Path: home + "/Library/Logs/e", Bytes: 4096, Dev: 1, Ino: 10, Size: 96, Mtime: at.Add(-time.Hour), Mover: plan.MoverRename}}
+	r.Complete = false
+	return r
+}
+
 func store(t *testing.T) Store {
 	t.Helper()
 	s, err := Open(testutil.StateDir(testutil.NewHome(t, testutil.Spec{})))
@@ -202,7 +213,7 @@ func TestUntrustedReceipts(t *testing.T) {
 
 // Golden receipt JSON that validates against kipple schema receipt.
 func TestGoldenReceipt(t *testing.T) {
-	r := sample("/fx/home", t0)
+	r := withDisplacedAndPending(sample("/fx/home", t0), "/fx/home")
 	r.ID = "20261120T093000Z-abc123"
 	restored := t0.Add(time.Hour)
 	r.Moved[1].RestoredAt = &restored
