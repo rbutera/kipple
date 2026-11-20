@@ -357,8 +357,10 @@ func (u *ui) card() *guimodel.ReceiptCard {
 	return nil
 }
 
-// openTrash opens the Trash folder the receipt names (a KIPPLE_HOME run
-// opens its own test Trash, never the real one).
+// openTrash shows the home's Trash folder in Finder (a KIPPLE_HOME run
+// opens its own test Trash, never the real one). It never takes the folder
+// from the receipt, and it asks Finder to open it, so even a folder that
+// is an app bundle is only shown, never launched.
 //
 // The receipt is a file on disk, so its path is checked first: it must be
 // a real folder, not a symbolic link or anything else.
@@ -372,7 +374,7 @@ func (u *ui) openTrash() {
 		u.update()
 		return
 	}
-	u.open(c.TrashDir)
+	u.open("-a", "Finder", c.TrashDir)
 }
 
 // openReceipt reveals the receipt file in Finder.

@@ -21,7 +21,7 @@ const (
 type ReceiptCard struct {
 	ID        string
 	Path      string // the receipt file (for Open receipt; not escaped)
-	TrashDir  string // the Trash folder items went to (for Open Trash; not escaped)
+	TrashDir  string // the home's Trash folder (for Open Trash; not escaped)
 	Moved     string // "24 items · 28.1 GB"
 	Skipped   int
 	Displaced int
@@ -67,10 +67,9 @@ func (m *Model) receiptCard() ReceiptCard {
 	case movers[plan.MoverRename]:
 		c.How = words.Mover(plan.MoverRename)
 	}
+	// The home's own Trash, never the receipt's trash_dir: a receipt is a
+	// file on disk, and Open Trash must not open whatever it names.
 	c.TrashDir = m.cfg.Home + "/.Trash"
-	if e, err := m.cfg.Store.Load(r.ReceiptID); err == nil && e.Receipt.TrashDir != "" {
-		c.TrashDir = e.Receipt.TrashDir
-	}
 	return c
 }
 

@@ -385,7 +385,7 @@ func TestOpenChecksPaths(t *testing.T) {
 	u.update()
 	u.openTrash()
 	u.openReceipt()
-	if len(opened) != 2 || opened[0][0] != home+"/.Trash" || opened[1][0] != "-R" {
+	if len(opened) != 2 || len(opened[0]) != 3 || opened[0][0] != "-a" || opened[0][1] != "Finder" || opened[0][2] != home+"/.Trash" || opened[1][0] != "-R" {
 		t.Fatalf("opened %v", opened)
 	}
 	trash := filepath.Join(home, ".Trash")
