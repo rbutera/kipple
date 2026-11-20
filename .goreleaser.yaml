@@ -5,7 +5,10 @@
 #
 # The release workflow (.github/workflows/release.yml) runs this on a v* tag
 # once CI is green for the same commit, and signs checksums.txt with cosign
-# keyless (GitHub OIDC). v0.1.0 ships the CLI only; the GUI comes later.
+# keyless (GitHub OIDC). The CLI ships as tar.gz archives; the optional GUI
+# ships separately as kipple-gui_<version>_darwin_universal.app.zip, built by
+# scripts/build-app.sh from the universal kipple-gui binary (ad-hoc signed,
+# not notarised), and listed in checksums.txt like every other artifact.
 version: 2
 
 project_name: kipple
@@ -35,6 +38,22 @@ builds:
         - cmd: codesign --force --sign - "{{ .Path }}"
           output: true
 
+  # The optional GUI (design D13): built only with the gui tag, released
+  # only as the .app zip below, never inside the CLI archives.
+  - id: kipple-gui
+    main: ./cmd/kipple-gui
+    binary: kipple-gui
+    tags: [gui]
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin]
+    goarch: [arm64, amd64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
 universal_binaries:
   - id: kipple-universal
     ids: [kipple]
@@ -44,6 +63,18 @@ universal_binaries:
     hooks:
       post:
         - cmd: codesign --force --sign - "{{ .Path }}"
+          output: true
+
+  - id: kipple-gui-universal
+    ids: [kipple-gui]
+    name_template: kipple-gui
+    replace: false
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    hooks:
+      post:
+        # kipple.app around the universal binary, ad-hoc signed and zipped
+        # into dist/ before checksums are taken.
+        - cmd: scripts/build-app.sh "{{ .Path }}" "{{ .Version }}" "dist/kipple-gui_{{ .Version }}_darwin_universal.app.zip"
           output: true
 
 archives:
@@ -61,6 +92,8 @@ archives:
 checksum:
   name_template: checksums.txt
   algorithm: sha256
+  extra_files:
+    - glob: ./dist/kipple-gui_*_darwin_universal.app.zip
 
 signs:
   # Keyless: cosign gets a short-lived certificate for the workflow's OIDC
@@ -99,6 +132,7 @@ release:
   # The sigstore bundle written while signing checksums.txt (above).
   extra_files:
     - glob: ./dist/checksums.txt.sigstore.json
+    - glob: ./dist/kipple-gui_*_darwin_universal.app.zip
   prerelease: auto
   footer: |
     Verify the download before you run it: see "Install" in the README

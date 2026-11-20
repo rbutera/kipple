@@ -2,12 +2,14 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 
-.PHONY: all build test test-permanent lint vet fmt-check check check-no-real-home release-snapshot agent-flow-check
+.PHONY: all build test test-permanent test-gui lint vet fmt-check check check-no-real-home release-snapshot agent-flow-check gui-screenshots
 
 all: check
 
+# Both builds: the default (no Fyne) and the optional GUI (gui tag).
 build:
 	$(GO) build ./...
+	$(GO) build -tags gui -o /dev/null ./cmd/kipple-gui
 
 test:
 	$(GO) test -race ./...
@@ -19,16 +21,22 @@ test-permanent:
 
 vet:
 	$(GO) vet ./...
+	$(GO) vet -tags gui ./cmd/kipple-gui/...
 
 fmt-check:
 	@out="$$(gofmt -l $$(find . -name '*.go' -not -path './.git/*'))"; \
 	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi; \
 	echo "gofmt: clean"
 
+# The GUI's widget tests run on Fyne's test driver (software, no window).
+test-gui:
+	$(GO) test -race -tags gui ./cmd/kipple-gui/...
+
 # golangci-lint is mandatory in CI. Locally it is skipped with a message if absent.
 lint:
 	@if command -v $(GOLANGCI_LINT) >/dev/null 2>&1; then \
-		$(GOLANGCI_LINT) run ./... && $(GOLANGCI_LINT) run --build-tags kipple_permanent ./...; \
+		$(GOLANGCI_LINT) run ./... && $(GOLANGCI_LINT) run --build-tags kipple_permanent ./... && \
+		$(GOLANGCI_LINT) run --build-tags gui ./...; \
 	else \
 		echo "lint: SKIPPED (golangci-lint not installed locally; CI runs it)"; \
 	fi
@@ -37,7 +45,7 @@ lint:
 check-no-real-home:
 	$(GO) run ./tools/checkhome .
 
-check: fmt-check vet lint check-no-real-home test test-permanent build
+check: fmt-check vet lint check-no-real-home test test-permanent test-gui build
 	@echo "make check: OK"
 
 # Builds the release archives into dist/ exactly as a tag would, without
@@ -48,3 +56,7 @@ release-snapshot:
 # Runs the README "For agents" commands against a fixture in a temp folder.
 agent-flow-check:
 	scripts/agent-flow-check.sh
+
+# Captures every GUI screen from a fixture home into OUT (never the real home).
+gui-screenshots:
+	scripts/gui-screenshots.sh $(or $(OUT),dist/gui-screenshots)
