@@ -45,17 +45,16 @@ type verdict struct {
 }
 
 // evaluate returns the reasons item (at path, measured as res) of rule r is
-// not selectable now, in plan order: too_recent, project_active, git state,
-// scan_partial, contains_mount, contains_protected.
+// not selectable now, in plan order: too_recent, git state, project_active,
+// scan_partial, contains_mount, contains_protected. The git state comes
+// before project_active because it is the more serious one (work that is
+// not committed or not pushed), and apply reports an item's first reason.
 func (c *conditions) evaluate(r rules.Rule, itemPath string, res sizes.Result, partial bool) verdict {
 	var v verdict
 	// A partial walk cannot prove the item old enough: the unread part may
 	// hold newer files.
 	if days := r.Conditions.MinAgeDays; days > 0 && (partial || c.now.Sub(res.NewestMtime) < time.Duration(days)*24*time.Hour) {
 		v.reasons = append(v.reasons, plan.ReasonTooRecent)
-	}
-	if r.Match.Kind == rules.MatchProjectArtifact && r.Conditions.RequiresIdleProject && !c.projectIdle(filepath.Dir(itemPath), r.Conditions.IdleDays) {
-		v.reasons = append(v.reasons, plan.ReasonProjectActive)
 	}
 	if r.Conditions.RequiresCleanGit {
 		repo := itemPath // a worktree is its own repository
@@ -68,6 +67,9 @@ func (c *conditions) evaluate(r rules.Rule, itemPath string, res sizes.Result, p
 			v.reasons = append(v.reasons, GitReason(g.State))
 			v.atRisk = g.State == gitstate.StateDirty || g.State == gitstate.StateUnpushed
 		}
+	}
+	if r.Match.Kind == rules.MatchProjectArtifact && r.Conditions.RequiresIdleProject && !c.projectIdle(filepath.Dir(itemPath), r.Conditions.IdleDays) {
+		v.reasons = append(v.reasons, plan.ReasonProjectActive)
 	}
 	// An item that was not fully inspected may hide something protected.
 	if partial {

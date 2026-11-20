@@ -1,0 +1,175 @@
+package apply
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/policy"
+	"github.com/rbutera/kipple/internal/receipt"
+	"github.com/rbutera/kipple/internal/rules"
+	"github.com/rbutera/kipple/internal/testutil"
+)
+
+// cleaned runs a clean of threeSafe and returns the fixture, the receipt,
+// and each item's checksum before the clean.
+func cleaned(t *testing.T) (*fx, receipt.Entry, map[string]string) {
+	t.Helper()
+	f := newFx(t, threeSafe())
+	p := f.scan("")
+	sums := map[string]string{}
+	for _, it := range p.Items {
+		sums[it.Path] = testutil.Checksum(t, it.Path)
+	}
+	res := f.run(f.opts(p))
+	if len(res.Moved) != 3 {
+		t.Fatalf("fixture clean moved %d", len(res.Moved))
+	}
+	e, err := f.store.Load(res.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f, e, sums
+}
+
+func (f *fx) restore(e receipt.Entry, apply bool, only ...string) plan.Result {
+	f.t.Helper()
+	store := f.store
+	res, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Only: only, Apply: apply, Now: func() time.Time { return now }})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return res
+}
+
+// Spec scenario "Restore to vacant path" (history-restore), plus the dry
+// run that precedes it.
+func TestRestoreToVacantPath(t *testing.T) {
+	f, e, sums := cleaned(t)
+	dry := f.restore(e, false)
+	if !dry.DryRun || len(dry.Restored) != 3 || len(dry.Skipped) != 0 {
+		t.Fatalf("dry run %+v", dry)
+	}
+	for _, m := range e.Receipt.Moved {
+		if exists(m.Path) || !exists(m.TrashPath) {
+			t.Fatalf("the dry run moved %s", m.Path)
+		}
+	}
+	res := f.restore(e, true)
+	if len(res.Restored) != 3 || ExitCode(res) != ExitOK {
+		t.Fatalf("%+v", res)
+	}
+	for path, sum := range sums {
+		if !exists(path) || testutil.Checksum(t, path) != sum {
+			t.Errorf("%s not restored intact", path)
+		}
+	}
+	after, err := f.store.Load(e.Receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range after.Receipt.Moved {
+		if m.RestoredAt == nil {
+			t.Errorf("%s not annotated as restored", m.Path)
+		}
+	}
+	again := f.restore(after, true)
+	if len(again.Restored) != 0 || len(again.Skipped) != 3 || again.Skipped[0].Reason != plan.SkipAlreadyRestored {
+		t.Fatalf("second restore %+v", again)
+	}
+}
+
+// Spec scenario "Original path occupied" (history-restore).
+func TestRestoreOriginalPathOccupied(t *testing.T) {
+	f, e, _ := cleaned(t)
+	target := e.Receipt.Moved[0]
+	if err := os.MkdirAll(target.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res := f.restore(e, true, target.ID)
+	if len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipDestinationExists || ExitCode(res) != ExitPartial {
+		t.Fatalf("%+v", res)
+	}
+	if !exists(target.TrashPath) {
+		t.Fatal("the Trash item moved")
+	}
+}
+
+// Spec scenario "Trash emptied" (history-restore).
+func TestRestoreTrashEmptied(t *testing.T) {
+	f, e, _ := cleaned(t)
+	target := e.Receipt.Moved[1]
+	if err := os.RemoveAll(target.TrashPath); err != nil {
+		t.Fatal(err)
+	}
+	res := f.restore(e, true, target.ID)
+	if len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipTrashItemMissing {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// Receipts are untrusted: every path is re-authorised, the Trash entry must
+// be the very object kipple moved, and the receipt must be for this home.
+func TestRestoreUntrustedReceipt(t *testing.T) {
+	f, e, _ := cleaned(t)
+	if err := os.MkdirAll(f.abs("Documents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := e
+	bad.Receipt.Moved = append([]plan.MovedItem(nil), e.Receipt.Moved...)
+	bad.Receipt.Moved[0].Path = f.abs("Documents/stolen")
+	bad.Receipt.Moved[1].TrashPath = f.abs("Library/Caches/elsewhere")
+	bad.Receipt.Moved[2].Ino++
+	res := f.restore(bad, true)
+	want := map[string]string{
+		bad.Receipt.Moved[0].ID: plan.Refused(policy.ReasonDenylisted),
+		bad.Receipt.Moved[1].ID: plan.SkipNotInTrash,
+		bad.Receipt.Moved[2].ID: plan.SkipTrashItemChanged,
+	}
+	for _, s := range res.Skipped {
+		if want[s.ID] != s.Reason {
+			t.Errorf("%s: %s, want %s", s.ID, s.Reason, want[s.ID])
+		}
+	}
+	if len(res.Restored) != 0 || exists(f.abs("Documents/stolen")) {
+		t.Fatalf("restored %+v", res.Restored)
+	}
+	other := e
+	other.Receipt.Home = "/somewhere/else"
+	store := f.store
+	if _, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: other, Store: &store, Apply: true}); err == nil {
+		t.Fatal("restored a receipt for another home")
+	}
+}
+
+// The destination's parent swapped for a symlink just before the move is
+// refused by the parent re-check.
+func TestRestoreParentSwapped(t *testing.T) {
+	f, e, _ := cleaned(t)
+	target := e.Receipt.Moved[1] // Library/Logs/app
+	store := f.store
+	o := RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Only: []string{target.ID}, Apply: true}
+	o.beforeMove = func(plan.MovedItem) {
+		if err := os.Rename(f.abs("Library/Logs"), f.abs("Library/Logs.real")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(f.abs("decoy"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(f.abs("decoy"), f.abs("Library/Logs")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := Restore(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipParentChanged || !exists(target.TrashPath) {
+		t.Fatalf("%+v", res)
+	}
+	if entries, _ := os.ReadDir(f.abs("decoy")); len(entries) != 0 {
+		t.Fatal("restored through the swapped parent")
+	}
+}
