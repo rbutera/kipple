@@ -340,6 +340,29 @@ func TestPutBack(t *testing.T) {
 	}
 }
 
+// After a run that used macOS's Trash command (no Full Disk Access), the
+// app points to Finder's Put Back and offers no Put back of its own, which
+// would need Full Disk Access.
+func TestPutBackNeedsADirectMove(t *testing.T) {
+	f := newFx(t, fixtureSpec())
+	f.cfg.ApplyFunc = func(_ context.Context, o apply.Options) (plan.Result, error) {
+		return plan.Result{ReceiptID: "20261120T000000Z-abcdef", Moved: []plan.MovedItem{{ID: o.Only[0], Path: f.home + "/Library/Logs/app", Bytes: 10, Mover: plan.MoverNSFileManager}}}, nil
+	}
+	m := f.scanned()
+	m.OpenConfirm()
+	if err := m.ApplyNow(); err != nil {
+		t.Fatal(err)
+	}
+	d := m.Done()
+	if d.CanPutBack || !strings.HasPrefix(d.ChangedMind, "Open the Trash, select an item and choose Put Back.") || d.Card.How != "Moved with macOS's Trash command (no Full Disk Access)." {
+		t.Fatalf("%+v", d)
+	}
+	m.OpenPutBack()
+	if m.Sheet() != SheetNone {
+		t.Fatal("Put back opened after a move without Full Disk Access")
+	}
+}
+
 func TestStopDuringApply(t *testing.T) {
 	f := newFx(t, fixtureSpec())
 	m := f.scanned()

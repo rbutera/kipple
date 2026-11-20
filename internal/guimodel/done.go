@@ -177,9 +177,14 @@ func (m *Model) Done() DoneView {
 		if rename {
 			v.ChangedMind = "Finder's Put Back doesn't know about items kipple moved straight into the Trash folder. Put them back here, run " + v.Command + " in Terminal, or drag them out of the Trash."
 		} else {
-			v.ChangedMind = "Open the Trash, select an item and choose Put Back, or put them all back here. " + v.Command + " also works."
+			v.ChangedMind = "Open the Trash, select an item and choose Put Back. " + v.Command + " also works."
 		}
-		v.CanPutBack = m.restored == nil
+		// Putting items back opens the Trash folder itself, which needs
+		// Full Disk Access, as kipple restore does. A run that had to use
+		// macOS's Trash command did not have it, and Finder's Put Back
+		// works for those items, so the app offers Put back only after a
+		// run that moved items straight into the Trash folder.
+		v.CanPutBack = rename && m.restored == nil
 	}
 	if m.restored != nil {
 		rv := &RestoredView{}
@@ -211,7 +216,7 @@ func (m *Model) Result() plan.Result { return m.result }
 
 // OpenPutBack opens the put-back confirmation for this run's receipt.
 func (m *Model) OpenPutBack() {
-	if m.screen != ScreenDone || m.sheet != SheetNone || m.restored != nil || m.result.ReceiptID == "" {
+	if m.screen != ScreenDone || m.sheet != SheetNone || !m.Done().CanPutBack {
 		return
 	}
 	m.sheet = SheetPutBack
