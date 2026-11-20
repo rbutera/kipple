@@ -69,17 +69,21 @@ func (m *Model) Confirm() ConfirmView {
 	n, b := m.sel.Total()
 	v := ConfirmView{Count: words.Items(n), Total: output.Bytes(b), Promise: Promise, CanMove: m.trashMode != apply.TrashUnavailable}
 	v.Title = "Move " + v.Count + " to the Trash?"
+	// Rule titles in the review list's order.
 	var titles []string
-	seen := map[string]bool{}
+	for _, g := range m.groups {
+		for _, id := range g.ids {
+			if m.sel.Selected(id) {
+				titles = append(titles, g.title)
+				break
+			}
+		}
+	}
 	review, manual := 0, 0
 	var risky []string
 	for _, it := range m.plan.Items {
 		if !m.sel.Selected(it.ID) {
 			continue
-		}
-		if !seen[it.Rule] {
-			seen[it.Rule] = true
-			titles = append(titles, m.ruleTitle(it.Rule))
 		}
 		switch it.Tier {
 		case string(rules.TierReview):
@@ -119,7 +123,12 @@ func (m *Model) Confirm() ConfirmView {
 	case apply.TrashFallback:
 		v.Note = FallbackNote
 	case apply.TrashUnavailable:
+		// The Full Disk Access copy only when access was what failed;
+		// otherwise say what the probe found.
 		v.Note = UnavailableNote
+		if m.trashErr != nil && !errors.Is(m.trashErr, apply.ErrTrashAccess) {
+			v.Note = "kipple can't use the Trash folder here, so it can't move anything: " + output.SafeText(m.trashErr.Error()) + "."
+		}
 	}
 	return v
 }
@@ -196,6 +205,10 @@ func (m *Model) ApplyProgress(msg string) {
 		}
 		m.progress.lastP = p
 		m.progress.current = "Checking " + m.Rel(p)
+		return
+	}
+	if p, ok := strings.CutPrefix(msg, "moving "); ok {
+		m.progress.current = "Moving " + m.Rel(p)
 		return
 	}
 	m.progress.current = output.SafeText(msg)
