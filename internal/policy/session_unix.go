@@ -262,9 +262,8 @@ func (f *Fresh) Close() error {
 // the decision reflects the filesystem now rather than when the session
 // started. When the path is allowed it also returns the verified parent
 // descriptor and stored name for the move (see Fresh); the caller must
-// Close it. Wave 3 apply calls it immediately before each move.
-//
-// TODO(wave 3): apply uses Fresh with renameat; not wired yet.
+// Close it. internal/apply calls it immediately before each move and moves
+// the item with renameatx_np from Fresh.ParentFd (see also VerifyParent).
 func (s *Session) AuthorizeFresh(rule Rule, path string) (*Fresh, Decision) {
 	lx := lexical(s.env, rule, path)
 	if lx.done {
