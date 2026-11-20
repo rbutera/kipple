@@ -44,3 +44,7 @@ check: fmt-check vet lint check-no-real-home test test-permanent build
 # signing or publishing anything.
 release-snapshot:
 	goreleaser release --snapshot --clean --skip=sign
+
+# Runs the README "For agents" commands against a fixture in a temp folder.
+agent-flow-check:
+	scripts/agent-flow-check.sh

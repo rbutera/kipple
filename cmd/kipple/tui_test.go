@@ -34,6 +34,9 @@ func runMsgs(m tea.Model, cmd tea.Cmd) tea.Model {
 	return m
 }
 
+// tuiSize is the terminal size headlessTUI renders at.
+var tuiSize = [2]int{120, 50}
+
 // headlessTUI stands in for tui.Run: it drives the real model with the
 // configuration the CLI built, presses keys, and records the first view
 // and the configuration.
@@ -42,7 +45,7 @@ func headlessTUI(view *string, got *tui.Config, keys ...string) func(tui.Config,
 		*got = cfg
 		cfg.Renderer = lipgloss.NewRenderer(io.Discard)
 		var m tea.Model = tui.New(cfg)
-		m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+		m, _ = m.Update(tea.WindowSizeMsg{Width: tuiSize[0], Height: tuiSize[1]})
 		m = runMsgs(m, m.Init())
 		*view = m.View()
 		for _, k := range keys {

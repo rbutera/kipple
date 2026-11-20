@@ -45,6 +45,8 @@ jobs:
         run: go test -race -count=1 ./...
       - name: go build
         run: go build ./...
+      - name: README agent flow against a fixture
+        run: scripts/agent-flow-check.sh
 
   gui:
     name: Build with gui tag

@@ -13,7 +13,8 @@ Useful details:
 
 - the kipple version (`kipple version --json`) and macOS version
 - the rule ID and the path involved (redact personal names if you like)
-- whether the item was moved to the Trash or deleted with `--permanent`
+- how the item was moved (the receipt's `mover`: `rename` into `~/.Trash`,
+  or `nsfilemanager` for Apple's Trash API)
 - the receipt file from the state directory, if one was written
 
 You should get an acknowledgement within seven days. Fixes for paths that
