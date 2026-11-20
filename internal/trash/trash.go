@@ -27,8 +27,9 @@ package trash
 
 import (
 	"errors"
-	"path/filepath"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // Errors returned by Trashers and MoveNoReplace.
@@ -69,7 +70,24 @@ func validName(name string) bool {
 	return name != "" && name != "." && name != ".." && !strings.ContainsRune(name, '/') && !strings.ContainsRune(name, 0)
 }
 
-// absClean reports whether p is absolute and clean.
-func absClean(p string) bool {
-	return p != "" && p[0] == '/' && filepath.Clean(p) == p && !strings.ContainsRune(p, 0)
+// DisplacedError reports that a move put something other than the
+// approved object into the Trash (the approved object stayed where it was,
+// or its identity could not be confirmed). The thing that moved is at Dest;
+// Known says whether its identity could be read. It matches ErrItemChanged.
+// apply records it in the receipt as a displaced entry, which restore can
+// put back.
+type DisplacedError struct {
+	Dest     string
+	Dev, Ino uint64
+	Size     int64
+	Mtime    time.Time
+	Known    bool
+	Why      string
 }
+
+func (e *DisplacedError) Error() string {
+	return fmt.Sprintf("trash: %s: something other than the approved item was moved to %s", e.Why, e.Dest)
+}
+
+// Is makes errors.Is(err, ErrItemChanged) true.
+func (e *DisplacedError) Is(target error) bool { return target == ErrItemChanged }

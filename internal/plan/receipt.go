@@ -108,6 +108,11 @@ type Receipt struct {
 	PlanGenerated time.Time     `json:"plan_generated_at"`
 	Moved         []MovedItem   `json:"moved"`
 	Skipped       []SkippedItem `json:"skipped"`
+	// Displaced lists objects a move put in the Trash although they were
+	// not the approved item (something was swapped in while the system's
+	// Trash call ran). Each entry names the item it displaced (ID, rule,
+	// path it was taken from) and where it is now; restore can put it back.
+	Displaced []MovedItem `json:"displaced"`
 }
 
 // MovedItem is an item that went to the Trash, or was deleted with
@@ -133,6 +138,10 @@ type MovedItem struct {
 	MovedAt    time.Time  `json:"moved_at"`
 	Permanent  bool       `json:"permanent,omitempty"`
 	RestoredAt *time.Time `json:"restored_at,omitempty" jsonschema:"description=Set when kipple restore put the item back."`
+	// RestoreNote records a restore that went wrong after its move (for
+	// example something else arrived at the destination), so nothing that
+	// moved is ever unrecorded.
+	RestoreNote string `json:"restore_note,omitempty"`
 }
 
 // SkippedItem is a selected item that was not moved (or, in a restore
@@ -174,6 +183,7 @@ type Result struct {
 	ReceiptID   string         `json:"receipt_id,omitempty"`
 	ReceiptPath string         `json:"receipt_path,omitempty"`
 	Moved       []MovedItem    `json:"moved"`
+	Displaced   []MovedItem    `json:"displaced" jsonschema:"description=Objects moved to the Trash that were not the approved item (see receipt.displaced)."`
 	Restored    []RestoredItem `json:"restored"`
 	Skipped     []SkippedItem  `json:"skipped"`
 	Untouched   []string       `json:"untouched" jsonschema:"description=IDs of plan items that were not selected and were left alone."`
@@ -184,6 +194,9 @@ type Result struct {
 func (r *Result) Normalize() {
 	if r.Moved == nil {
 		r.Moved = []MovedItem{}
+	}
+	if r.Displaced == nil {
+		r.Displaced = []MovedItem{}
 	}
 	if r.Restored == nil {
 		r.Restored = []RestoredItem{}
@@ -203,6 +216,9 @@ func (r *Result) Normalize() {
 func (r *Receipt) Normalize() {
 	if r.Moved == nil {
 		r.Moved = []MovedItem{}
+	}
+	if r.Displaced == nil {
+		r.Displaced = []MovedItem{}
 	}
 	if r.Skipped == nil {
 		r.Skipped = []SkippedItem{}

@@ -749,15 +749,22 @@ func TestTrashFallback(t *testing.T) {
 			t.Fatalf("err = %v, want ErrTrashAccess", err)
 		}
 	})
-	t.Run("fallback refused too: trash_access, nothing moved", func(t *testing.T) {
+	// Should-fix 7: a refusal on an item is that item's permission_denied;
+	// only failing to open the Trash is trash_access.
+	t.Run("fallback refused on items: permission_denied per item, run continues", func(t *testing.T) {
 		f := newFx(t, threeSafe())
 		p := f.scan("")
 		o := f.opts(p)
 		o.openTrash = errTrashEPERM(f.home)
 		o.Finder = func() (trash.ExpectTrasher, error) { return deniedTrasher{}, nil }
 		res, err := Run(context.Background(), o)
-		if !errors.Is(err, ErrTrashAccess) || len(res.Moved) != 0 || len(res.Skipped) != 3 {
+		if err != nil || len(res.Moved) != 0 || len(res.Skipped) != 3 || ExitCode(res) != ExitPartial {
 			t.Fatalf("err %v result %+v", err, res)
+		}
+		for _, s := range res.Skipped {
+			if s.Reason != plan.SkipPermissionDenied {
+				t.Errorf("%+v", s)
+			}
 		}
 		for _, it := range p.Items {
 			if !exists(it.Path) {

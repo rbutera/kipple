@@ -74,6 +74,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -138,6 +139,17 @@ func (f FinderTrasher) TrashExpect(parentFd int, name string, dev, ino uint64) (
 	}
 	cs := C.CString(dir + "/" + name)
 	defer C.free(unsafe.Pointer(cs))
+	// Immediately before the call: the object under that name in the
+	// verified parent is still the approved one (by descriptor, not path).
+	if err := fstatat(parentFd, name, &st); err != nil {
+		return "", fmt.Errorf("trash: %s: %w", name, err)
+	}
+	if uint64(st.Dev) != dev || uint64(st.Ino) != ino {
+		return "", ErrItemChanged
+	}
+	if beforeFinderCall != nil {
+		beforeFinderCall()
+	}
 	var out *C.char
 	code := C.kipple_trash_object(cs, C.ulonglong(dev), C.ulonglong(ino), &out)
 	msg := C.GoString(out)
@@ -146,7 +158,7 @@ func (f FinderTrasher) TrashExpect(parentFd int, name string, dev, ino uint64) (
 	case C.KT_OK:
 	case C.KT_CHANGED:
 		if msg != "" && msg[0] == '/' {
-			return msg, fmt.Errorf("%w: NSFileManager moved something other than the approved item to %s", ErrItemChanged, msg)
+			return msg, displaced(msg, "NSFileManager moved something other than the approved item")
 		}
 		return "", fmt.Errorf("%w: %s", ErrItemChanged, msg)
 	case C.KT_PERMISSION:
@@ -157,7 +169,7 @@ func (f FinderTrasher) TrashExpect(parentFd int, name string, dev, ino uint64) (
 	dest := msg
 	// The approved object must be gone from its parent.
 	if err := fstatat(parentFd, name, &st); err == nil && uint64(st.Dev) == dev && uint64(st.Ino) == ino {
-		return dest, fmt.Errorf("%w: the item is still in its folder after NSFileManager reported %s", ErrItemChanged, dest)
+		return dest, displaced(dest, "the approved item is still in its folder")
 	}
 	if f.Expect != nil {
 		var pd unix.Stat_t
@@ -175,4 +187,20 @@ func lastName(p string) string {
 		}
 	}
 	return p
+}
+
+// beforeFinderCall, in tests, runs between the descriptor pre-check and
+// the NSFileManager call.
+var beforeFinderCall func()
+
+// displaced describes what NSFileManager moved to dest instead of the
+// approved object, with its identity when lstat is allowed there (under
+// TCC it may not be).
+func displaced(dest, why string) *DisplacedError {
+	de := &DisplacedError{Dest: dest, Why: why}
+	var st unix.Stat_t
+	if unix.Lstat(dest, &st) == nil {
+		de.Dev, de.Ino, de.Size, de.Mtime, de.Known = uint64(st.Dev), uint64(st.Ino), st.Size, time.Unix(st.Mtim.Unix()).UTC(), true
+	}
+	return de
 }

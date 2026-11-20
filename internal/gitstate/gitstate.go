@@ -1,5 +1,5 @@
 // Package gitstate classifies a project's git state (design D10) by running
-// git read-only, with plumbing commands that never run repository code:
+// git read-only, with plumbing commands only:
 //
 //	git rev-parse --is-inside-work-tree           is it a repository
 //	git config --get-regexp ^filter\.             which filter drivers exist
@@ -14,7 +14,9 @@
 // and process) set to empty, which git treats as no filter: ls-files may
 // compare file contents when timestamps changed, and must never run a
 // configured filter to do it. No command here produces a diff, so no
-// textconv or external diff driver is ever run.
+// textconv or external diff driver is invoked. Hooks, fsmonitor, filters
+// and lazy fetch are disabled; global and system config are not read;
+// PATH and the environment are fixed.
 //
 // Partial clones never fetch: GIT_NO_LAZY_FETCH=1 and protocol.allow=never
 // turn a missing object into an error, and a repository configured as a

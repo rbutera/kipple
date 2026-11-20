@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
@@ -162,5 +164,43 @@ func TestFinderTrasherChecksIdentity(t *testing.T) {
 	dd, _ := os.Lstat(filepath.Join(home, "d"))
 	if dest, err := tr.TrashExpect(pfd, "d", uint64(dd.Sys().(*syscall.Stat_t).Dev), uint64(dd.Sys().(*syscall.Stat_t).Ino)); err != nil || !strings.HasPrefix(dest, mnt+"/") {
 		t.Fatalf("directory: %s %v", dest, err)
+	}
+}
+
+// Must-fix 4a: a swap between the descriptor pre-check and the
+// NSFileManager call is caught by the reference check: nothing moves and
+// the decoy stays where it is.
+func TestFinderTrasherSwapBeforeCall(t *testing.T) {
+	mnt := mountVolume(t)
+	home := filepath.Join(mnt, "home")
+	for _, d := range []string{"item", "decoy"} {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, "decoy/keep.txt"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KIPPLE_HOME", home)
+	t.Setenv("KIPPLE_STATE_DIR", filepath.Join(filepath.Dir(mnt), "state"))
+	testutil.GuardRealHome(t)
+	tr, err := NewFinderTrasher(nil)
+	if errors.Is(err, ErrUnsupported) {
+		t.Skip("built without cgo")
+	}
+	fi, _ := os.Lstat(filepath.Join(home, "item"))
+	st := fi.Sys().(*syscall.Stat_t)
+	beforeFinderCall = func() {
+		if err := unix.RenameatxNp(unix.AT_FDCWD, filepath.Join(home, "item"), unix.AT_FDCWD, filepath.Join(home, "decoy"), unix.RENAME_SWAP); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() { beforeFinderCall = nil }()
+	dest, err := tr.TrashExpect(parentFd(t, home), "item", uint64(st.Dev), uint64(st.Ino))
+	if !errors.Is(err, ErrItemChanged) {
+		t.Fatalf("dest %q err %v, want ErrItemChanged", dest, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(home, "item/keep.txt")); err != nil || string(b) != "keep" {
+		t.Fatal("the decoy moved")
 	}
 }

@@ -28,16 +28,18 @@ func openHomeTrash(*policy.Session, string) (*trash.DirTrasher, error) {
 	return nil, trash.ErrUnsupported
 }
 
-func moveBack(int, string, *policy.Fresh, uint64, uint64, bool) error { return trash.ErrUnsupported }
+func tagTarget(*policy.Fresh, uint64, uint64, *os.File) (int, func(), error) {
+	return -1, nil, trash.ErrUnsupported
+}
 
-type fdSource struct{ tr *trash.DirTrasher }
+func openEntry(int, string) (int, entryInfo, error) { return -1, entryInfo{}, trash.ErrUnsupported }
 
-func (s fdSource) dir() string                                    { return "" }
-func (s fdSource) stat(string) (entryInfo, error)                 { return entryInfo{}, trash.ErrUnsupported }
-func (s fdSource) moveOut(string, *policy.Fresh, entryInfo) error { return trash.ErrUnsupported }
+func moveBack(int, string, *policy.Fresh, entryInfo, int) error { return trash.ErrUnsupported }
 
-type pathSource struct{ d string }
+type errRestoreArrived struct{ note string }
 
-func (s pathSource) dir() string                                    { return s.d }
-func (s pathSource) stat(string) (entryInfo, error)                 { return entryInfo{}, trash.ErrUnsupported }
-func (s pathSource) moveOut(string, *policy.Fresh, entryInfo) error { return trash.ErrUnsupported }
+func (e *errRestoreArrived) Error() string { return e.note }
+
+func closeFd(int) {}
+
+func dupFile(int, string) (*os.File, error) { return nil, trash.ErrUnsupported }

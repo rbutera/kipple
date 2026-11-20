@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -168,7 +169,14 @@ func (d *DirTrasher) trash(parentFd int, name string, want *[2]uint64) (string, 
 		err := MoveNoReplace(parentFd, name, d.fd, cand)
 		switch {
 		case err == nil:
-			return d.path + "/" + cand, d.checkArrived(parentFd, name, cand, ist)
+			if aerr := d.checkArrived(parentFd, name, cand, ist); aerr != nil {
+				var de *DisplacedError
+				if errors.As(aerr, &de) {
+					return de.Dest, aerr
+				}
+				return "", aerr
+			}
+			return d.path + "/" + cand, nil
 		case errors.Is(err, unix.EEXIST):
 			continue
 		case errors.Is(err, unix.EXDEV):
@@ -189,7 +197,11 @@ func (d *DirTrasher) checkArrived(parentFd int, name, cand string, want unix.Sta
 		return nil
 	}
 	if err := MoveNoReplace(d.fd, cand, parentFd, name); err != nil {
-		return fmt.Errorf("%w (and it could not be put back from %s/%s: %v)", ErrItemChanged, d.path, cand, err)
+		de := &DisplacedError{Dest: d.path + "/" + cand, Why: "it could not be put back (" + err.Error() + ")"}
+		if fstatat(d.fd, cand, &got) == nil {
+			de.Dev, de.Ino, de.Size, de.Mtime, de.Known = uint64(got.Dev), uint64(got.Ino), got.Size, time.Unix(got.Mtim.Unix()).UTC(), true
+		}
+		return de
 	}
 	return ErrItemChanged
 }

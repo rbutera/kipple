@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rbutera/kipple/internal/plan"
-	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/testutil"
@@ -128,7 +127,7 @@ func TestRestoreUntrustedReceipt(t *testing.T) {
 	bad.Receipt.Moved[2].Ino++
 	res := f.restore(bad, true)
 	want := map[string]string{
-		bad.Receipt.Moved[0].ID: plan.Refused(policy.ReasonDenylisted),
+		bad.Receipt.Moved[0].ID: plan.SkipNotFound, // its ID no longer matches the rule and path
 		bad.Receipt.Moved[1].ID: plan.SkipNotInTrash,
 		bad.Receipt.Moved[2].ID: plan.SkipTrashItemMismatch,
 	}
@@ -207,28 +206,28 @@ func TestRestoreForgedReceiptForeignTrashEntry(t *testing.T) {
 	}
 }
 
-// Without Full Disk Access the Trash folder cannot be opened: restore
-// reaches entries by path with the same identity checks.
+// Must-fix 2: without Full Disk Access the Trash folder cannot be opened;
+// restore never falls back to paths, so it fails with ErrTrashAccess and
+// moves nothing.
 func TestRestoreWithoutTrashDescriptor(t *testing.T) {
-	f, e, sums := cleaned(t)
+	f, e, _ := cleaned(t)
 	store := f.store
 	o := RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true,
 		openTrash: func() (*trash.DirTrasher, error) {
 			return nil, &fs.PathError{Op: "open", Path: f.abs(".Trash"), Err: syscall.EPERM}
 		}}
 	res, err := Restore(context.Background(), o)
-	if err != nil || len(res.Restored) != 3 || len(res.Warnings) == 0 {
-		t.Fatalf("%+v %v", res, err)
+	if !errors.Is(err, ErrTrashAccess) || len(res.Restored) != 0 {
+		t.Fatalf("err %v result %+v", err, res)
 	}
-	for p, sum := range sums {
-		if testutil.Checksum(t, p) != sum {
-			t.Errorf("%s not restored intact", p)
+	for _, m := range e.Receipt.Moved {
+		if !exists(m.TrashPath) || exists(m.Path) {
+			t.Fatalf("%s moved", m.Path)
 		}
 	}
 }
 
-// When neither the Trash descriptor nor the paths inside it can be used,
-// restore fails with ErrTrashAccess and moves nothing.
+// A Trash folder that cannot be opened (here mode 000) is ErrTrashAccess.
 func TestRestoreTrashAccessDenied(t *testing.T) {
 	f, e, _ := cleaned(t)
 	if err := os.Chmod(f.abs(".Trash"), 0); err != nil {
@@ -239,5 +238,109 @@ func TestRestoreTrashAccessDenied(t *testing.T) {
 	res, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true})
 	if !errors.Is(err, ErrTrashAccess) || len(res.Restored) != 0 {
 		t.Fatalf("err %v result %+v", err, res)
+	}
+}
+
+// Must-fix 3a: a forged receipt that copies a foreign Trash entry's dev,
+// ino, size and mtime is refused: the entry lacks kipple's tag.
+func TestRestoreForgedReceiptCopiedIdentity(t *testing.T) {
+	f, e, _ := cleaned(t)
+	foreign := f.abs(".Trash/foreign-secret")
+	if err := os.WriteFile(foreign, []byte("not kipple's"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	forged := e
+	forged.Receipt.Moved = append([]plan.MovedItem(nil), e.Receipt.Moved...)
+	m := &forged.Receipt.Moved[0]
+	m.TrashPath, m.Dev, m.Ino, m.Size = foreign, uint64(st.Dev), st.Ino, st.Size
+	m.Mtime = time.Unix(st.Mtimespec.Unix()).UTC()
+	res := f.restore(forged, true, m.ID)
+	if len(res.Restored) != 0 || len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipTrashItemMismatch || !exists(foreign) {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// Must-fix 3b: a Trash entry with something protected inside it is never
+// restored, even when its identity and tag match (a .env planted in a
+// subfolder leaves the entry's own size and mtime unchanged).
+func TestRestoreRefusesProtectedContents(t *testing.T) {
+	f := newFx(t, testutil.Spec{
+		Files: []testutil.File{{Path: "Library/Caches/com.example.n/sub/blob", Size: 10, MTime: old}},
+		Dirs:  []testutil.Dir{{Path: "Library/Caches/com.example.n/sub", MTime: old}, {Path: "Library/Caches/com.example.n", MTime: old}},
+	})
+	res := f.run(f.opts(f.scan("")))
+	if len(res.Moved) != 1 {
+		t.Fatalf("%+v", res)
+	}
+	e, err := f.store.Load(res.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := e.Receipt.Moved[0]
+	if err := os.WriteFile(m.TrashPath+"/sub/.env", []byte("SECRET=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rr := f.restore(e, true, m.ID)
+	if len(rr.Skipped) != 1 || rr.Skipped[0].Reason != plan.ReasonContainsProtected || exists(m.Path) {
+		t.Fatalf("%+v", rr)
+	}
+}
+
+// displacingTrasher stands in for NSFileManager losing the swap race: it
+// moves a decoy into the Trash instead of the approved item.
+type displacingTrasher struct{ decoy, dest string }
+
+func (d displacingTrasher) Trash(int, string) (string, error) { return "", errors.New("unused") }
+func (d displacingTrasher) TrashExpect(int, string, uint64, uint64) (string, error) {
+	if err := os.Rename(d.decoy, d.dest); err != nil {
+		return "", err
+	}
+	fi, err := os.Lstat(d.dest)
+	if err != nil {
+		return "", err
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	return d.dest, &trash.DisplacedError{Dest: d.dest, Dev: uint64(st.Dev), Ino: st.Ino, Size: st.Size, Mtime: time.Unix(st.Mtimespec.Unix()).UTC(), Known: true, Why: "test"}
+}
+
+// Must-fix 4 and 6: an object displaced into the Trash is recorded in the
+// receipt with its Trash path and identity, the item is skipped with
+// identity_changed (exit 4), and restore can put the object back.
+func TestDisplacedObjectIsRecordedAndRestorable(t *testing.T) {
+	spec := threeSafe()
+	spec.Files = append(spec.Files, testutil.File{Path: "decoy/keep.txt", Content: "keep"})
+	f := newFx(t, spec)
+	p := f.scan("")
+	item := itemByRel(t, p, "Library/Caches/com.example.a")
+	o := f.opts(p)
+	o.Only = []string{item.ID}
+	o.openTrash = errTrashEPERM(f.home)
+	o.Finder = func() (trash.ExpectTrasher, error) {
+		return displacingTrasher{decoy: f.abs("decoy"), dest: f.abs(".Trash/com.example.a")}, nil
+	}
+	res := f.run(o)
+	if len(res.Moved) != 0 || len(res.Displaced) != 1 || len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipIdentityChanged || ExitCode(res) != ExitPartial {
+		t.Fatalf("%+v", res)
+	}
+	e, err := f.store.Load(res.ReceiptID)
+	if err != nil || len(e.Receipt.Displaced) != 1 || e.Receipt.Displaced[0].TrashPath != f.abs(".Trash/com.example.a") || e.Receipt.Displaced[0].Ino == 0 {
+		t.Fatalf("receipt %+v %v", e.Receipt, err)
+	}
+	// The approved item never moved; once it is gone, the displaced object
+	// can go back where it was taken from.
+	if err := os.RemoveAll(item.Path); err != nil {
+		t.Fatal(err)
+	}
+	rr := f.restore(e, true, item.ID)
+	if len(rr.Restored) != 1 {
+		t.Fatalf("restore %+v", rr)
+	}
+	if b, err := os.ReadFile(item.Path + "/keep.txt"); err != nil || string(b) != "keep" {
+		t.Fatal("the displaced object was not restored")
 	}
 }

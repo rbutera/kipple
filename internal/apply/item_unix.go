@@ -74,9 +74,10 @@ func withOwnerWrite(dir *os.File, fn func() error) error {
 		return err
 	}
 	err := fn()
-	if cerr := unix.Fchmod(int(dir.Fd()), mode); cerr != nil && err == nil {
-		err = cerr
-	}
+	// Put the mode back through the descriptor wherever the folder now is.
+	// A failure here leaves owner write on a folder that moved; it never
+	// turns a completed move into a reported failure.
+	_ = unix.Fchmod(int(dir.Fd()), mode)
 	return err
 }
 
@@ -400,6 +401,8 @@ func classify(err error) string {
 		return plan.ReasonContainsProtected
 	case errors.As(err, new(*errChanged)):
 		return plan.SkipIdentityChanged
+	case errors.As(err, new(*errRestoreArrived)):
+		return plan.SkipTrashItemMismatch
 	case errors.Is(err, errCrossDevice):
 		return plan.ReasonContainsMount
 	case errors.Is(err, trash.ErrDifferentDevice), errors.Is(err, unix.EXDEV):
@@ -436,84 +439,97 @@ func openHomeTrash(sess *policy.Session, home string) (*trash.DirTrasher, error)
 	return trash.NewDirTrasher(e.Dir, path)
 }
 
-func infoOf(st *unix.Stat_t) entryInfo {
-	return entryInfo{kind: policy.StatMode(uint32(st.Mode)), dev: uint64(st.Dev), ino: uint64(st.Ino), size: st.Size, mtime: time.Unix(st.Mtim.Unix()).UTC()}
-}
-
-// fdSource reaches Trash entries through the verified Trash descriptor.
-type fdSource struct{ tr *trash.DirTrasher }
-
-func (s fdSource) dir() string { return s.tr.Path() }
-
-func (s fdSource) stat(name string) (entryInfo, error) {
-	var st unix.Stat_t
-	if err := fstatat(s.tr.Fd(), name, &st); err != nil {
-		return entryInfo{}, err
+// tagTarget returns a descriptor of the approved item to tag: the held
+// folder, or the file opened from its verified parent (never following a
+// symlink, never blocking on a FIFO) and checked to be (dev, ino).
+func tagTarget(f *policy.Fresh, dev, ino uint64, dir *os.File) (int, func(), error) {
+	if dir != nil {
+		return int(dir.Fd()), func() {}, nil
 	}
-	return infoOf(&st), nil
-}
-
-func (s fdSource) moveOut(name string, dst *policy.Fresh, want entryInfo) error {
-	return moveBack(s.tr.Fd(), name, dst, want.dev, want.ino, want.kind.IsDir())
-}
-
-// pathSource reaches Trash entries by path, for when the Trash folder
-// cannot be opened. Each move is checked: the entry must be the approved
-// object immediately before, and the object that arrives must be it.
-type pathSource struct{ d string }
-
-func (s pathSource) dir() string { return s.d }
-
-func (s pathSource) stat(name string) (entryInfo, error) {
-	var st unix.Stat_t
-	if err := unix.Lstat(s.d+"/"+name, &st); err != nil {
-		return entryInfo{}, err
-	}
-	return infoOf(&st), nil
-}
-
-func (s pathSource) moveOut(name string, dst *policy.Fresh, want entryInfo) error {
-	got, err := s.stat(name)
+	fd, err := unix.Openat(f.ParentFd, f.Name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return err
+		return -1, nil, fmt.Errorf("could not open the item to tag it: %w", err)
 	}
-	if got.dev != want.dev || got.ino != want.ino {
-		return trash.ErrItemChanged
+	st, err := fstatOf(fd)
+	if err != nil || identOf(&st) != (ident{dev, ino}) {
+		_ = unix.Close(fd)
+		return -1, nil, trash.ErrItemChanged
 	}
-	if err := trash.MoveNoReplaceFrom(s.d+"/"+name, dst.ParentFd, dst.Name); err != nil {
-		return err
-	}
-	var st unix.Stat_t
-	if err := fstatat(dst.ParentFd, dst.Name, &st); err != nil || uint64(st.Dev) != want.dev || uint64(st.Ino) != want.ino {
-		return fmt.Errorf("%w: the object restored to %s is not the approved one", trash.ErrItemChanged, dst.Name)
-	}
-	return nil
+	return fd, func() { _ = unix.Close(fd) }, nil
 }
 
-// moveBack moves name from the Trash descriptor to the authorised
-// destination, never replacing anything, after checking the Trash entry is
-// still (dev, ino). A read-only directory gets owner write permission for
-// the duration of the rename, as when it was trashed.
-func moveBack(trashFd int, name string, dst *policy.Fresh, dev, ino uint64, isDir bool) error {
+// openEntry opens the Trash entry name through the verified Trash
+// descriptor without following a symlink or blocking on a FIFO, and
+// returns the descriptor and the entry's identity.
+func openEntry(trashFd int, name string) (int, entryInfo, error) {
+	fd, err := unix.Openat(trashFd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, entryInfo{}, err
+	}
+	st, err := fstatOf(fd)
+	if err != nil {
+		_ = unix.Close(fd)
+		return -1, entryInfo{}, err
+	}
+	return fd, entryInfo{kind: policy.StatMode(uint32(st.Mode)), dev: uint64(st.Dev), ino: uint64(st.Ino), size: st.Size, mtime: time.Unix(st.Mtim.Unix()).UTC()}, nil
+}
+
+// errRestoreArrived: after a restore's rename, the object at the
+// destination was not the approved entry. note says what was done.
+type errRestoreArrived struct{ note string }
+
+func (e *errRestoreArrived) Error() string { return e.note }
+
+// moveBack moves the entry name from the Trash descriptor to the
+// authorised destination, never replacing anything: the entry must still
+// be want (by descriptor) immediately before, and the object that arrives
+// must be it (else the receipt notes what happened). efd is the entry, open,
+// for the read-only-folder permission step.
+func moveBack(trashFd int, name string, dst *policy.Fresh, want entryInfo, efd int) error {
 	move := func() error {
 		var st unix.Stat_t
 		if err := fstatat(trashFd, name, &st); err != nil {
 			return err
 		}
-		if uint64(st.Dev) != dev || uint64(st.Ino) != ino {
+		if uint64(st.Dev) != want.dev || uint64(st.Ino) != want.ino {
 			return trash.ErrItemChanged
 		}
 		return trash.MoveNoReplace(trashFd, name, dst.ParentFd, dst.Name)
 	}
 	err := move()
-	if err != nil && isDir && isPermission(err) {
-		fd, oerr := openDirAt(trashFd, name)
-		if oerr != nil {
-			return err
-		}
-		f := os.NewFile(uintptr(fd), name)
-		defer func() { _ = f.Close() }()
+	if err != nil && want.kind.IsDir() && isPermission(err) {
+		f := os.NewFile(uintptr(efd), name) // not closed here: the caller owns efd
 		err = withOwnerWrite(f, move)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if afterRestoreRename != nil {
+		afterRestoreRename()
+	}
+	var st unix.Stat_t
+	if err := fstatat(dst.ParentFd, dst.Name, &st); err == nil && uint64(st.Dev) == want.dev && uint64(st.Ino) == want.ino {
+		return nil
+	}
+	// The entry left the Trash, but its destination now holds something
+	// else (another program moved things there). Nothing more is moved:
+	// moving "whatever is there" back could move an unapproved object. The
+	// receipt records what happened.
+	return &errRestoreArrived{note: "the object restored to " + dst.Name + " was replaced there by another program right after the move; the entry is no longer in the Trash and was not found at its destination"}
+}
+
+// afterRestoreRename, in tests, runs between a restore's rename and its
+// post-move check.
+var afterRestoreRename func()
+
+func closeFd(fd int) { _ = unix.Close(fd) }
+
+// dupFile returns a new *os.File for a duplicate of fd.
+func dupFile(fd int, name string) (*os.File, error) {
+	d, err := unix.Dup(fd)
+	if err != nil {
+		return nil, err
+	}
+	unix.CloseOnExec(d)
+	return os.NewFile(uintptr(d), name), nil
 }

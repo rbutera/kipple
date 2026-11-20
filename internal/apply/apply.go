@@ -21,8 +21,16 @@
 //     refuses unless the entry is still the approved (dev, ino). A different
 //     device is skipped, never copied. When ~/.Trash cannot be opened (macOS
 //     TCC: no Full Disk Access), Options.Finder supplies the NSFileManager
-//     mover, which trashes a file reference to the same approved object;
-//     when that is missing or refused too, Run returns ErrTrashAccess.
+//     mover, which re-checks the approved object by descriptor immediately
+//     before the call and trashes a file reference to it; when that mover
+//     is unavailable, Run returns ErrTrashAccess. NSFileManager resolves the
+//     reference to a path, so a swap at that instant can put another object
+//     in the Trash: that object is recorded in the receipt as displaced
+//     (restorable) and the item is skipped with identity_changed.
+//
+// Every item moved to the Trash first gets an extended attribute
+// (tagValue) binding it to this receipt, item and home; restore requires
+// it. Nothing that moved is ever left out of the receipt.
 //
 // Plan files are untrusted: items are matched by ID against a fresh scan,
 // which re-derives each path from its rule; an item whose (dev, ino), or
@@ -97,8 +105,9 @@ type Options struct {
 	// Finder, when set, is the fallback mover used when the home .Trash
 	// cannot be opened for lack of permission (macOS protects ~/.Trash:
 	// only apps with Full Disk Access can open it). cmd/ sets it to
-	// trash.NewFinderTrasher for the real home. When it is nil, or it too
-	// is refused, Run returns ErrTrashAccess.
+	// trash.NewFinderTrasher for the real home. When it is nil or cannot be
+	// made, Run returns ErrTrashAccess; a refusal on one item is that item's
+	// permission_denied.
 	Finder func() (trash.ExpectTrasher, error)
 	// ChecksSince, when set, is when the scan this run acts on started (cmd
 	// sets it). A permanent delete refuses an item if anything inside it
@@ -130,8 +139,9 @@ type Options struct {
 }
 
 // ErrTrashAccess: the Trash folder cannot be opened (macOS protects
-// ~/.Trash; only apps with Full Disk Access may open it) and the
-// NSFileManager fallback was unavailable or refused too. cmd/ reports it
+// ~/.Trash; only apps with Full Disk Access may open it) and no fallback
+// mover is available (clean), or restore needs the Trash folder itself.
+// A refusal on a single item is not ErrTrashAccess. cmd/ reports it
 // with error code trash_access and how to grant Full Disk Access.
 var ErrTrashAccess = errors.New("kipple cannot use your Trash folder")
 
@@ -151,9 +161,8 @@ type applier struct {
 	procs     procs.Inspector
 	now       func() time.Time
 	res       *plan.Result
-	// trashDenied is set when the NSFileManager fallback was refused
-	// before anything moved: the run stops with ErrTrashAccess.
-	trashDenied error
+	// receiptID names the run's receipt in the tags set on moved items.
+	receiptID string
 }
 
 // Run executes o.Plan and returns the result. It returns an error, having
@@ -237,15 +246,12 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		return res, fmt.Errorf("apply: cannot write the receipt, so nothing was moved: %w", err)
 	}
 	res.ReceiptID, res.ReceiptPath = rc.ID, path
+	a.receiptID = rc.ID
 
 	saveErr := error(nil)
 	for _, t := range targets {
 		if saveErr != nil {
 			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the receipt could not be saved")
-			continue
-		}
-		if a.trashDenied != nil {
-			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the Trash cannot be used")
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -254,20 +260,17 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		}
 		a.progress("checking " + t.item.Path)
 		a.one(t)
-		rc.Moved, rc.Skipped = res.Moved, res.Skipped
+		rc.Moved, rc.Skipped, rc.Displaced = res.Moved, res.Skipped, res.Displaced
 		if err := o.Receipts.Save(rc); err != nil {
 			saveErr = err
 			res.Warnings = append(res.Warnings, "the receipt could not be saved; stopping: "+err.Error())
 		}
 	}
-	rc.Moved, rc.Skipped, rc.Complete = res.Moved, res.Skipped, true
+	rc.Moved, rc.Skipped, rc.Displaced, rc.Complete = res.Moved, res.Skipped, res.Displaced, true
 	if err := o.Receipts.Save(rc); err != nil && saveErr == nil {
 		res.Warnings = append(res.Warnings, "the receipt could not be completed: "+err.Error())
 	}
 	res.Normalize()
-	if a.trashDenied != nil {
-		return res, fmt.Errorf("%w: %v", ErrTrashAccess, a.trashDenied)
-	}
 	return res, nil
 }
 
@@ -488,10 +491,7 @@ func (a *applier) one(t target) {
 			return
 		}
 	} else {
-		moved.TrashPath, err = a.trashItem(f, dev, ino, dir)
-		if err != nil && a.moverName == plan.MoverNSFileManager && isPermission(err) && len(a.res.Moved) == 0 {
-			a.trashDenied = err
-		}
+		moved.TrashPath, err = a.trashTagged(f, it, dev, ino, dir)
 	}
 	if err != nil {
 		a.skip(it, classify(err), err.Error())
@@ -499,6 +499,45 @@ func (a *applier) one(t target) {
 	}
 	moved.MovedAt = a.now().UTC()
 	a.res.Moved = append(a.res.Moved, moved)
+}
+
+// trashTagged tags the approved object (tagValue, required by restore),
+// moves it, and handles what can go wrong after a move: when something
+// other than the approved object reached the Trash (trash.DisplacedError),
+// that object is recorded as displaced, with its Trash path and identity,
+// so the receipt lists every object that moved; the item is skipped. The
+// tag is removed again from an approved object that did not move.
+func (a *applier) trashTagged(f *policy.Fresh, it plan.Item, dev, ino uint64, dir *os.File) (string, error) {
+	tag := tagValue(a.receiptID, it.ID, a.o.Env.HomeIdentity)
+	tfd, closeTfd, err := tagTarget(f, dev, ino, dir)
+	if err != nil {
+		return "", err
+	}
+	defer closeTfd()
+	if err := setTag(tfd, tag); err != nil {
+		return "", fmt.Errorf("could not tag the item for restore: %w", err)
+	}
+	dest, err := a.trashItem(f, dev, ino, dir)
+	if err == nil {
+		return dest, nil
+	}
+	var de *trash.DisplacedError
+	if errors.As(err, &de) {
+		d := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, TrashPath: de.Dest, Mover: a.moverName, MovedAt: a.now().UTC()}
+		if de.Known {
+			d.Dev, d.Ino, d.Size, d.Mtime = de.Dev, de.Ino, de.Size, de.Mtime
+			if terr := tagPath(de.Dest, tag); terr != nil {
+				a.warn("%s: the displaced object at %s could not be tagged for restore: %v", it.Path, de.Dest, terr)
+			}
+		} else {
+			a.warn("%s: the identity of the displaced object at %s could not be read; restore will refuse it", it.Path, de.Dest)
+		}
+		a.res.Displaced = append(a.res.Displaced, d)
+	}
+	if cerr := clearTag(tfd); cerr != nil {
+		a.warn("%s: its restore tag could not be removed: %v", it.Path, cerr)
+	}
+	return "", err
 }
 
 // trashItem moves the item, adding owner write permission to a read-only

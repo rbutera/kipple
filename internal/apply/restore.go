@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/rules"
+	"github.com/rbutera/kipple/internal/sizes"
 	"github.com/rbutera/kipple/internal/trash"
 )
 
@@ -24,8 +27,8 @@ type RestoreOptions struct {
 	Rules []rules.Rule
 	// Receipt is the receipt to restore from (untrusted input).
 	Receipt receipt.Entry
-	// Store saves the receipt's restored annotations. Leave the zero value
-	// for a receipt loaded from a file outside the store; it is then not
+	// Store saves the receipt's restored annotations. Leave it nil for a
+	// receipt loaded from a file outside the store; it is then not
 	// annotated.
 	Store *receipt.Store
 	// Only, when set, restores only these item IDs.
@@ -33,8 +36,9 @@ type RestoreOptions struct {
 	// Apply moves items; without it Restore only reports what it would do.
 	Apply bool
 	// Trash is the Trash folder items are restored from (the home folder's
-	// .Trash when nil). An item whose recorded Trash path is not directly
-	// inside it is skipped with not_in_trash.
+	// .Trash, opened through the pinned home descriptor, when nil). An
+	// entry whose recorded Trash path is not directly inside it is skipped
+	// with not_in_trash.
 	Trash *trash.DirTrasher
 	// Now is the clock (time.Now when nil).
 	Now func() time.Time
@@ -45,14 +49,31 @@ type RestoreOptions struct {
 	openTrash func() (*trash.DirTrasher, error)
 }
 
-// Restore moves items recorded in a receipt from the Trash back to their
-// original paths: only when the original path is vacant, its parent still
-// exists, and policy.Session.AuthorizeDestination approves it for the
-// item's rule with the same lexical, walk and identity checks as a move;
-// only when the Trash entry is the very object kipple moved there (dev,
-// ino); and with renameatx_np(RENAME_EXCL), so nothing is ever replaced.
+// Restore moves entries recorded in a receipt (moved items and displaced
+// objects) from the Trash back to their original paths. Receipts are
+// untrusted, so for each entry:
+//
+//   - its ID must be the one its rule and path give (plan.ID);
+//   - the Trash entry is opened only through the Trash folder's descriptor,
+//     itself opened through the pinned home descriptor (never by path), and
+//     must have the receipt's dev, ino, size and mtime and carry the tag
+//     apply set when it moved it (tagValue: this receipt, this item, this
+//     home); anything else is trash_item_mismatch;
+//   - neither its name nor anything inside it may be protected
+//     (contains_protected), so a forged receipt cannot launder a .env or a
+//     key into a cache folder;
+//   - the destination must pass AuthorizeDestination for the entry's own
+//     rule (vacant, parent present, same lexical, walk and identity checks
+//     as a move) and the parent re-check;
+//   - the move is renameatx_np(RENAME_EXCL) from the Trash descriptor to the
+//     destination's parent descriptor, never replacing anything, and the
+//     object that arrives must be the entry (else the receipt notes it).
+//
+// Without access to the Trash folder (macOS TCC, no Full Disk Access),
+// Restore returns ErrTrashAccess and moves nothing.
 func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 	rc := o.Receipt.Receipt
+	rc.Normalize()
 	res := plan.Result{SchemaVersion: plan.SchemaVersion, Command: "restore", DryRun: !o.Apply, Home: o.Env.Home, ReceiptID: rc.ID, ReceiptPath: o.Receipt.Path}
 	res.Normalize()
 	if o.Env.HomeIdentity == nil {
@@ -71,80 +92,76 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 	}
 	defer func() { _ = sess.Close() }()
 
-	skip := func(m plan.MovedItem, reason, detail string) {
+	skip := func(m *plan.MovedItem, reason, detail string) {
 		res.Skipped = append(res.Skipped, plan.SkippedItem{ID: m.ID, Rule: m.Rule, Path: m.Path, Reason: reason, Detail: detail})
 	}
-	byID := map[string]plan.MovedItem{}
-	for _, m := range rc.Moved {
-		byID[m.ID] = m
+	var all []*plan.MovedItem
+	for i := range rc.Moved {
+		all = append(all, &rc.Moved[i])
 	}
-	var asked []plan.MovedItem
+	for i := range rc.Displaced {
+		all = append(all, &rc.Displaced[i])
+	}
+	asked := all
 	if len(o.Only) > 0 {
-		seen := map[string]bool{}
+		want := map[string]bool{}
 		for _, id := range o.Only {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			m, ok := byID[id]
-			if !ok {
-				skip(plan.MovedItem{ID: id}, plan.SkipNotFound, "not in receipt "+rc.ID)
-				continue
-			}
-			asked = append(asked, m)
+			want[id] = true
 		}
-	} else {
-		asked = rc.Moved
+		asked = nil
+		found := map[string]bool{}
+		for _, m := range all {
+			if want[m.ID] {
+				asked = append(asked, m)
+				found[m.ID] = true
+			}
+		}
+		for _, id := range o.Only {
+			if !found[id] {
+				found[id] = true
+				skip(&plan.MovedItem{ID: id}, plan.SkipNotFound, "not in receipt "+rc.ID)
+			}
+		}
 	}
 	ruleByID := map[string]rules.Rule{}
 	for _, r := range o.Rules {
 		ruleByID[r.ID] = r
 	}
-
-	var todo []plan.MovedItem
+	var todo []*plan.MovedItem
 	for _, m := range asked {
+		r, ok := ruleByID[m.Rule]
 		switch {
 		case m.Permanent:
 			skip(m, plan.SkipDeletedPermanently, "deleted with --permanent; nothing to restore")
 		case m.RestoredAt != nil:
 			skip(m, plan.SkipAlreadyRestored, "restored "+m.RestoredAt.Format(time.RFC3339))
+		case !ok:
+			skip(m, plan.SkipNotFound, "unknown rule "+m.Rule)
+		case !strings.HasPrefix(m.Path, o.Env.Home+"/") || plan.ID(r.ID, strings.TrimPrefix(m.Path, o.Env.Home+"/")) != m.ID:
+			skip(m, plan.SkipNotFound, "the receipt's item ID does not belong to its rule and path")
 		default:
-			if _, ok := ruleByID[m.Rule]; !ok {
-				skip(m, plan.SkipNotFound, "unknown rule "+m.Rule)
-				continue
-			}
 			todo = append(todo, m)
 		}
 	}
 	if len(todo) == 0 {
 		return res, nil
 	}
-	var src trashSource
-	if o.Trash != nil {
-		if err := o.Trash.Verify(); err != nil {
-			return res, fmt.Errorf("restore: %w", err)
-		}
-		src = fdSource{o.Trash}
-	} else {
+	tr := o.Trash
+	if tr == nil {
 		open := o.openTrash
 		if open == nil {
 			open = func() (*trash.DirTrasher, error) { return openHomeTrash(sess, o.Env.Home) }
 		}
-		tr, err := open()
-		switch {
-		case err == nil:
-			defer func() { _ = tr.Close() }()
-			src = fdSource{tr}
-		case isPermission(err):
-			// No Full Disk Access: reach each entry by its path in the Trash,
-			// with the same identity checks before and after the move.
-			src = pathSource{d: o.Env.Home + "/.Trash"}
-			res.Warnings = append(res.Warnings, "the Trash folder cannot be opened without Full Disk Access; reaching items by path")
-		default:
+		if tr, err = open(); err != nil {
+			if isPermission(err) {
+				return res, fmt.Errorf("%w: %v", ErrTrashAccess, err)
+			}
 			return res, fmt.Errorf("restore: %w", err)
 		}
+		defer func() { _ = tr.Close() }()
+	} else if err := tr.Verify(); err != nil {
+		return res, fmt.Errorf("restore: %w", err)
 	}
-	var denied error
 
 	annotated := false
 	for _, m := range todo {
@@ -152,80 +169,122 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			skip(m, plan.SkipMoveFailed, "not attempted: interrupted")
 			continue
 		}
-		if denied != nil {
-			skip(m, plan.SkipMoveFailed, "not attempted: the Trash cannot be used")
-			continue
-		}
-		name := filepath.Base(m.TrashPath)
-		if m.TrashPath == "" || filepath.Dir(m.TrashPath) != src.dir() || !validName(name) {
-			skip(m, plan.SkipNotInTrash, "the recorded Trash path is not directly inside "+src.dir())
-			continue
-		}
-		info, err := src.stat(name)
-		if err != nil {
-			if isPermission(err) && len(res.Restored) == 0 {
-				denied = err
-				skip(m, plan.SkipMoveFailed, "the Trash cannot be used: "+err.Error())
-				continue
-			}
-			skip(m, plan.SkipTrashItemMissing, "nothing at "+m.TrashPath)
-			continue
-		}
-		if m.Dev == 0 || info.dev != m.Dev || info.ino != m.Ino || info.size != m.Size || !info.mtime.Equal(m.Mtime) {
-			skip(m, plan.SkipTrashItemMismatch, m.TrashPath+" is not the object kipple moved there (identity, size or modification time differ from the receipt)")
-			continue
-		}
-		dst, d := sess.AuthorizeDestination(ruleByID[m.Rule], m.Path, info.kind)
-		if !d.Allowed {
-			reason := plan.Refused(d.Reason)
-			if d.Reason == policy.ReasonDestinationExists {
-				reason = plan.SkipDestinationExists
-			}
-			skip(m, reason, "the original path cannot take the item back")
-			continue
-		}
-		restored := plan.RestoredItem{ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes}
-		if !o.Apply {
-			_ = dst.Close()
-			res.Restored = append(res.Restored, restored)
-			continue
-		}
-		if o.beforeMove != nil {
-			o.beforeMove(m)
-		}
-		if d := sess.VerifyParent(dst, filepath.Dir(m.Path)); !d.Allowed {
-			_ = dst.Close()
-			reason := plan.SkipParentChanged
-			if d.Reason != policy.ReasonParentChanged {
-				reason = plan.Refused(d.Reason)
-			}
-			skip(m, reason, "the destination folder changed immediately before the move")
-			continue
-		}
-		err = src.moveOut(name, dst, info)
-		_ = dst.Close()
-		if err != nil {
-			if isPermission(err) && len(res.Restored) == 0 {
-				denied = err
-			}
-			skip(m, classify(err), err.Error())
-			continue
-		}
-		res.Restored = append(res.Restored, restored)
-		if receipt.MarkRestored(&rc, m.ID, o.Now()) {
+		reason, detail, done := restoreOne(sess, tr, ruleByID[m.Rule], m, tagValue(rc.ID, m.ID, o.Env.HomeIdentity), o)
+		switch {
+		case done:
+			now := o.Now().UTC()
+			m.RestoredAt = &now
 			annotated = true
+			res.Restored = append(res.Restored, plan.RestoredItem{ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
+		case reason == "would":
+			res.Restored = append(res.Restored, plan.RestoredItem{ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
+		default:
+			if reason == plan.SkipTrashItemMismatch && strings.HasPrefix(detail, "the object restored to") {
+				m.RestoreNote = detail
+				annotated = true
+			}
+			skip(m, reason, detail)
 		}
 	}
-	if annotated && o.Store != nil {
+	if annotated && o.Store != nil && o.Apply {
 		if err := o.Store.Save(rc); err != nil {
-			res.Warnings = append(res.Warnings, "the receipt could not be annotated as restored: "+err.Error())
+			res.Warnings = append(res.Warnings, "the receipt could not be annotated: "+err.Error())
 		}
 	}
 	res.Normalize()
-	if denied != nil {
-		return res, fmt.Errorf("%w: %v", ErrTrashAccess, denied)
-	}
 	return res, nil
+}
+
+// restoreOne checks and (with o.Apply) restores one entry. It returns
+// done, or reason "would" in a dry run, or a skip reason and detail.
+func restoreOne(sess *policy.Session, tr *trash.DirTrasher, r rules.Rule, m *plan.MovedItem, tag []byte, o RestoreOptions) (string, string, bool) {
+	name := filepath.Base(m.TrashPath)
+	if m.TrashPath == "" || filepath.Dir(m.TrashPath) != tr.Path() || name == "." || name == ".." || name == "/" {
+		return plan.SkipNotInTrash, "the recorded Trash path is not directly inside " + tr.Path(), false
+	}
+	efd, info, err := openEntry(tr.Fd(), name)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return plan.SkipTrashItemMissing, "nothing at " + m.TrashPath, false
+	case errors.Is(err, syscall.ELOOP):
+		return plan.SkipTrashItemMismatch, m.TrashPath + " is a symbolic link", false
+	case err != nil:
+		return classify(err), err.Error(), false
+	}
+	defer closeFd(efd)
+	if m.Dev == 0 || info.dev != m.Dev || info.ino != m.Ino || info.size != m.Size || !info.mtime.Equal(m.Mtime) {
+		return plan.SkipTrashItemMismatch, m.TrashPath + " is not the object kipple moved there (identity, size or modification time differ from the receipt)", false
+	}
+	if !tagMatches(efd, tag) {
+		return plan.SkipTrashItemMismatch, m.TrashPath + " does not carry kipple's tag for this receipt and item", false
+	}
+	if reason, detail := protectedSource(sess, r, m.Path, name, efd, info); reason != "" {
+		return reason, detail, false
+	}
+	dst, d := sess.AuthorizeDestination(r, m.Path, info.kind)
+	if !d.Allowed {
+		if d.Reason == policy.ReasonDestinationExists {
+			return plan.SkipDestinationExists, "something is at " + m.Path, false
+		}
+		return plan.Refused(d.Reason), "the original path cannot take the item back", false
+	}
+	defer func() { _ = dst.Close() }()
+	if !o.Apply {
+		return "would", "", false
+	}
+	if o.beforeMove != nil {
+		o.beforeMove(*m)
+	}
+	if d := sess.VerifyParent(dst, filepath.Dir(m.Path)); !d.Allowed {
+		if d.Reason != policy.ReasonParentChanged {
+			return plan.Refused(d.Reason), "the destination folder changed immediately before the move", false
+		}
+		return plan.SkipParentChanged, "the destination folder changed immediately before the move", false
+	}
+	if err := moveBack(tr.Fd(), name, dst, info, efd); err != nil {
+		var ra *errRestoreArrived
+		if errors.As(err, &ra) {
+			return plan.SkipTrashItemMismatch, ra.note, false
+		}
+		return classify(err), err.Error(), false
+	}
+	if err := clearTag(efd); err != nil && !errors.Is(err, trash.ErrUnsupported) {
+		_ = err // the tag is harmless on a restored item
+	}
+	return "", "", true
+}
+
+// protectedSource refuses a Trash entry whose own name, or anything inside
+// it, is protected for the rule and destination (the same guard the scan
+// uses), or that has another volume mounted inside.
+func protectedSource(sess *policy.Session, r rules.Rule, dest, name string, efd int, info entryInfo) (string, string) {
+	g := sess.Guard(r, dest)
+	for _, n := range []string{name, filepath.Base(dest)} {
+		if reason, hit := g.CheckMode(n, n, info.dev, info.ino, info.kind); hit {
+			return plan.ReasonContainsProtected, "the Trash entry is protected (" + reason + ")"
+		}
+	}
+	if !info.kind.IsDir() {
+		return "", ""
+	}
+	f, err := dupFile(efd, name)
+	if err != nil {
+		return plan.SkipMoveFailed, err.Error()
+	}
+	defer func() { _ = f.Close() }()
+	res, err := sizes.MeasureDir(context.Background(), f, sizes.Options{ProtectedMode: func(rel, n string, dev, ino uint64, mode fs.FileMode) bool {
+		_, hit := g.CheckMode(rel, n, dev, ino, mode)
+		return hit
+	}})
+	switch {
+	case res.ProtectedCount > 0:
+		return plan.ReasonContainsProtected, "the Trash entry contains protected files: " + strings.Join(res.Protected, ", ")
+	case len(res.Mounts) > 0:
+		return plan.ReasonContainsMount, "another volume is mounted inside the Trash entry"
+	case err != nil || res.Status == sizes.StatusPartial:
+		return plan.ReasonScanPartial, "the Trash entry could not be read completely"
+	}
+	return "", ""
 }
 
 // entryInfo is a Trash entry's type and identity.
@@ -234,16 +293,4 @@ type entryInfo struct {
 	dev, ino uint64
 	size     int64
 	mtime    time.Time
-}
-
-// trashSource reaches entries of the Trash folder: by its verified
-// descriptor (fdSource) or, without Full Disk Access, by path (pathSource).
-type trashSource interface {
-	dir() string
-	stat(name string) (entryInfo, error)
-	moveOut(name string, dst *policy.Fresh, want entryInfo) error
-}
-
-func validName(name string) bool {
-	return name != "" && name != "." && name != ".." && name != "/"
 }
