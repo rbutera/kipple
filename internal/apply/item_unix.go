@@ -96,100 +96,279 @@ func (e *errProtected) Error() string {
 	return "found " + e.rel + " (" + e.reason + ") inside the item; stopped"
 }
 
-// afterPrecheck, in tests, runs between the check-only pass and the
-// deleting pass of a permanent delete.
-var afterPrecheck func()
+// errChanged: during a permanent delete an entry was not the one the
+// check pass recorded, was moved, or changed after the move-time checks
+// began. Nothing more is deleted.
+type errChanged struct{ rel, why string }
 
-// removeItem deletes the approved item for --permanent, from its verified
-// parent descriptor. It never follows a symlink, stops at a device change,
-// and checks every entry against protect: first in a pass that deletes
-// nothing, then again as it deletes, stopping at the first protected entry.
-// It returns what was removed, also on error.
-func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc) (removal, error) {
+func (e *errChanged) Error() string {
+	rel := e.rel
+	if rel == "" {
+		rel = "the item"
+	}
+	return rel + " " + e.why + "; stopped"
+}
+
+// Test hooks for the permanent delete.
+var (
+	// afterPrecheck runs between the check pass and the delete pass.
+	afterPrecheck func()
+	// beforeDescend runs in the delete pass before a subfolder is opened.
+	beforeDescend func(rel string)
+	// afterDescend runs in the delete pass after a subfolder is opened and
+	// before anything inside it is checked or deleted.
+	afterDescend func(rel string)
+)
+
+type ident struct{ dev, ino uint64 }
+
+func identOf(st *unix.Stat_t) ident { return ident{uint64(st.Dev), uint64(st.Ino)} }
+
+func ctimeOf(st *unix.Stat_t) time.Time { return time.Unix(st.Ctim.Unix()) }
+
+// fstatOf fstats fd.
+func fstatOf(fd int) (unix.Stat_t, error) {
+	var st unix.Stat_t
+	for {
+		err := unix.Fstat(fd, &st)
+		if err != unix.EINTR {
+			return st, err
+		}
+	}
+}
+
+// removeItem deletes the approved item for --permanent. It is one walk
+// that holds a descriptor for every folder it works in and never opens
+// anything by path:
+//
+//   - The item is opened from its verified parent descriptor and must be
+//     the approved (dev, ino).
+//   - A check pass, which deletes nothing, records the (dev, ino) of every
+//     entry by its item-relative path, and refuses the item if any entry is
+//     protected, on another device, or changed (ctime) at or after since,
+//     the moment the move-time checks began: a folder swapped in, or a
+//     file added, after that is refused.
+//   - The delete pass walks depth-first through held descriptors. Before
+//     touching anything inside a folder it checks that the folder's
+//     descriptor is still the recorded object, that its ".." is the held
+//     parent, and that it is on the item's device. Every entry must be the
+//     recorded object and not protected before it is unlinked; a folder is
+//     removed only after its contents were deleted through its own held
+//     descriptor and only if its name still leads to that object.
+//
+// Any mismatch stops the delete. It returns what was removed, also on
+// error.
+func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc, since time.Time) (removal, error) {
 	var rm removal
+	want := ident{dev, ino}
 	var st unix.Stat_t
 	if err := fstatat(f.ParentFd, f.Name, &st); err != nil {
 		return rm, err
 	}
-	if uint64(st.Dev) != dev || uint64(st.Ino) != ino {
+	if identOf(&st) != want {
 		return rm, trash.ErrItemChanged
 	}
-	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
-		if err := walkTree(f.ParentFd, f.Name, "", dev, protect, nil, 0); err != nil {
+	pst, err := fstatOf(f.ParentFd)
+	if err != nil {
+		return rm, err
+	}
+	parent := identOf(&pst)
+	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		if !ctimeOf(&st).Before(since) {
+			return rm, &errChanged{why: "changed after the checks began"}
+		}
+		if err := unix.Unlinkat(f.ParentFd, f.Name, 0); err != nil {
 			return rm, err
 		}
-		if afterPrecheck != nil {
-			afterPrecheck()
-		}
+		rm.count++
+		rm.bytes += st.Blocks * 512
+		return rm, nil
 	}
-	err := walkTree(f.ParentFd, f.Name, "", dev, protect, &rm, 0)
-	return rm, err
+	fd, err := openDirAt(f.ParentFd, f.Name)
+	if err != nil {
+		return rm, err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	ids := map[string]ident{}
+	if err := precheck(fd, "", want, parent, dev, protect, since, ids, 0); err != nil {
+		return rm, err
+	}
+	if afterPrecheck != nil {
+		afterPrecheck()
+	}
+	if err := deleteContents(fd, "", parent, dev, protect, ids, &rm, 0); err != nil {
+		return rm, err
+	}
+	if err := checkHeld(fd, "", want, parent, dev); err != nil {
+		return rm, err
+	}
+	if err := fstatat(f.ParentFd, f.Name, &st); err != nil || identOf(&st) != want {
+		return rm, &errChanged{why: "is no longer at its path"}
+	}
+	if err := unix.Unlinkat(f.ParentFd, f.Name, unix.AT_REMOVEDIR); err != nil {
+		return rm, err
+	}
+	rm.count++
+	rm.bytes += st.Blocks * 512
+	return rm, nil
 }
 
-// walkTree checks (rm nil) or deletes (rm set) the entry name in dirfd and,
-// for a directory, everything below it in name order. rel is the entry's
-// item-relative path ("" for the item itself).
-func walkTree(dirfd int, name, rel string, dev uint64, protect protectFunc, rm *removal, depth int) error {
-	if depth > maxRemoveDepth {
-		return fmt.Errorf("deeper than %d levels; stopped", maxRemoveDepth)
-	}
-	var st unix.Stat_t
-	if err := fstatat(dirfd, name, &st); err != nil {
-		if errors.Is(err, unix.ENOENT) {
-			return nil
-		}
+// checkHeld verifies the folder open at fd is the object want, that its
+// ".." is parent, and that it is on device dev.
+func checkHeld(fd int, rel string, want, parent ident, dev uint64) error {
+	st, err := fstatOf(fd)
+	if err != nil {
 		return err
+	}
+	if identOf(&st) != want {
+		return &errChanged{rel: rel, why: "is not the folder that was checked"}
 	}
 	if uint64(st.Dev) != dev {
 		return errCrossDevice
 	}
-	if rel != "" && protect != nil {
-		if reason, hit := protect(rel, name, uint64(st.Dev), uint64(st.Ino), policy.StatMode(uint32(st.Mode))); hit {
-			return &errProtected{rel: rel, reason: reason}
+	var up unix.Stat_t
+	if err := fstatat(fd, "..", &up); err != nil || identOf(&up) != parent {
+		return &errChanged{rel: rel, why: "was moved out of its folder"}
+	}
+	return nil
+}
+
+func join(rel, name string) string {
+	if rel == "" {
+		return name
+	}
+	return rel + "/" + name
+}
+
+// precheck walks the folder open at fd (the object self, inside parent)
+// without deleting anything, recording identities in ids.
+func precheck(fd int, rel string, self, parent ident, dev uint64, protect protectFunc, since time.Time, ids map[string]ident, depth int) error {
+	if depth > maxRemoveDepth {
+		return fmt.Errorf("deeper than %d levels; stopped", maxRemoveDepth)
+	}
+	if err := checkHeld(fd, rel, self, parent, dev); err != nil {
+		return err
+	}
+	ids[rel] = self
+	names, err := readNames(fd)
+	if err != nil {
+		return err
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		child := join(rel, n)
+		var st unix.Stat_t
+		if err := fstatat(fd, n, &st); err != nil {
+			return &errChanged{rel: child, why: "could not be inspected (" + err.Error() + ")"}
+		}
+		if uint64(st.Dev) != dev {
+			return errCrossDevice
+		}
+		if protect != nil {
+			if reason, hit := protect(child, n, uint64(st.Dev), uint64(st.Ino), policy.StatMode(uint32(st.Mode))); hit {
+				return &errProtected{rel: child, reason: reason}
+			}
+		}
+		if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+			cfd, err := openDirAt(fd, n)
+			if err != nil {
+				return err
+			}
+			err = precheck(cfd, child, identOf(&st), self, dev, protect, since, ids, depth+1)
+			_ = unix.Close(cfd)
+			if err != nil {
+				return err
+			}
+		} else {
+			ids[child] = identOf(&st)
+		}
+		if !ctimeOf(&st).Before(since) {
+			return &errChanged{rel: child, why: "changed after the checks began"}
 		}
 	}
-	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
-		if rm == nil {
-			return nil
+	// Checked last, so a protected entry inside is reported as such.
+	st, err := fstatOf(fd)
+	if err != nil {
+		return err
+	}
+	if !ctimeOf(&st).Before(since) {
+		return &errChanged{rel: rel, why: "changed after the checks began"}
+	}
+	return nil
+}
+
+// deleteContents deletes everything inside the folder open at fd (item-
+// relative rel, inside parent) through held descriptors.
+func deleteContents(fd int, rel string, parent ident, dev uint64, protect protectFunc, ids map[string]ident, rm *removal, depth int) error {
+	if depth > maxRemoveDepth {
+		return fmt.Errorf("deeper than %d levels; stopped", maxRemoveDepth)
+	}
+	self, ok := ids[rel]
+	if !ok {
+		return &errChanged{rel: rel, why: "was not checked"}
+	}
+	if err := checkHeld(fd, rel, self, parent, dev); err != nil {
+		return err
+	}
+	names, err := readNames(fd)
+	if err != nil {
+		return err
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		child := join(rel, n)
+		var st unix.Stat_t
+		if err := fstatat(fd, n, &st); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				continue
+			}
+			return err
 		}
-		if err := unix.Unlinkat(dirfd, name, 0); err != nil {
+		if protect != nil {
+			if reason, hit := protect(child, n, uint64(st.Dev), uint64(st.Ino), policy.StatMode(uint32(st.Mode))); hit {
+				return &errProtected{rel: child, reason: reason}
+			}
+		}
+		want, ok := ids[child]
+		if !ok || identOf(&st) != want {
+			return &errChanged{rel: child, why: "is not the entry that was checked"}
+		}
+		if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+			if err := unix.Unlinkat(fd, n, 0); err != nil {
+				return err
+			}
+			rm.count++
+			rm.bytes += st.Blocks * 512
+			continue
+		}
+		if beforeDescend != nil {
+			beforeDescend(child)
+		}
+		cfd, err := openDirAt(fd, n)
+		if err != nil {
+			return err
+		}
+		if afterDescend != nil {
+			afterDescend(child)
+		}
+		err = deleteContents(cfd, child, self, dev, protect, ids, rm, depth+1)
+		if err == nil {
+			err = checkHeld(cfd, child, want, self, dev)
+		}
+		_ = unix.Close(cfd)
+		if err != nil {
+			return err
+		}
+		var now unix.Stat_t
+		if err := fstatat(fd, n, &now); err != nil || identOf(&now) != want {
+			return &errChanged{rel: child, why: "is no longer at its path"}
+		}
+		if err := unix.Unlinkat(fd, n, unix.AT_REMOVEDIR); err != nil {
 			return err
 		}
 		rm.count++
 		rm.bytes += st.Blocks * 512
-		return nil
 	}
-	fd, err := openDirAt(dirfd, name)
-	if err != nil {
-		return err
-	}
-	var cst unix.Stat_t
-	if err := unix.Fstat(fd, &cst); err != nil || cst.Dev != st.Dev || cst.Ino != st.Ino {
-		_ = unix.Close(fd)
-		return trash.ErrItemChanged
-	}
-	names, err := readNames(fd)
-	sort.Strings(names)
-	if err == nil {
-		for _, n := range names {
-			child := n
-			if rel != "" {
-				child = rel + "/" + n
-			}
-			if err = walkTree(fd, n, child, dev, protect, rm, depth+1); err != nil {
-				break
-			}
-		}
-	}
-	_ = unix.Close(fd)
-	if err != nil || rm == nil {
-		return err
-	}
-	if err := unix.Unlinkat(dirfd, name, unix.AT_REMOVEDIR); err != nil {
-		return err
-	}
-	rm.count++
-	rm.bytes += st.Blocks * 512
 	return nil
 }
 
@@ -219,6 +398,8 @@ func classify(err error) string {
 	switch {
 	case errors.As(err, new(*errProtected)):
 		return plan.ReasonContainsProtected
+	case errors.As(err, new(*errChanged)):
+		return plan.SkipIdentityChanged
 	case errors.Is(err, errCrossDevice):
 		return plan.ReasonContainsMount
 	case errors.Is(err, trash.ErrDifferentDevice), errors.Is(err, unix.EXDEV):

@@ -100,6 +100,12 @@ type Options struct {
 	// trash.NewFinderTrasher for the real home. When it is nil, or it too
 	// is refused, Run returns ErrTrashAccess.
 	Finder func() (trash.ExpectTrasher, error)
+	// ChecksSince, when set, is when the scan this run acts on started (cmd
+	// sets it). A permanent delete refuses an item if anything inside it
+	// changed (ctime) at or after the earlier of ChecksSince and the start
+	// of its move-time checks, so a folder swapped in during the run is
+	// never deleted.
+	ChecksSince time.Time
 	// DryRun runs every check, plan-level and move-time, and moves nothing:
 	// Moved then lists what would be moved. No receipt is written.
 	DryRun bool
@@ -430,6 +436,12 @@ func (a *applier) one(t target) {
 		}
 		defer func() { _ = dir.Close() }()
 	}
+	// Anything inside the item that changes from here on is refused by a
+	// permanent delete (see removeItem).
+	since := time.Now()
+	if !a.o.ChecksSince.IsZero() && a.o.ChecksSince.Before(since) {
+		since = a.o.ChecksSince
+	}
 	rc := a.check.Check(r, it.Path, dir, f.Info)
 	if len(rc.Reasons) > 0 {
 		a.skip(it, rc.Reasons[0], strings.Join(rc.Reasons, ", "))
@@ -465,7 +477,7 @@ func (a *applier) one(t target) {
 	if a.o.Permanent {
 		g := a.sess.Guard(r, it.Path)
 		var rm removal
-		rm, err = removeItem(f, dev, ino, g.CheckMode)
+		rm, err = removeItem(f, dev, ino, g.CheckMode, since)
 		moved.Permanent = true
 		if err != nil && rm.count > 0 {
 			a.res.Skipped = append(a.res.Skipped, plan.SkippedItem{

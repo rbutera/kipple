@@ -5,6 +5,7 @@ package apply
 import (
 	"io/fs"
 	"os"
+	"time"
 
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
@@ -19,7 +20,7 @@ type protectFunc func(rel, name string, dev, ino uint64, mode fs.FileMode) (stri
 
 type removal struct{ count, bytes int64 }
 
-func removeItem(*policy.Fresh, uint64, uint64, protectFunc) (removal, error) {
+func removeItem(*policy.Fresh, uint64, uint64, protectFunc, time.Time) (removal, error) {
 	return removal{}, trash.ErrUnsupported
 }
 func classify(error) string { return plan.SkipMoveFailed }

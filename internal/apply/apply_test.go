@@ -656,11 +656,15 @@ func TestPermanentStopsAtProtectedEntry(t *testing.T) {
 // Standards finding: a permanent delete that fails partway is marked
 // partial with what it removed, in the result and the receipt.
 func TestPermanentFailingPartwayIsPartial(t *testing.T) {
-	f, o, item := permanentFx(t)
+	f, _, item := permanentFx(t)
 	if err := os.Chmod(item+"/zzz", 0o555); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(item+"/zzz", 0o755) })
+	// Scan after the chmod: a change after the scan would be refused as
+	// identity_changed before anything is deleted.
+	o := f.opts(f.scan(""))
+	o.Permanent = true
 	res := f.run(o)
 	s, ok := skipFor(res, item)
 	if !ok || s.Reason != plan.SkipPermissionDenied || !s.Partial || s.RemovedCount == 0 {

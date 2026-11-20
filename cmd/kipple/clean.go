@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -144,6 +145,7 @@ consent.`,
 				}
 				src = &p
 			}
+			scanned := time.Now()
 			fresh, err := a.runScanAt(h, level)
 			if err != nil {
 				return err
@@ -165,6 +167,7 @@ consent.`,
 				Receipts:      store,
 				KippleVersion: version,
 				Procs:         a.rt.procs,
+				ChecksSince:   scanned,
 			}
 			if src != nil {
 				opts.Fresh = &fresh

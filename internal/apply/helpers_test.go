@@ -53,6 +53,8 @@ type fx struct {
 	home  string
 	env   policy.Env
 	store receipt.Store
+	// scanned is when the latest scan started.
+	scanned time.Time
 }
 
 func newFx(t *testing.T, spec testutil.Spec) *fx {
@@ -75,6 +77,7 @@ func (f *fx) abs(rel string) string { return testutil.Abs(f.home, rel) }
 
 func (f *fx) scan(level string) plan.Plan {
 	f.t.Helper()
+	f.scanned = time.Now()
 	p, err := scan.Run(context.Background(), scan.Options{Env: f.env, Level: level, KippleVersion: "test", Now: func() time.Time { return now }})
 	if err != nil {
 		f.t.Fatal(err)
@@ -92,6 +95,7 @@ func (f *fx) opts(p plan.Plan) Options {
 		KippleVersion: "test",
 		Procs:         fakeProcs{},
 		Now:           func() time.Time { return now },
+		ChecksSince:   f.scanned,
 	}
 }
 
