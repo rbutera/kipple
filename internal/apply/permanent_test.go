@@ -11,7 +11,8 @@ import (
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
-// Spec scenario "Permanent on review item" (clean-apply).
+// Tagged builds only (kipple_permanent): safe items are deleted and review
+// items are skipped with permanent_not_allowed.
 func TestPermanentOnReviewItem(t *testing.T) {
 	f := newFx(t, testutil.Spec{Files: []testutil.File{
 		{Path: "Library/Caches/com.example.a/blob", Size: 4096, MTime: old},

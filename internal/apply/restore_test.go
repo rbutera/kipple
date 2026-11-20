@@ -376,7 +376,7 @@ func TestReceiptSaveFailsBeforeTheMove(t *testing.T) {
 	f := newFx(t, threeSafe())
 	p := f.scan("")
 	o := f.opts(p)
-	o.saveReceipt = failOn(f, 1)
+	o.SaveReceipt = failOn(f, 1)
 	res, err := Run(context.Background(), o)
 	if !errors.Is(err, ErrReceipt) || len(res.Moved) != 0 {
 		t.Fatalf("err %v result %+v", err, res)
@@ -399,7 +399,7 @@ func TestPendingItemIsRestored(t *testing.T) {
 		sums[it.Path] = testutil.Checksum(t, it.Path)
 	}
 	o := f.opts(p)
-	o.saveReceipt = failOn(f, 2)
+	o.SaveReceipt = failOn(f, 2)
 	res, err := Run(context.Background(), o)
 	if !errors.Is(err, ErrReceipt) || len(res.Moved) != 1 {
 		t.Fatalf("err %v result %+v", err, res)
@@ -505,7 +505,7 @@ func TestPendingItemThatNeverMoved(t *testing.T) {
 func TestPendingItemDryRun(t *testing.T) {
 	f := newFx(t, threeSafe())
 	o := f.opts(f.scan(""))
-	o.saveReceipt = failOn(f, 2)
+	o.SaveReceipt = failOn(f, 2)
 	res, _ := Run(context.Background(), o)
 	e, err := f.store.Load(res.ReceiptID)
 	if err != nil || len(e.Receipt.Pending) != 1 {

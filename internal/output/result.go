@@ -74,7 +74,16 @@ func RestoreResult(w io.Writer, r plan.Result) error {
 	if r.DryRun {
 		verb = "Would restore"
 	}
-	fmt.Fprintf(b, "Receipt %s\n%s %s:\n", r.ReceiptID, verb, count(len(r.Restored), "item"))
+	kinds := map[string]int{}
+	for _, it := range r.Restored {
+		k := it.Kind
+		if k == "" {
+			k = "moved"
+		}
+		kinds[k]++
+	}
+	fmt.Fprintf(b, "Receipt %s\n%s %s (moved %d, pending %d, displaced %d), skipped %d:\n",
+		r.ReceiptID, verb, count(len(r.Restored), "item"), kinds["moved"], kinds["pending"], kinds["displaced"], len(r.Skipped))
 	for _, it := range r.Restored {
 		fmt.Fprintf(b, "  %s  %s\n      <- %s\n", it.ID, it.Path, it.TrashPath)
 	}
@@ -102,7 +111,7 @@ func History(w io.Writer, h plan.History) error {
 				restored++
 			}
 		}
-		fmt.Fprintf(b, "%s  %s  moved %s (%s), skipped %d", r.ID, r.CreatedAt.Local().Format(time.DateTime), count(len(r.Moved), "item"), Bytes(bytes), len(r.Skipped))
+		fmt.Fprintf(b, "%s  %s  moved %d (%s), pending %d, displaced %d, skipped %d", r.ID, r.CreatedAt.Local().Format(time.DateTime), len(r.Moved), Bytes(bytes), len(r.Pending), len(r.Displaced), len(r.Skipped))
 		if restored > 0 {
 			fmt.Fprintf(b, ", restored %d", restored)
 		}

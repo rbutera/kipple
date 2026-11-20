@@ -165,3 +165,29 @@ func TestExplain(t *testing.T) {
 func TestPlanGolden(t *testing.T) { t.Run("Dry-run footer", scenarioPlanGolden) }
 
 func TestRulesGolden(t *testing.T) { t.Run("Human listing", scenarioRulesGolden) }
+
+// F4: history and the restore result show pending and displaced counts.
+func TestPendingAndDisplacedCounts(t *testing.T) {
+	at := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	h := plan.History{Receipts: []plan.Receipt{{
+		ID: "20261120T090000Z-abc123", CreatedAt: at,
+		Moved:     []plan.MovedItem{{ID: "a"}, {ID: "b"}},
+		Pending:   []plan.MovedItem{{ID: "c"}},
+		Displaced: []plan.MovedItem{{ID: "d"}},
+	}}}
+	var b strings.Builder
+	if err := History(&b, h); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "moved 2 (0 B), pending 1, displaced 1, skipped 0") {
+		t.Fatalf("history line: %q", b.String())
+	}
+	r := plan.Result{ReceiptID: "20261120T090000Z-abc123", Restored: []plan.RestoredItem{{Kind: "moved"}, {Kind: "moved"}, {Kind: "pending"}, {Kind: "displaced"}}}
+	b.Reset()
+	if err := RestoreResult(&b, r); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "Restored 4 items (moved 2, pending 1, displaced 1), skipped 0") {
+		t.Fatalf("restore line: %q", b.String())
+	}
+}

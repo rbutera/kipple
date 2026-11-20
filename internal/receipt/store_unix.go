@@ -30,7 +30,9 @@ func (s Store) openDir() (int, error) {
 	for {
 		fd, err := unix.Open(s.dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if err != unix.EINTR {
-			if errors.Is(err, unix.ELOOP) {
+			// With O_DIRECTORY, macOS reports a symlink as ENOTDIR.
+			var st unix.Stat_t
+			if errors.Is(err, unix.ELOOP) || (errors.Is(err, unix.ENOTDIR) && unix.Lstat(s.dir, &st) == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK) {
 				return -1, fmt.Errorf("receipt: %s is a symbolic link; refusing to use it", s.dir)
 			}
 			return fd, err

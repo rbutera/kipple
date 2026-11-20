@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
+	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
@@ -452,9 +454,14 @@ func TestTrashAccessError(t *testing.T) {
 	}
 }
 
-// Must-fix 4 (F2): restore uses only receipts in kipple's own receipts
-// folder; a receipt file elsewhere is a usage error and moves nothing.
+// Spec scenario "Receipt file path refused" (history-restore): restore
+// uses only receipts in kipple's own receipts folder; a receipt file
+// elsewhere is a usage error and moves nothing.
 func TestRestoreRefusesReceiptFiles(t *testing.T) {
+	t.Run("Receipt file path refused", scenarioReceiptFilePathRefused)
+}
+
+func scenarioReceiptFilePathRefused(t *testing.T) {
 	home := cleanFixture(t)
 	_, out, _ := cli(t, "clean", "--apply", "--json")
 	var res plan.Result
@@ -468,6 +475,127 @@ func TestRestoreRefusesReceiptFiles(t *testing.T) {
 	exactlyOneJSON(t, out, &env)
 	if code != exitUsage || env.Error.Code != codeUsage || !strings.Contains(env.Error.Message, "receipt files are not accepted") {
 		t.Fatalf("exit %d %+v", code, env)
+	}
+	if _, err := os.Lstat(res.Moved[0].Path); !os.IsNotExist(err) {
+		t.Fatal("something was restored")
+	}
+}
+
+// failingSave fails every receipt save from the nth on, as a full disk
+// would; earlier saves go to the real store.
+func failingSave(t *testing.T, n int) func(plan.Receipt) error {
+	calls := 0
+	return func(r plan.Receipt) error {
+		calls++
+		if calls >= n {
+			return errors.New("no space left on device")
+		}
+		dir := os.Getenv("KIPPLE_STATE_DIR")
+		s, err := receipt.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.Save(r)
+	}
+}
+
+// Spec scenario "Receipt save fails before a move" (clean-apply).
+func TestReceiptSaveFailsBeforeAMove(t *testing.T) {
+	t.Run("Receipt save fails before a move", func(t *testing.T) {
+		home := cleanFixture(t)
+		before := testutil.Checksum(t, home)
+		rt := testEnv(t)
+		rt.saveReceipt = failingSave(t, 1)
+		code, out, _ := cliWith(t, rt, "clean", "--apply", "--json")
+		var env errorEnvelope
+		exactlyOneJSON(t, out, &env)
+		if code != exitError || env.Error.Code != codeReceipt || env.Result == nil || len(env.Result.Moved) != 0 {
+			t.Fatalf("exit %d %+v", code, env)
+		}
+		if testutil.Checksum(t, home) != before {
+			t.Fatal("something moved")
+		}
+	})
+	t.Run("the partial result is in the error", func(t *testing.T) {
+		cleanFixture(t)
+		rt := testEnv(t)
+		rt.saveReceipt = failingSave(t, 2)
+		code, out, _ := cliWith(t, rt, "clean", "--apply", "--json")
+		var env errorEnvelope
+		exactlyOneJSON(t, out, &env)
+		if code != exitError || env.Error.Code != codeReceipt || env.Result == nil || len(env.Result.Moved) != 1 {
+			t.Fatalf("exit %d %+v", code, env)
+		}
+	})
+}
+
+// Spec scenario "Restore a pending item" (history-restore): a run stopped
+// after a move but before recording it leaves the item pending; history
+// shows it, and restore by its item ID puts it back.
+func TestRestoreAPendingItem(t *testing.T) {
+	t.Run("Restore a pending item", func(t *testing.T) {
+		home := cleanFixture(t)
+		before := testutil.ContentChecksum(t, home, ".Trash")
+		rt := testEnv(t)
+		rt.saveReceipt = failingSave(t, 2)
+		_, out, _ := cliWith(t, rt, "clean", "--apply", "--json")
+		var env errorEnvelope
+		exactlyOneJSON(t, out, &env)
+		if env.Result == nil || len(env.Result.Moved) != 1 {
+			t.Fatalf("%+v", env)
+		}
+		_, hout, _ := cli(t, "history")
+		if !strings.Contains(hout, "pending 1") {
+			t.Fatalf("history does not show the pending item:\n%s", hout)
+		}
+		code, rout, _ := cli(t, "restore", env.Result.Moved[0].ID, "--apply")
+		if code != exitOK || !strings.Contains(rout, "pending 1") {
+			t.Fatalf("exit %d\n%s", code, rout)
+		}
+		if testutil.ContentChecksum(t, home, ".Trash") != before {
+			t.Fatal("not restored")
+		}
+	})
+}
+
+// Spec scenario "Restore finds a renamed Trash entry by identity"
+// (history-restore): an entry renamed inside the Trash (by Finder, or a
+// restore interrupted midway) is found again by its identity and tag.
+func TestRestoreFindsARenamedTrashEntry(t *testing.T) {
+	t.Run("Restore finds a renamed Trash entry by identity", func(t *testing.T) {
+		home := cleanFixture(t)
+		before := testutil.ContentChecksum(t, home, ".Trash")
+		_, out, _ := cli(t, "clean", "--apply", "--json")
+		var res plan.Result
+		exactlyOneJSON(t, out, &res)
+		for _, m := range res.Moved {
+			if err := os.Rename(m.TrashPath, m.TrashPath+" renamed"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		code, _, _ := cli(t, "restore", res.ReceiptID, "--apply")
+		if code != exitOK || testutil.ContentChecksum(t, home, ".Trash") != before {
+			t.Fatalf("exit %d", code)
+		}
+	})
+}
+
+// F1: restore refuses a symlinked receipts folder, as history does.
+func TestRestoreRefusesASymlinkedReceiptsFolder(t *testing.T) {
+	cleanFixture(t)
+	_, out, _ := cli(t, "clean", "--apply", "--json")
+	var res plan.Result
+	exactlyOneJSON(t, out, &res)
+	dir := filepath.Dir(res.ReceiptPath)
+	if err := os.Rename(dir, dir+".real"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dir+".real", dir); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := cli(t, "restore", res.ReceiptID, "--apply")
+	if code != exitError || !strings.Contains(errOut, "symbolic link") {
+		t.Fatalf("exit %d %s", code, errOut)
 	}
 	if _, err := os.Lstat(res.Moved[0].Path); !os.IsNotExist(err) {
 		t.Fatal("something was restored")

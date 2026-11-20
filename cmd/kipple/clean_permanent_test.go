@@ -10,7 +10,8 @@ import (
 	"github.com/rbutera/kipple/internal/plan"
 )
 
-// Spec scenario "Permanent on review item", through the CLI.
+// Tagged builds only (kipple_permanent): --permanent deletes safe items
+// and skips review items with permanent_not_allowed.
 func TestCleanPermanentOnReviewItem(t *testing.T) {
 	home := cleanFixture(t)
 	code, out, _ := cli(t, "clean", "--apply", "--permanent", "--level", "review", "--json")

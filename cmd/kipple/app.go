@@ -69,6 +69,8 @@ type runtimeEnv struct {
 	stdin io.Reader
 	// procs answers owner and agent checks (procs.New() when nil).
 	procs procs.Inspector
+	// saveReceipt, in tests, replaces saving the receipt (apply.Options.SaveReceipt).
+	saveReceipt func(plan.Receipt) error
 	// beforeScan, when set, runs after home is resolved and guarded and
 	// before the scan opens it. Tests use it to swap the directory.
 	beforeScan func(home string)
@@ -87,6 +89,9 @@ type cliError struct {
 	exit int
 	code string
 	msg  string
+	// result, when set, is what the command had already done; it goes into
+	// the JSON error envelope so nothing that happened is hidden.
+	result *plan.Result
 }
 
 func (e *cliError) Error() string { return e.msg }
@@ -105,6 +110,9 @@ type errorEnvelope struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
+	// Result is present when the command had already done something before
+	// the error (for example items moved before a receipt save failed).
+	Result *plan.Result `json:"result,omitempty"`
 }
 
 // helpDocument is what --help prints on stdout under --json.
@@ -227,6 +235,7 @@ func (a *app) report(ce *cliError) int {
 	if a.json {
 		var env errorEnvelope
 		env.Error.Code, env.Error.Message = ce.code, ce.msg
+		env.Result = ce.result
 		_ = plan.Encode(a.stdout, env)
 	}
 	return ce.exit

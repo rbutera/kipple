@@ -171,6 +171,7 @@ consent.`,
 				KippleVersion: version,
 				Procs:         a.rt.procs,
 				ChecksSince:   scanned,
+				SaveReceipt:   a.rt.saveReceipt,
 			}
 			if src != nil {
 				opts.Fresh = &fresh
@@ -226,7 +227,15 @@ consent.`,
 				fmt.Fprint(a.stderr, "\r\033[K")
 			}
 			if err != nil {
-				return a.applyError(err)
+				ae := a.applyError(err)
+				var ce *cliError
+				if errors.As(ae, &ce) && errors.Is(err, apply.ErrReceipt) {
+					ce.result = &res
+					if !a.json {
+						_ = output.CleanResult(a.stderr, res)
+					}
+				}
+				return ae
 			}
 			for _, w := range res.Warnings {
 				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", w)
@@ -391,9 +400,11 @@ func (a *app) findReceipt(store receipt.Store, arg string) (receipt.Entry, bool,
 	case itemIDPattern.MatchString(arg):
 		list, _ := store.List()
 		for _, e := range list {
-			for _, m := range e.Receipt.Moved {
-				if m.ID == arg && m.RestoredAt == nil && !m.Permanent {
-					return e, true, []string{arg}, nil
+			for _, entries := range [][]plan.MovedItem{e.Receipt.Moved, e.Receipt.Pending, e.Receipt.Displaced} {
+				for _, m := range entries {
+					if m.ID == arg && m.RestoredAt == nil && !m.Permanent {
+						return e, true, []string{arg}, nil
+					}
 				}
 			}
 		}

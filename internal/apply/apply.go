@@ -136,9 +136,9 @@ type Options struct {
 	beforeMove func(plan.Item)
 	// openTrash, in tests, replaces opening the home .Trash.
 	openTrash func() (*trash.DirTrasher, error)
-	// saveReceipt, in tests, replaces Receipts.Save (to fail on the Nth
-	// save, as a full disk would).
-	saveReceipt func(plan.Receipt) error
+	// SaveReceipt, when set, replaces Receipts.Save. Tests use it to fail
+	// on the Nth save, as a full disk would.
+	SaveReceipt func(plan.Receipt) error
 }
 
 // ErrTrashAccess: the Trash folder cannot be opened (macOS protects
@@ -300,7 +300,7 @@ var ErrReceipt = errors.New("the receipt could not be saved, so kipple stopped m
 func (a *applier) save() {
 	a.rc.Moved, a.rc.Skipped, a.rc.Displaced = a.res.Moved, a.res.Skipped, a.res.Displaced
 	a.rc.Pending = append([]plan.MovedItem(nil), a.pending...)
-	write := a.o.saveReceipt
+	write := a.o.SaveReceipt
 	if write == nil {
 		write = a.o.Receipts.Save
 	}
