@@ -6,7 +6,8 @@ kipple finds the caches, build folders and leftovers that AI coding tools,
 local models and developer toolchains pile up in your Mac's home folder,
 explains each one, and moves only what you approve to the Trash. It is a
 single MIT-licensed Go binary with a JSON contract that agents can drive, a
-terminal UI for people, and nothing it does happens without `--apply`.
+terminal UI for people, an optional Mac app, and nothing it does happens
+without `--apply` or a confirmation.
 
 - [What it cleans](#what-it-cleans)
 - [The safety model](#the-safety-model)
@@ -325,6 +326,51 @@ Found 9 items · 11.3 MB                                               Selected 
 ↑↓ move   tab next rule   space select   a apply   q quit
 ```
 
+### The app (optional)
+
+kipple also comes as a Mac app for people who would rather not use a
+terminal. It is the same program underneath: it scans with the same rules,
+pre-selects exactly what `kipple scan --level safe` selects, explains every
+item, moves only what you confirm, and only to the Trash, with a receipt.
+
+![The kipple app reviewing a scan of a test folder: safe caches pre-selected in amber, sizes on the right, and the highlighted item explained beside the list.](docs/images/gui-review-light.png)
+
+- **Nothing happens on launch.** Press Scan (or Return). Scanning only reads.
+  macOS may ask once whether kipple may look in Downloads; it only reads
+  there, and installers move only if you pick them.
+- **Review.** Items are grouped by rule and tier. Safe items are selected
+  for you; review and manual items are yours to choose; info items are
+  measured only and cannot be selected. Anything blocked (uncommitted work,
+  an app that is open, protected files inside) says why and stays
+  unselectable. Click a box or press Space to select; the detail pane says
+  what the item is and what happens if it goes.
+- **Confirm.** Move to Trash… (⌘⌫) shows the count, the total and the rules,
+  and says before anything moves whether kipple will use macOS's Trash
+  command because it lacks Full Disk Access. Cancel is the default.
+- **Done.** The receipt card, Open Trash and Open receipt. After a run that
+  moved items straight into the Trash folder, Put back… puts them back
+  exactly as `kipple restore <receipt> --apply` does, after its own
+  confirmation. There is no permanent delete.
+
+Download `kipple-gui_<version>_darwin_universal.app.zip` from the release,
+check it against the signed `checksums.txt` as above (step 1, then
+`shasum -a 256 --check --ignore-missing checksums.txt`), unzip it and move
+`kipple.app` to Applications. The app is ad-hoc signed and **not notarised**,
+so macOS refuses the first open from Finder: Control-click the app, choose
+Open, then Open again (or run `xattr -d com.apple.quarantine
+/Applications/kipple.app`). To build it yourself, `go build -tags gui
+./cmd/kipple-gui` (with the Xcode command line tools) and
+`scripts/build-app.sh`.
+
+Without Full Disk Access the app moves items with macOS's Trash command, and
+Finder's Put Back works for them. With it (System Settings > Privacy &
+Security > Full Disk Access, add kipple), items move straight into the Trash
+folder; Finder's Put Back does not know them, so use the app's Put back…,
+`kipple restore`, or drag them out of the Trash. The app follows your light or dark
+appearance, works from 760x520 upward, and everything has a keyboard
+shortcut (see the menus). It is not yet usable with VoiceOver; the CLI and
+`kipple tui` are.
+
 ### Commands and flags
 
 | Command | What it does |
@@ -423,13 +469,13 @@ real home folder, and never uses the system Trash fallback for it.
 ## How it compares
 
 kipple is deliberately narrow. These tools are good at things kipple does not
-attempt (uninstalling apps, finding duplicates, mapping storage, a native
-app); the table compares only the overlap. Facts as of November 2026.
+attempt (uninstalling apps, finding duplicates, mapping storage); the table
+compares only the overlap. Facts as of November 2026.
 
 | | kipple | [ElfClean](https://elfclean.app) | [Mole](https://github.com/tw93/Mole) | [Dusty](https://github.com/yagcioglutoprak/dusty) |
 |---|---|---|---|---|
 | Licence | MIT | Closed source; free scan, one-time unlock for bulk cleaning | GPL-3.0 CLI; paid Mac app | MIT |
-| Form | Go CLI and terminal UI | Sandboxed Mac App Store app | `mo` CLI (Bash and Go) | SwiftUI menu bar app with a `dusty` CLI inside the bundle |
+| Form | Go CLI and terminal UI; optional Mac app (Fyne) | Sandboxed Mac App Store app | `mo` CLI (Bash and Go) | SwiftUI menu bar app with a `dusty` CLI inside the bundle |
 | Command line | Yes | No | Yes | Yes |
 | JSON | Every command, with published schemas | No | `analyze`, `status` and `history` | `scan --json` |
 | Default action | Dry run; `--apply` moves to the Trash | Trash | `clean`, `purge` and `installer` delete permanently; `uninstall` uses the Trash | Permanent unless `--trash`; `clean` needs `--yes` |
@@ -442,8 +488,9 @@ app); the table compares only the overlap. Facts as of November 2026.
   no-replace rename) sit behind small interfaces, so a port is new files:
   XDG rule roots, the freedesktop.org Trash, `/proc` checks, and Linux
   release builds. Target v0.3.0.
-- **GUI.** An optional native front end built on the same library, shipped
-  as a separate download.
+- **The app with VoiceOver.** The Mac app's controls carry accessibility
+  labels; turning on Fyne's macOS accessibility bridge waits until it is
+  verified with VoiceOver.
 - **Homebrew tap** after v0.1.0.
 - **Notarisation** with a Developer ID, so macOS never asks on first run.
 - **Permanent deletion**, only once its staging design (each entry renamed

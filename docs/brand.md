@@ -77,6 +77,38 @@ Render PNGs from the SVGs with headless Chrome, and build the `.icns` with
 - **Lockup:** in the wordmark, the top of the grid aligns with the top of the `k` ascender. The bottom row sits on the baseline, and the gap to the text is about a quarter of the ascender. Do not re-space it by hand; use the file.
 - **Minimum size:** the mark down to 24px, and `favicon.svg` below that. The wordmark goes down to 18px tall.
 
+## GUI tokens
+
+The Mac app (`cmd/kipple-gui`, docs/gui-design.md 8.1) derives its surfaces
+and interaction colours from the palette above. They live in
+`cmd/kipple-gui/theme.go`; widgets read colours only through the theme.
+
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `background` | `#F3F4EF` paper | `#10221E` spruce | Window ground, header and action bar |
+| `surface` | `#FBFCF9` | `#152B26` | List and detail panes, cards, sheets |
+| `header` | `#E9EDE8` | `#1A332D` | Group rows, chips, meter and progress tracks |
+| `cursor` | `#E3EBE4` lichen | `#1F4038` | Cursor row, safe pill, secondary buttons |
+| `hover` | `#EEF2EE` | `#19352F` | Hovered rows |
+| `ink` | `#10221E` spruce | `#E3EBE4` lichen | Text, headings, icons |
+| `muted` | `#4A5C57` slate | `#9DB2AA` fog | Secondary text, labels, sizes |
+| `amber` | `#C26A0C` amber-deep | `#F2A43A` amber | Selected tile, meter fill, at-risk triangle (graphics only in light) |
+| `amberInk` | `#995108` | `#F2A43A` amber | Amber text: the selected count, the selected status, at-risk text (4.9:1 or better on every light surface) |
+| `onAmber` | `#FBFCF9` | `#10221E` | The check on a selected tile |
+| `primary` / `onPrimary` | `#10221E` / `#F3F4EF` | `#E3EBE4` / `#10221E` | Primary buttons, progress fill, review pill |
+| `control` | `#4A5C57` | `#9DB2AA` | Tile outline, manual pill outline |
+| `separator` | `#D3DBD5` | `#2C4943` | Pane dividers, hairlines |
+| `recess` | `#E2E7E2` | `#0B1815` spruce-lo | Blocked tile, empty scan slots, the done screen's empty slot |
+| `disabled` | `#8A9A94` | `#6B807A` | Disabled button text only |
+| `scrim` | spruce at 32% | black at 55% | Behind the confirmation sheet |
+| `shadow` | spruce at 16% | black at 45% | Sheet and card shadow |
+
+Errors, warnings and success are `ink` with an icon and words, never amber.
+Interface text is the system font: SF Pro and SF Mono, read from
+`/System/Library/Fonts` at run time, with Helvetica Neue Bold for bold
+because Fyne draws only the default (regular) instance of SF's variable
+font. kipple ships no font files.
+
 ## Recolouring
 
 The tiles use `currentColor`, and each file sets a default `color` on its root

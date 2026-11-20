@@ -14,6 +14,7 @@
 - `kipple schema plan|receipt|rules|result` prints the JSON Schema, generated from the encoding types. schema_version is 1 and stays 1 within a kipple major version.
 - `kipple version --json` has `trash_fallback`: whether Apple's Trash API fallback (cgo) is built in.
 - `kipple tui` is interactive only (needs a terminal; with --json it is a usage error).
+- The optional Mac app (kipple-gui, a separate .app download) is for people; it pre-selects exactly what `kipple scan --level safe` selects and moves through the same code. Agents use the CLI.
 - KIPPLE_HOME and KIPPLE_STATE_DIR point kipple at a fixture home and receipts folder for tests; kipple refuses a KIPPLE_HOME that is, contains or is inside the real home.
 
 ## Safety rules
