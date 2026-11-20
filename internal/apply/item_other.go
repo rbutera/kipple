@@ -25,7 +25,9 @@ func tagTarget(*policy.Fresh, uint64, uint64, *os.File) (int, func(), error) {
 
 func openEntry(int, string) (int, entryInfo, error) { return -1, entryInfo{}, trash.ErrUnsupported }
 
-func moveBack(int, string, *policy.Fresh, entryInfo, int) error { return trash.ErrUnsupported }
+func moveBack(int, string, *policy.Fresh, entryInfo, []byte) error { return trash.ErrUnsupported }
+
+const restoreSwapNote = ""
 
 type errRestoreArrived struct{ note string }
 

@@ -3,6 +3,8 @@
 package apply
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -179,28 +181,72 @@ type errRestoreArrived struct{ note string }
 
 func (e *errRestoreArrived) Error() string { return e.note }
 
-// moveBack moves the entry name from the Trash descriptor to the
-// authorised destination, never replacing anything: the entry must still
-// be want (by descriptor) immediately before, and the object that arrives
-// must be it (else the receipt notes what happened). efd is the entry, open,
-// for the read-only-folder permission step.
-func moveBack(trashFd int, name string, dst *policy.Fresh, want entryInfo, efd int) error {
-	move := func() error {
-		var st unix.Stat_t
-		if err := fstatat(trashFd, name, &st); err != nil {
-			return err
-		}
-		if uint64(st.Dev) != want.dev || uint64(st.Ino) != want.ino {
-			return trash.ErrItemChanged
-		}
-		return trash.MoveNoReplace(trashFd, name, dst.ParentFd, dst.Name)
+// restoreSwapNote explains a restore that met a different object.
+const restoreSwapNote = "a different object was at the Trash name at the moment of the move; it was put back in the Trash"
+
+// Test hooks for restore's moves.
+var (
+	// beforeStage runs after restore's checks, before the entry is renamed
+	// to its staging name.
+	beforeStage func()
+	// afterStage runs after the staged entry was verified, before it is
+	// renamed to the destination.
+	afterStage func()
+	// afterRestoreRename runs between the rename to the destination and
+	// the post-move check.
+	afterRestoreRename func()
+)
+
+// stagingName returns a fresh, unpredictable name inside the Trash.
+func stagingName(prefix string) string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return prefix + hex.EncodeToString(b[:])
+}
+
+// moveBack restores the Trash entry name to the authorised destination.
+// macOS cannot rename by descriptor, so it narrows the window: the entry
+// is first renamed (RENAME_EXCL) to a random staging name inside the
+// Trash, and the object at the staging name is verified by descriptor
+// (identity, size, mtime and tag); only then is it renamed to the
+// destination. If what arrives there is not the entry, it is renamed
+// straight back into the Trash. Nothing is ever replaced.
+func moveBack(trashFd int, name string, dst *policy.Fresh, want entryInfo, tag []byte) error {
+	if beforeStage != nil {
+		beforeStage()
 	}
-	err := move()
+	staging := stagingName(".kipple-restore-")
+	if err := trash.MoveNoReplace(trashFd, name, trashFd, staging); err != nil {
+		return err
+	}
+	putBack := func() {
+		if trash.MoveNoReplace(trashFd, staging, trashFd, name) != nil {
+			_ = trash.MoveNoReplace(trashFd, staging, trashFd, stagingName(".kipple-returned-"))
+		}
+	}
+	sfd, got, err := openEntry(trashFd, staging)
+	if err != nil {
+		putBack()
+		return &errRestoreArrived{note: restoreSwapNote}
+	}
+	defer func() { _ = unix.Close(sfd) }()
+	if got.dev != want.dev || got.ino != want.ino || got.size != want.size || !got.mtime.Equal(want.mtime) || !tagMatches(sfd, tag) {
+		putBack()
+		return &errRestoreArrived{note: restoreSwapNote}
+	}
+	if afterStage != nil {
+		afterStage()
+	}
+	move := func() error { return trash.MoveNoReplace(trashFd, staging, dst.ParentFd, dst.Name) }
+	err = move()
 	if err != nil && want.kind.IsDir() && isPermission(err) {
-		f := os.NewFile(uintptr(efd), name) // not closed here: the caller owns efd
-		err = withOwnerWrite(f, move)
+		if f, derr := dupFile(sfd, staging); derr == nil {
+			err = withOwnerWrite(f, move)
+			_ = f.Close()
+		}
 	}
 	if err != nil {
+		putBack()
 		return err
 	}
 	if afterRestoreRename != nil {
@@ -208,18 +254,16 @@ func moveBack(trashFd int, name string, dst *policy.Fresh, want entryInfo, efd i
 	}
 	var st unix.Stat_t
 	if err := fstatat(dst.ParentFd, dst.Name, &st); err == nil && uint64(st.Dev) == want.dev && uint64(st.Ino) == want.ino {
+		_ = clearTag(sfd)
 		return nil
 	}
-	// The entry left the Trash, but its destination now holds something
-	// else (another program moved things there). Nothing more is moved:
-	// moving "whatever is there" back could move an unapproved object. The
-	// receipt records what happened.
-	return &errRestoreArrived{note: "the object restored to " + dst.Name + " was replaced there by another program right after the move; the entry is no longer in the Trash and was not found at its destination"}
+	// A different object reached the destination: put it straight back in
+	// the Trash under a fresh name.
+	if berr := trash.MoveNoReplace(dst.ParentFd, dst.Name, trashFd, stagingName(".kipple-returned-")); berr != nil {
+		return &errRestoreArrived{note: "a different object reached " + dst.Name + " at the moment of the move and could not be put back in the Trash (" + berr.Error() + ")"}
+	}
+	return &errRestoreArrived{note: restoreSwapNote}
 }
-
-// afterRestoreRename, in tests, runs between a restore's rename and its
-// post-move check.
-var afterRestoreRename func()
 
 func closeFd(fd int) { _ = unix.Close(fd) }
 

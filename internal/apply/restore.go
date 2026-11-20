@@ -66,9 +66,11 @@ type RestoreOptions struct {
 //   - the destination must pass AuthorizeDestination for the entry's own
 //     rule (vacant, parent present, same lexical, walk and identity checks
 //     as a move) and the parent re-check;
-//   - the move is renameatx_np(RENAME_EXCL) from the Trash descriptor to the
-//     destination's parent descriptor, never replacing anything, and the
-//     object that arrives must be the entry (else the receipt notes it).
+//   - the entry is renamed (RENAME_EXCL) to a random staging name in the
+//     Trash and verified there by descriptor before it is renamed to the
+//     destination's parent descriptor; nothing is ever replaced, and if the
+//     object that arrives is not the entry it goes straight back into the
+//     Trash and the receipt notes it.
 //
 // Without access to the Trash folder (macOS TCC, no Full Disk Access),
 // Restore returns ErrTrashAccess and moves nothing.
@@ -200,7 +202,7 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 		case reason == "would":
 			res.Restored = append(res.Restored, plan.RestoredItem{ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
 		default:
-			if reason == plan.SkipTrashItemMismatch && strings.HasPrefix(detail, "the object restored to") {
+			if reason == plan.SkipTrashItemMismatch && (detail == restoreSwapNote || strings.HasPrefix(detail, "a different object reached")) {
 				m.RestoreNote = detail
 				annotated = true
 			}
@@ -262,15 +264,12 @@ func restoreOne(sess *policy.Session, tr *trash.DirTrasher, r rules.Rule, m *pla
 		}
 		return plan.SkipParentChanged, "the destination folder changed immediately before the move", false
 	}
-	if err := moveBack(tr.Fd(), name, dst, info, efd); err != nil {
+	if err := moveBack(tr.Fd(), name, dst, info, tag); err != nil {
 		var ra *errRestoreArrived
 		if errors.As(err, &ra) {
 			return plan.SkipTrashItemMismatch, ra.note, false
 		}
 		return classify(err), err.Error(), false
-	}
-	if err := clearTag(efd); err != nil && !errors.Is(err, trash.ErrUnsupported) {
-		_ = err // the tag is harmless on a restored item
 	}
 	return "", "", true
 }
