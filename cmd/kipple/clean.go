@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/rules"
+	"github.com/rbutera/kipple/internal/trash"
 )
 
 // stateDir is $KIPPLE_STATE_DIR, or ~/Library/Application Support/kipple
@@ -134,11 +136,11 @@ consent.`,
 				if p.Home != h.home {
 					return fail(codePlan, "the plan is for home %s, not %s", p.Home, h.home)
 				}
-				if a.level == "" {
-					if p.Level != rules.LevelSafe && p.Level != rules.LevelReview {
-						return fail(codePlan, "the plan's level %q is not safe or review", p.Level)
-					}
-					level = p.Level
+				// A plan file never raises the level: items it selects at a
+				// higher level than this invocation allows are skipped with
+				// their tier reason by the fresh scan at this level.
+				if p.Level != rules.LevelSafe && p.Level != rules.LevelReview {
+					return fail(codePlan, "the plan's level %q is not safe or review", p.Level)
 				}
 				src = &p
 			}
@@ -149,27 +151,6 @@ consent.`,
 			target := fresh
 			if src != nil {
 				target = *src
-			}
-			if !doApply {
-				p := apply.Preview(target, ids)
-				return a.emit(p, func(w io.Writer) error {
-					if err := output.Plan(w, p, titles()); err != nil {
-						return err
-					}
-					_, err := fmt.Fprintln(w, output.DryRunLine)
-					return err
-				})
-			}
-			if a.rt.isTTY(a.stdout) && !a.json && !yes {
-				ok, err := a.confirm(apply.Preview(target, ids), permanent)
-				if err != nil {
-					return err
-				}
-				if !ok {
-					fmt.Fprintln(a.stdout, "Nothing was moved.")
-					a.exit = exitNothing
-					return nil
-				}
 			}
 			store, err := a.store(h)
 			if err != nil {
@@ -188,6 +169,49 @@ consent.`,
 			if src != nil {
 				opts.Fresh = &fresh
 			}
+			// The NSFileManager fallback moves items into the real Trash, so
+			// it is used only for the real home, never for a KIPPLE_HOME.
+			if a.rt.getenv("KIPPLE_HOME") == "" {
+				opts.Finder = func() (trash.ExpectTrasher, error) { return trash.NewFinderTrasher(nil) }
+			}
+			// A plan file is re-derived and re-checked: its dry run shows
+			// what apply would really do, not the file's selection.
+			if !doApply && src != nil {
+				dry := opts
+				dry.DryRun = true
+				res, err := apply.Run(a.ctx, dry)
+				if err != nil {
+					return a.applyError(err)
+				}
+				return a.emit(res, func(w io.Writer) error { return output.CleanResult(w, res) })
+			}
+			if !doApply {
+				p := apply.Preview(target, ids)
+				return a.emit(p, func(w io.Writer) error {
+					if err := output.Plan(w, p, titles()); err != nil {
+						return err
+					}
+					_, err := fmt.Fprintln(w, output.DryRunLine)
+					return err
+				})
+			}
+			if a.rt.isTTY(a.stdout) && !a.json && !yes {
+				dry := opts
+				dry.DryRun = true
+				would, err := apply.Run(a.ctx, dry)
+				if err != nil {
+					return a.applyError(err)
+				}
+				ok, err := a.confirm(would, permanent)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					fmt.Fprintln(a.stdout, "Nothing was moved.")
+					a.exit = exitNothing
+					return nil
+				}
+			}
 			if a.rt.isTTY(a.stderr) {
 				opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", msg) }
 			}
@@ -196,7 +220,7 @@ consent.`,
 				fmt.Fprint(a.stderr, "\r\033[K")
 			}
 			if err != nil {
-				return fail(codeApply, "%v", err)
+				return a.applyError(err)
 			}
 			for _, w := range res.Warnings {
 				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", w)
@@ -214,9 +238,26 @@ consent.`,
 	return c
 }
 
-// confirm shows the selected total and asks for y on the terminal.
-func (a *app) confirm(p plan.Plan, permanent bool) (bool, error) {
-	n, total := p.Totals.SelectedCount, output.Bytes(p.Totals.SelectedBytes)
+// trashAccessHelp is the message for apply.ErrTrashAccess.
+const trashAccessHelp = "kipple cannot use your Trash folder: macOS lets only apps with Full Disk Access open it, so nothing was moved. " +
+	"Grant Full Disk Access to your terminal (System Settings > Privacy & Security > Full Disk Access) or run kipple from a terminal that has it"
+
+// applyError maps an error from apply.Run or apply.Restore to a CLI error.
+func (a *app) applyError(err error) error {
+	if errors.Is(err, apply.ErrTrashAccess) {
+		return fail(codeTrashAccess, "%s (%v)", trashAccessHelp, err)
+	}
+	return fail(codeApply, "%v", err)
+}
+
+// confirm shows what apply would move (from a dry run of the same
+// pipeline) and asks for y on the terminal.
+func (a *app) confirm(would plan.Result, permanent bool) (bool, error) {
+	var bytes int64
+	for _, m := range would.Moved {
+		bytes += m.Bytes
+	}
+	n, total := len(would.Moved), output.Bytes(bytes)
 	if permanent {
 		fmt.Fprintf(a.stdout, "Delete %d safe items (%s) permanently, not to the Trash? This cannot be undone. [y/N] ", n, total)
 	} else {
@@ -314,7 +355,7 @@ item ID, which restores that item from the newest receipt that moved it.`,
 			}
 			res, err := apply.Restore(a.ctx, opts)
 			if err != nil {
-				return fail(codeApply, "%v", err)
+				return a.applyError(err)
 			}
 			a.exit = apply.ExitCode(res)
 			return a.emit(res, func(w io.Writer) error { return output.RestoreResult(w, res) })

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
 	"github.com/rbutera/kipple/internal/testutil"
@@ -368,5 +369,99 @@ func TestNFDHomeIsRespelledToStoredNFC(t *testing.T) {
 	exactlyOneJSON(t, out, &p)
 	if code != exitOK || p.Home != nfc {
 		t.Fatalf("exit %d, plan home %q (% x), want the stored NFC %q", code, p.Home, p.Home, nfc)
+	}
+}
+
+// Should-fix 8: a plan file never raises the level. A plan made at level
+// review, applied without --level review, does not move review items.
+func TestPlanFileCannotRaiseLevel(t *testing.T) {
+	home := cleanFixture(t)
+	_, out, _ := cli(t, "scan", "--json", "--level", "review")
+	file := filepath.Join(filepath.Dir(home), "plan.json")
+	if err := os.WriteFile(file, []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	review := filepath.Join(home, "go/pkg/mod/github.com")
+	code, out, _ := cli(t, "clean", "--plan", file, "--apply", "--json")
+	var res plan.Result
+	exactlyOneJSON(t, out, &res)
+	var skipped *plan.SkippedItem
+	for i := range res.Skipped {
+		if res.Skipped[i].Path == review {
+			skipped = &res.Skipped[i]
+		}
+	}
+	if code != exitPartial || skipped == nil || skipped.Reason != plan.ReasonTierReview || len(res.Moved) != 2 {
+		t.Fatalf("exit %d result %+v", code, res)
+	}
+	if _, err := os.Lstat(review); err != nil {
+		t.Fatal("the review item moved")
+	}
+	code, out, _ = cli(t, "clean", "--plan", file, "--apply", "--json", "--level", "review")
+	exactlyOneJSON(t, out, &res)
+	// The safe items went in the first run, so they are not_found now.
+	if code != exitPartial || len(res.Moved) != 1 || res.Moved[0].Path != review {
+		t.Fatalf("with --level review: exit %d %+v", code, res)
+	}
+}
+
+// Should-fix 6: the dry run of a plan file runs the same re-derivation and
+// re-checks as --apply and reports what would really move.
+func TestPlanDryRunRechecks(t *testing.T) {
+	home := cleanFixture(t)
+	_, out, _ := cli(t, "scan", "--json")
+	var p plan.Plan
+	exactlyOneJSON(t, out, &p)
+	var tampered string
+	for i := range p.Items {
+		if strings.HasSuffix(p.Items[i].Path, "/Library/Logs/app") {
+			p.Items[i].Ino++
+			tampered = p.Items[i].ID
+		}
+	}
+	var buf strings.Builder
+	if err := plan.Encode(&buf, p); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(filepath.Dir(home), "plan.json")
+	if err := os.WriteFile(file, []byte(buf.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := testutil.Checksum(t, home)
+	code, out, _ := cli(t, "clean", "--plan", file, "--json")
+	var res plan.Result
+	exactlyOneJSON(t, out, &res)
+	if code != exitOK || !res.DryRun || len(res.Moved) != 1 || len(res.Skipped) != 1 || res.Skipped[0].ID != tampered || res.Skipped[0].Reason != plan.SkipIdentityChanged {
+		t.Fatalf("exit %d result %+v", code, res)
+	}
+	if res.ReceiptID != "" || testutil.Checksum(t, home) != before {
+		t.Fatal("the dry run wrote a receipt or changed the home folder")
+	}
+	code, out, _ = cli(t, "clean", "--plan", file)
+	if code != exitOK || !strings.Contains(out, "Would move 1 item") || lastLine(out) != output.DryRunLine {
+		t.Fatalf("human dry run: exit %d\n%s", code, out)
+	}
+}
+
+// Must-fix 1, through the CLI: with KIPPLE_HOME set there is no
+// NSFileManager fallback (it would move fixture items into the real
+// Trash), so an unusable Trash is error trash_access and nothing moves.
+func TestTrashAccessError(t *testing.T) {
+	home := cleanFixture(t)
+	before := testutil.ContentChecksum(t, home)
+	if err := os.Chmod(filepath.Join(home, ".Trash"), 0); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := cli(t, "clean", "--apply", "--json")
+	if err := os.Chmod(filepath.Join(home, ".Trash"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var env errorEnvelope
+	exactlyOneJSON(t, out, &env)
+	if code != exitError || env.Error.Code != codeTrashAccess || !strings.Contains(env.Error.Message, "Full Disk Access") || !strings.Contains(errOut, "Full Disk Access") {
+		t.Fatalf("exit %d error %+v", code, env)
+	}
+	if testutil.ContentChecksum(t, home) != before {
+		t.Fatal("something moved")
 	}
 }

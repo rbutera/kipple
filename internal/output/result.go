@@ -25,6 +25,16 @@ func CleanResult(w io.Writer, r plan.Result) error {
 		}
 	}
 	switch {
+	case r.DryRun:
+		fmt.Fprintf(b, "Would move %s to the Trash (%s), after every check apply runs.\n", count(len(r.Moved), "item"), Bytes(bytes))
+		for _, m := range r.Moved {
+			fmt.Fprintf(b, "  would move  %s  %s\n", m.ID, m.Path)
+		}
+		writeSkipped(b, r.Skipped, "Would skip")
+		writeWarnings(b, r.Warnings)
+		b.WriteString(DryRunLine + "\n")
+		_, err := io.WriteString(w, b.String())
+		return err
 	case len(r.Moved) == 0 && len(r.Skipped) == 0:
 		b.WriteString("Nothing was selected, so nothing was moved.\n")
 	case deleted == len(r.Moved) && deleted > 0:

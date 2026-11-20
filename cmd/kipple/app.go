@@ -47,6 +47,9 @@ const (
 	codePlan     = "plan"
 	codeApply    = "apply"
 	codeReceipt  = "receipt"
+	// codeTrashAccess: the Trash folder cannot be used (no Full Disk Access
+	// and no usable fallback).
+	codeTrashAccess = "trash_access"
 )
 
 // runtimeEnv is the process environment, injectable for tests.
