@@ -11,7 +11,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only pull requests cancel their own superseded runs. A push to main keeps
+  # every commit's run, because the release gate needs a finished run for the
+  # exact tagged commit.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
