@@ -50,10 +50,16 @@ func CleanResult(w io.Writer, r plan.Result) error {
 		}
 	}
 	writeSkipped(b, r.Skipped, "Skipped")
+	if len(r.Displaced) > 0 {
+		fmt.Fprintf(b, "Moved to the Trash instead of the approved item (another program swapped it in; restore puts it back): %s\n", count(len(r.Displaced), "object"))
+		for _, d := range r.Displaced {
+			fmt.Fprintf(b, "  %s  taken from %s\n      -> %s\n", d.ID, d.Path, d.TrashPath)
+		}
+	}
 	writeWarnings(b, r.Warnings)
 	if r.ReceiptID != "" {
 		fmt.Fprintf(b, "\nReceipt %s (%s).\n", r.ReceiptID, r.ReceiptPath)
-		if len(r.Moved) > deleted {
+		if len(r.Moved) > deleted || len(r.Displaced) > 0 {
 			fmt.Fprintf(b, "To put the items back: kipple restore %s --apply\n", r.ReceiptID)
 		}
 	}
