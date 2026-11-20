@@ -161,25 +161,13 @@ consent.`,
 			if err != nil {
 				return err
 			}
-			opts := apply.Options{
-				Env:           policyEnv(h),
-				Rules:         effectiveRules(h.cfg),
-				Plan:          target,
-				Only:          ids,
-				Permanent:     permanent,
-				Receipts:      store,
-				KippleVersion: version,
-				Procs:         a.rt.procs,
-				ChecksSince:   scanned,
-				SaveReceipt:   a.rt.saveReceipt,
-			}
+			opts := a.applyOptions(h, store)
+			opts.Plan = target
+			opts.Only = ids
+			opts.Permanent = permanent
+			opts.ChecksSince = scanned
 			if src != nil {
 				opts.Fresh = &fresh
-			}
-			// The NSFileManager fallback moves items into the real Trash, so
-			// it is used only for the real home, never for a KIPPLE_HOME.
-			if a.rt.getenv("KIPPLE_HOME") == "" {
-				opts.Finder = func() (trash.ExpectTrasher, error) { return trash.NewFinderTrasher(nil) }
 			}
 			// A plan file is re-derived and re-checked: its dry run shows
 			// what apply would really do, not the file's selection.
@@ -251,6 +239,25 @@ consent.`,
 	f.StringVar(&planFile, "plan", "", "act on this plan (from kipple scan --json; - reads stdin)")
 	f.StringSliceVar(&only, "only", nil, "act only on these item IDs (comma-separated or repeated)")
 	return c
+}
+
+// applyOptions are the apply options every apply path (clean, tui)
+// starts from; the caller sets the plan and what to act on.
+func (a *app) applyOptions(h homeEnv, store receipt.Store) apply.Options {
+	opts := apply.Options{
+		Env:           policyEnv(h),
+		Rules:         effectiveRules(h.cfg),
+		Receipts:      store,
+		KippleVersion: version,
+		Procs:         a.rt.procs,
+		SaveReceipt:   a.rt.saveReceipt,
+	}
+	// The NSFileManager fallback moves items into the real Trash, so it is
+	// used only for the real home, never for a KIPPLE_HOME.
+	if a.rt.getenv("KIPPLE_HOME") == "" {
+		opts.Finder = func() (trash.ExpectTrasher, error) { return trash.NewFinderTrasher(nil) }
+	}
+	return opts
 }
 
 // trashAccessHelp is the message for apply.ErrTrashAccess.

@@ -23,6 +23,7 @@ import (
 	"github.com/rbutera/kipple/internal/procs"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/scan"
+	"github.com/rbutera/kipple/internal/tui"
 )
 
 // Exit codes (design D11). 3 (nothing to do) and 4 (partial) come from
@@ -74,6 +75,9 @@ type runtimeEnv struct {
 	// beforeScan, when set, runs after home is resolved and guarded and
 	// before the scan opens it. Tests use it to swap the directory.
 	beforeScan func(home string)
+	// tui runs the interactive front end (tui.Run when nil). Tests drive
+	// the model headlessly instead.
+	tui func(cfg tui.Config, in io.Reader, out io.Writer) (tui.Outcome, error)
 }
 
 // fs returns the identity lookups, the real file system by default.
@@ -285,7 +289,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetHelpCommand(a.helpCommand())
 	root.AddCommand(a.scanCommand(), a.cleanCommand(), a.historyCommand(), a.restoreCommand(),
-		a.rulesCommand(), a.explainCommand(), a.schemaCommand(), a.versionCommand())
+		a.rulesCommand(), a.explainCommand(), a.schemaCommand(), a.versionCommand(), a.tuiCommand())
 	return root
 }
 
@@ -583,17 +587,22 @@ func (a *app) runScan(h homeEnv) (plan.Plan, error) {
 }
 
 // runScanAt scans home at level.
-func (a *app) runScanAt(h homeEnv, level string) (plan.Plan, error) {
-	env := policyEnv(h)
-	if a.rt.beforeScan != nil {
-		a.rt.beforeScan(h.home)
-	}
-	opts := scan.Options{
-		Env:           env,
+// scanOptions are the scan options every front end (scan, clean, tui)
+// starts from.
+func scanOptions(h homeEnv, level string) scan.Options {
+	return scan.Options{
+		Env:           policyEnv(h),
 		Rules:         effectiveRules(h.cfg),
 		Level:         level,
 		KippleVersion: version,
 	}
+}
+
+func (a *app) runScanAt(h homeEnv, level string) (plan.Plan, error) {
+	if a.rt.beforeScan != nil {
+		a.rt.beforeScan(h.home)
+	}
+	opts := scanOptions(h, level)
 	if a.rt.isTTY(a.stderr) {
 		opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", msg) }
 	}
@@ -604,13 +613,18 @@ func (a *app) runScanAt(h homeEnv, level string) (plan.Plan, error) {
 	if err != nil {
 		// Home itself unusable, including a home that is no longer the
 		// directory approved above, is a home error like the guard's.
-		var he *policy.HomeError
-		if errors.As(err, &he) {
-			return plan.Plan{}, fail(codeHome, "%v", err)
-		}
-		return plan.Plan{}, fail(codeScan, "%v", err)
+		return plan.Plan{}, scanError(err)
 	}
 	return p, nil
+}
+
+// scanError maps an error from scan.Run to a CLI error.
+func scanError(err error) error {
+	var he *policy.HomeError
+	if errors.As(err, &he) {
+		return fail(codeHome, "%v", err)
+	}
+	return fail(codeScan, "%v", err)
 }
 
 func titles() map[string]string {

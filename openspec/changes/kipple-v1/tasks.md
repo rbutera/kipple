@@ -36,7 +36,7 @@ Waves for the /wave skill. Each wave ends with `make check` green (lint, vet, ra
 
 ## 4. Wave 4: TUI, docs, release pipeline, v0.1.0
 
-- [ ] 4.1 Implement `internal/tui` Bubble Tea model (grouped list, detail pane, space toggle with tier rules, `a`/`y` confirm, receipt summary, `q`) and `kipple tui`; verify with headless model tests sending key messages for toggle, info-item refusal, cancel, and apply via `DirTrasher`
+- [x] 4.1 Implement `internal/tui` Bubble Tea model (grouped list, detail pane, space toggle with tier rules, `a`/`y` confirm, receipt summary, `q`) and `kipple tui`; verify with headless model tests sending key messages for toggle, info-item refusal, cancel, and apply via `DirTrasher`
 - [ ] 4.2 Write the full `README.md` (pitch, safety model, install via release binary and `go install`, usage, "For agents" section with scan/inspect/subset-apply/restore flow, exit codes, schema, verification of signatures, comparison table to Mole/Dusty/ElfClean, roadmap) and `llms.txt`; verify by running the agent-section commands against a fixture in a CI step (`scripts/agent-flow-check.sh`)
 - [ ] 4.3 Add `.goreleaser.yaml` (darwin arm64/amd64, universal binary, ldflags version/commit, checksums, archives, ad-hoc codesign hook) and `.github/workflows/release.yml` (on `v*` tags, waits for CI green on the same SHA, goreleaser, cosign keyless signing of `checksums.txt`); verify with `goreleaser release --snapshot --clean` locally and `actionlint`
 - [ ] 4.4 Add `CONTRIBUTING.md` (fixture-only testing rule, how to add a rule with tests), issue templates for "path escaped the allowlist" and "new rule"; verify files exist and the add-a-rule steps work on a scratch rule in a test
