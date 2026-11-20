@@ -36,8 +36,8 @@ resolved.
 Every command that can change your files is a dry run unless you add
 `--apply`. `kipple clean` without `--apply` lists exactly what it would move
 and ends by saying nothing was moved. With `--apply`, items go to the Trash
-(`~/.Trash`). `--permanent` deletes instead, and only acts on `safe` items;
-every other item is skipped with `permanent_not_allowed`.
+(`~/.Trash`). There is no permanent deletion in this release: `--permanent`
+is refused with a usage error (see [Permanent deletion](#permanent)).
 
 On a terminal, `clean --apply` shows the total and asks before moving
 anything. With `--json`, or when its output is not a terminal, it never
@@ -110,21 +110,6 @@ skipped with `tier_review` unless this run says `--level review`. Without
 would move and what would be skipped; it moves nothing and writes no
 receipt. The confirmation on a terminal shows that same total.
 
-`--permanent` deletes in one walk that holds every folder it works in
-open and never reopens anything by path or follows a link. A first pass
-deletes nothing: it records every entry's device and inode and refuses the
-item if anything is protected (`.env`, keys, a `.git` folder and the
-rest), on another disk, or changed after this run's scan began (so a
-folder swapped in during the run is refused with `identity_changed`). The
-second pass deletes depth-first through the held folders, and before
-touching a folder's contents confirms the folder is the recorded one, is
-still inside its parent, and is on the same disk; each entry must be the
-recorded one and not protected before it is removed. Any mismatch stops the
-delete; if anything was already deleted the skip is marked `partial` with
-how many entries and bytes were removed. The same `partial` marking applies
-to a permanent delete that fails partway. Anything already inside a cache
-folder before kipple started counts as that cache's content.
-
 ## The Trash and Full Disk Access
 
 macOS protects `~/.Trash`: only apps with Full Disk Access may open it, and
@@ -164,7 +149,14 @@ inside it is changed.
 Every `--apply` run writes a receipt, a JSON file in
 `~/Library/Application Support/kipple/receipts` (or `$KIPPLE_STATE_DIR/receipts`).
 It is written before the first move and saved again after every item, so
-even an interrupted run leaves a record. It lists every moved item's
+even an interrupted run leaves a record. It is a write-ahead record:
+immediately before each move the item is saved as `pending`, and if that
+save fails (a full disk) the item does not move and the run stops with
+error code `receipt`. After the move it is saved again as moved (or, for
+an object that was moved instead of it, displaced). If kipple is killed
+or the disk fills between the move and that second save, the item stays
+`pending`, and `kipple restore` finds it in the Trash by its tag and
+identity. It lists every moved item's
 original path, Trash path, size on disk, device, inode, its own size and
 modification time, and how it was moved, and every skipped item with its
 reason. `kipple history` lists receipts, newest first.
@@ -173,8 +165,12 @@ Before an item goes to the Trash, kipple tags it with an extended
 attribute (`com.rbutera.kipple`) naming the receipt, the item and the home
 folder.
 
-`kipple restore <receipt>` puts items (and any displaced objects) back. It
-is a dry run unless `--apply`. Receipts are treated as untrusted too: an
+`kipple restore <receipt-id>` puts items (and any pending or displaced
+entries) back. It is a dry run unless `--apply`. It only uses receipts in
+kipple's own receipts folder, named by their ID from `kipple history` (or
+by an item ID); a receipt file elsewhere is refused. A displaced object
+goes back to the item's path, if that is free, wherever it was before the
+swap; Finder's "Put Back" may return it to where it came from instead. Receipts are treated as untrusted too: an
 item's ID must be the one its rule and path give, and it is put back only
 if its Trash entry is directly inside the Trash, is opened through the
 open Trash folder (never by path, never through a link), is the very object
@@ -187,6 +183,22 @@ its original folder still exists, the original path is free
 passes the same policy checks for the item's rule. The move back refuses to
 replace anything.
 
+The move back is staged: the entry is first renamed to a random name
+inside the Trash and checked there through its descriptor (identity,
+size, modification time, tag); only then is it renamed to the destination.
+If the object that arrives there is not the entry (another program swapped
+names at that instant), it is renamed straight back into the Trash and the
+receipt notes it.
+
+What the tag and identity checks protect against is stale or mistaken
+receipts: a receipt for another home, a Trash entry you emptied or
+replaced, an entry that is not the object kipple moved, a destination the
+policy no longer allows. They do not stop a program running as you that
+can already edit kipple's receipts folder: the tag carries no secret, so
+such a program could tag an entry and write a matching receipt. Even then
+the entry is only put back at a path the policy approves for the item's
+rule, and never if anything inside it is protected.
+
 ## Skip reasons
 
 <!-- skip-reasons:start -->
@@ -194,7 +206,7 @@ replace anything.
 |---|---|
 | `not_found` | An ID passed to `--only` is not in the plan, or a scan now no longer finds the item. |
 | `info_tier` | An info item was named; kipple never moves those. |
-| `permanent_not_allowed` | `--permanent` acts only on safe items. |
+| `permanent_not_allowed` | `--permanent` acts only on safe items (builds with permanent deletion only; not in this release). |
 | `tool_running` | An agent process is working inside the project, or kipple could not tell. |
 | `identity_changed` | The item is not the object the plan recorded, or it changed during the move. |
 | `root_changed` | The rule's folder is not the one the plan recorded. |
@@ -222,7 +234,8 @@ would give it (for example `git_dirty`, `too_recent`, `owner_running`, or
   symbolic link.
 - Touch anything on the denylist below or that you protect in config.
   Config can only add protections; it can never remove one.
-- Move an `info` item, or permanently delete anything but a `safe` item.
+- Move an `info` item, or delete anything permanently (not in this
+  release).
 - Move anything without `--apply`, or prompt when it is not on a terminal.
 - Copy and delete when a rename across disks is not possible.
 - Replace an existing file or folder, when moving to the Trash or when
@@ -243,16 +256,42 @@ can be moved; it is also `manual`, so it moves only when you name it. A
 
 - Items moved by rename into `~/.Trash` are unknown to Finder's "Put Back";
   use `kipple restore`, which knows them.
-- A receipt is a file you own, and so is the tag. Someone who can write
-  both could still forge a restore of an entry they tagged themselves; it
-  would only be put back at a path the policy approves for the item's
-  rule, and never if anything inside it is protected.
+- A receipt is a file you own, and so is the tag (see "Receipts and
+  restore" above for what that does and does not protect).
+- A pending entry for an object displaced by the fallback cannot be found
+  by restore, since its identity was not known before the move; it is still
+  in the Trash.
 - git does not see uncommitted changes inside a submodule's own working
   tree, and files ignored only through your global git excludes count as
   untracked (which keeps the project).
 - Between the last check and the rename, a program can still write a new
   file inside an item. Such a file goes to the Trash with the item and can
   be restored from there.
+
+<a id="permanent"></a>
+## Permanent deletion
+
+This release has no permanent deletion. `kipple clean --permanent` is
+refused with a usage error and everything goes to the Trash. The
+implementation exists behind the `kipple_permanent` build tag and is
+tested there, but it still checks an entry by name and then removes it by
+name, and a program swapping names at exactly that moment could make it
+delete something else (the red-team review won that race once in 60
+contended runs). It ships when that gap is closed.
+
+## Roadmap
+
+- **Permanent deletion with staging.** Inside the held item folder, create
+  a kipple-owned 0700 staging folder; rename each entry into it with
+  `renameatx_np(RENAME_EXCL)` under a random name, confirm through a
+  descriptor at the staging name that it is the recorded object, and only
+  then unlink it there. After each unlink, check that the held
+  descriptor's link count dropped as expected (a tripwire for anything
+  that slipped through), and stop if not.
+- **Receipts and tags that resist a same-user forger.** Sign each receipt
+  entry and tag with an HMAC whose key lives in the login Keychain with an
+  access list limited to the kipple binary, so another program running as
+  you has to pass a Keychain prompt to forge one.
 
 ## Denylist
 

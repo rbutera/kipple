@@ -11,7 +11,8 @@ tools, local models and developer toolchains leave behind in your home folder.
 ## The safety model in one paragraph
 
 Dry run is the only default: nothing moves without `--apply`. The Trash is the
-only default destination, and every move writes a receipt you can restore from.
+only destination (v0.1 has no permanent deletion), and every move is recorded
+in a receipt you can restore from.
 Every path must descend from an allowlisted rule and pass a single policy check
 with a hard-coded denylist (Documents, Desktop, Photos, Mail, keychains, SSH keys,
 agent memory and more). Symlinks are never followed. kipple stays inside your home
