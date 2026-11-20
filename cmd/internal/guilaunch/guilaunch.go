@@ -10,6 +10,7 @@ import (
 
 	"github.com/rbutera/kipple/cmd/internal/launch"
 	"github.com/rbutera/kipple/internal/guimodel"
+	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/procs"
 	"github.com/rbutera/kipple/internal/rules"
@@ -47,7 +48,7 @@ func Model(o Options) *guimodel.Model {
 	}
 	git := clt()
 	cfg.Home = h.Path
-	cfg.HomeLabel = launch.HomeLabel(h.Path, h.FromEnv)
+	cfg.HomeLabel = output.SafeText(launch.HomeLabel(h.Path, h.FromEnv))
 	cfg.TestHome = h.FromEnv
 	cfg.GitAvailable = git
 	// Level safe, whatever the config file says: the GUI pre-selects

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/rbutera/kipple/cmd/internal/guilaunch"
@@ -86,6 +87,18 @@ func TestGUILaunchRefusals(t *testing.T) {
 		writeConfig(t, home, "level = \"everything\"\n")
 		if p := guiModel(t, testEnv(t)).Problem(); p.Kind != guimodel.ProblemConfig {
 			t.Fatalf("%+v", p)
+		}
+	})
+	t.Run("a hostile KIPPLE_HOME is shown escaped", func(t *testing.T) {
+		base := filepath.Dir(fixture(t))
+		odd := filepath.Join(base, "x\x1b]0;t\a", "home")
+		if err := os.MkdirAll(odd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("KIPPLE_HOME", odd)
+		m := guiModel(t, testEnv(t))
+		if l := m.Config().HomeLabel; strings.ContainsAny(l, "\x1b\a") && strings.ContainsRune(l, 0x1b) || strings.ContainsRune(l, 0x07) {
+			t.Fatalf("label %q", l)
 		}
 	})
 	t.Run("no Command Line Tools", func(t *testing.T) {
