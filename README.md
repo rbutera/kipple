@@ -95,20 +95,22 @@ kipple is for macOS, on Apple silicon and Intel.
 
 Each release has a universal archive (both architectures), per-architecture
 archives, and a `checksums.txt` signed with [cosign](https://github.com/sigstore/cosign)
-keyless signing by this repository's release workflow. Verify before you run:
+keyless signing by this repository's release workflow. The signature comes
+as a sigstore bundle (`checksums.txt.sigstore.json`) and, for cosign 2, as a
+detached signature and certificate (`checksums.txt.sig`, `checksums.txt.pem`).
+Verify before you run:
 
 ```sh
 VERSION=0.1.0
 BASE=https://github.com/rbutera/kipple/releases/download/v$VERSION
 curl -fsSLO "$BASE/kipple_${VERSION}_darwin_universal.tar.gz"
 curl -fsSLO "$BASE/checksums.txt"
-curl -fsSLO "$BASE/checksums.txt.sig"
-curl -fsSLO "$BASE/checksums.txt.pem"
+curl -fsSLO "$BASE/checksums.txt.sigstore.json"
 
-# 1. The checksums were signed by the release workflow of rbutera/kipple.
+# 1. The checksums were signed by the release workflow of rbutera/kipple
+#    (cosign 3, or cosign 2.4 and later).
 cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
+  --bundle checksums.txt.sigstore.json \
   --certificate-identity "https://github.com/rbutera/kipple/.github/workflows/release.yml@refs/tags/v$VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
@@ -120,6 +122,19 @@ shasum -a 256 --check --ignore-missing checksums.txt
 tar -xzf "kipple_${VERSION}_darwin_universal.tar.gz" kipple
 sudo install -m 0755 kipple /usr/local/bin/kipple   # or any folder on your PATH
 kipple version
+```
+
+With cosign 2 you can verify the detached files instead of the bundle:
+
+```sh
+curl -fsSLO "$BASE/checksums.txt.sig"
+curl -fsSLO "$BASE/checksums.txt.pem"
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity "https://github.com/rbutera/kipple/.github/workflows/release.yml@refs/tags/v$VERSION" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
 ```
 
 The binary is ad-hoc signed, not notarised (that is on the roadmap). A file

@@ -64,7 +64,9 @@ checksum:
 
 signs:
   # Keyless: cosign gets a short-lived certificate for the workflow's OIDC
-  # identity and records the signature in the Rekor transparency log.
+  # identity and records the signature in the Rekor transparency log. One
+  # call writes the sigstore bundle (verify with cosign 2.4+ or 3) and the
+  # detached signature and certificate (verify with cosign 2).
   - id: checksums
     cmd: cosign
     artifacts: checksum
@@ -72,6 +74,8 @@ signs:
     certificate: "${artifact}.pem"
     args:
       - sign-blob
+      - --new-bundle-format
+      - --bundle=${artifact}.sigstore.json
       - --output-signature=${signature}
       - --output-certificate=${certificate}
       - --yes
@@ -92,6 +96,9 @@ release:
   github:
     owner: rbutera
     name: kipple
+  # The sigstore bundle written while signing checksums.txt (above).
+  extra_files:
+    - glob: ./dist/checksums.txt.sigstore.json
   prerelease: auto
   footer: |
     Verify the download before you run it: see "Install" in the README

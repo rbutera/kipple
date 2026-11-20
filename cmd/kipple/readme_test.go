@@ -96,6 +96,7 @@ func TestReadmeVerifyCommand(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	mustContain(t, "README.md", readme,
 		"cosign verify-blob",
+		"--bundle checksums.txt.sigstore.json",
 		"--certificate checksums.txt.pem",
 		"--signature checksums.txt.sig",
 		`--certificate-identity "https://github.com/rbutera/kipple/.github/workflows/release.yml@refs/tags/v$VERSION"`,

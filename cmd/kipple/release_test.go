@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -36,22 +37,59 @@ func TestRedCIBlocksRelease(t *testing.T) {
 		`tags: ["v*"]`,
 		"ci-green:",
 		"actions/workflows/ci.yml/runs?head_sha=${SHA}",
+		// Only runs of this exact commit from a push or a manual run count;
+		// a pull_request run tested a merge commit.
+		`select(.head_sha == \"${SHA}\" and (.event == \"push\" or .event == \"workflow_dispatch\"))`,
 		`.conclusion == "success"`,
+		// Queued or running: poll. None yet: a short grace, then fail.
+		`any(.[]; .status != "completed")`,
+		"sleep 30",
+		"Push the commit to main first",
 		"exit 1",
 		"needs: ci-green",
 		"id-token: write",
 		"contents: write",
 		"sigstore/cosign-installer",
+		"cosign-release: v2.6.5",
 		"goreleaser/goreleaser-action",
 	)
+	if strings.Contains(wf, `.event == \"pull_request\"`) {
+		t.Error("the release gate accepts pull_request runs")
+	}
 	if strings.Index(wf, "ci-green:") > strings.Index(wf, "release:\n") {
 		t.Error("the CI check is not the first job")
 	}
 }
 
+// Must-fix 3 (wave 4 review): every action in every workflow is pinned to a
+// full commit SHA with its version as a trailing comment, and goreleaser's
+// version is exact.
+func TestActionsPinned(t *testing.T) {
+	pinned := regexp.MustCompile(`^\s*(- )?uses: [\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$`)
+	n := 0
+	for _, wf := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
+		for _, line := range strings.Split(readRepoFile(t, wf), "\n") {
+			if !strings.Contains(line, "uses:") {
+				continue
+			}
+			n++
+			if !pinned.MatchString(line) {
+				t.Errorf("%s: not pinned to a commit SHA with a version comment: %s", wf, strings.TrimSpace(line))
+			}
+		}
+	}
+	if n < 5 {
+		t.Fatalf("only %d actions found", n)
+	}
+	if !regexp.MustCompile(`(?m)^\s+version: v\d+\.\d+\.\d+$`).MatchString(readRepoFile(t, ".github/workflows/release.yml")) {
+		t.Error("the goreleaser version is not pinned exactly")
+	}
+}
+
 // Spec scenario "Verify checksums" (distribution): goreleaser builds the
 // darwin arm64, amd64 and universal archives with checksums.txt and signs it
-// keyless into checksums.txt.sig and .pem.
+// keyless into checksums.txt.sig and .pem plus a sigstore bundle, which the
+// release uploads.
 func TestVerifyChecksums(t *testing.T) {
 	gr := readRepoFile(t, ".goreleaser.yaml")
 	mustContain(t, ".goreleaser.yaml", gr,
@@ -64,6 +102,9 @@ func TestVerifyChecksums(t *testing.T) {
 		"artifacts: checksum",
 		`signature: "${artifact}.sig"`,
 		`certificate: "${artifact}.pem"`,
+		"--new-bundle-format",
+		"--bundle=${artifact}.sigstore.json",
+		"glob: ./dist/checksums.txt.sigstore.json",
 		"codesign --force --sign -",
 		"- LICENSE",
 		"- README.md",
