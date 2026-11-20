@@ -21,6 +21,21 @@ case "$3" in
 esac
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 
+# The oldest macOS kipple.app supports. The binary must say the same
+# (MACOSX_DEPLOYMENT_TARGET=11.0 when it is built), or dyld refuses it on
+# Macs older than the build machine while Finder offers to open it.
+min_macos="11.0"
+for minos in $(vtool -show-build "$bin" | awk '$1 == "minos" { print $2 }'); do
+	if [ "$minos" != "$min_macos" ]; then
+		echo "build-app: $bin needs macOS $minos but the app declares $min_macos; build it with MACOSX_DEPLOYMENT_TARGET=$min_macos" >&2
+		exit 1
+	fi
+done
+if [ -z "$(vtool -show-build "$bin" | awk '$1 == "minos"')" ]; then
+	echo "build-app: $bin has no minimum macOS version" >&2
+	exit 1
+fi
+
 # CFBundleShortVersionString takes numbers only: 0.2.0-snapshot+abc -> 0.2.0.
 short="$(printf '%s' "$version" | sed -E 's/^v//; s/[^0-9.].*$//')"
 [ -n "$short" ] || short="0.0.0"
@@ -45,7 +60,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleShortVersionString</key><string>${short}</string>
 	<key>CFBundleVersion</key><string>${short}</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-	<key>LSMinimumSystemVersion</key><string>11.0</string>
+	<key>LSMinimumSystemVersion</key><string>${min_macos}</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSHumanReadableCopyright</key><string>MIT licence. kipple only moves things to the Trash.</string>

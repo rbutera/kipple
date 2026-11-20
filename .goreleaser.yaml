@@ -24,6 +24,9 @@ builds:
     # The NSFileManager Trash fallback (internal/trash) is cgo.
     env:
       - CGO_ENABLED=1
+      # The oldest macOS the binary runs on; without it the linker writes
+      # the build machine's version, and older Macs refuse the binary.
+      - MACOSX_DEPLOYMENT_TARGET=11.0
     goos: [darwin]
     goarch: [arm64, amd64]
     flags:
@@ -46,6 +49,9 @@ builds:
     tags: [gui]
     env:
       - CGO_ENABLED=1
+      # The oldest macOS the binary runs on; without it the linker writes
+      # the build machine's version, and older Macs refuse the binary.
+      - MACOSX_DEPLOYMENT_TARGET=11.0
     goos: [darwin]
     goarch: [arm64, amd64]
     flags:
