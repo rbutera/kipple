@@ -426,3 +426,103 @@ func TestRealHomeWatch(t *testing.T) {
 		t.Fatalf("changed %v", got)
 	}
 }
+
+// Reviewer rt9: open with ⌘⌫, release, press again too early and hold.
+// The early press is rejected and must also need its own release, so its
+// key repeats (here at 1.2 s and 2 s) never confirm.
+func TestEarlyPressThenHoldDoesNotConfirm(t *testing.T) {
+	home := fixture(t)
+	before := testutil.Checksum(t, home)
+	u := newTestUI(t, false)
+	t0 := time.Now()
+	clock := t0
+	u.now = func() time.Time { return clock }
+	u.m.ScanNow()
+	u.update()
+	u.moveToTrash() // t=0: opens the sheet
+	clock = t0.Add(150 * time.Millisecond)
+	u.keyUp(&fyne.KeyEvent{Name: fyne.KeyBackspace})
+	clock = t0.Add(400 * time.Millisecond)
+	u.moveToTrash() // pressed again, too early, and held
+	for _, at := range []time.Duration{1200 * time.Millisecond, 2 * time.Second, 3 * time.Second} {
+		clock = t0.Add(at)
+		u.moveToTrash() // the held key's repeats
+	}
+	if u.m.Sheet() != guimodel.SheetConfirm || u.m.Screen() == guimodel.ScreenDone {
+		t.Fatalf("screen %d sheet %d: a held early press confirmed the move", u.m.Screen(), u.m.Sheet())
+	}
+	if testutil.Checksum(t, home) != before {
+		t.Fatal("the fixture changed")
+	}
+}
+
+// A sheet opened with the mouse has no ⌘⌫ to release: once the hold time
+// has passed, the first ⌘⌫ confirms; before it, nothing happens.
+func TestClickOpenedSheetTakesFirstShortcut(t *testing.T) {
+	home := fixture(t)
+	before := testutil.Checksum(t, home)
+	u := newTestUI(t, false)
+	var mu sync.Mutex
+	u.do = func(fn func()) { mu.Lock(); defer mu.Unlock(); fn() }
+	t0 := time.Now()
+	clock := t0
+	u.now = func() time.Time { return clock }
+	u.m.ScanNow()
+	u.update()
+	u.moveToTrashClicked()
+	if u.m.Sheet() != guimodel.SheetConfirm {
+		t.Fatalf("sheet %d", u.m.Sheet())
+	}
+	clock = t0.Add(500 * time.Millisecond)
+	u.moveToTrash()
+	if u.m.Sheet() != guimodel.SheetConfirm || testutil.Checksum(t, home) != before {
+		t.Fatal("⌘⌫ confirmed before the hold time")
+	}
+	// The early press must now be released, as for the keyboard.
+	u.keyUp(&fyne.KeyEvent{Name: fyne.KeyBackspace})
+	clock = t0.Add(1100 * time.Millisecond)
+	u.moveToTrash()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		done := u.m.Screen() == guimodel.ScreenDone
+		mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("⌘⌫ after the hold time did not move")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Without an early press, a click-opened sheet takes the first ⌘⌫ after
+// the hold time, with no key-up needed.
+func TestClickOpenedSheetNoReleaseNeeded(t *testing.T) {
+	fixture(t)
+	u := newTestUI(t, false)
+	var mu sync.Mutex
+	u.do = func(fn func()) { mu.Lock(); defer mu.Unlock(); fn() }
+	t0 := time.Now()
+	clock := t0
+	u.now = func() time.Time { return clock }
+	u.m.ScanNow()
+	u.update()
+	u.moveToTrashClicked()
+	clock = t0.Add(1100 * time.Millisecond)
+	u.moveToTrash()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		done := u.m.Screen() == guimodel.ScreenDone
+		mu.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first ⌘⌫ after the hold time did not move a click-opened sheet")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

@@ -80,7 +80,7 @@ func (u *ui) actionBar() fyne.CanvasObject {
 	switch m.Screen() {
 	case guimodel.ScreenReview:
 		again := newButton("Scan again", false, u.rescan)
-		move := newButton("Move to Trash…", true, u.moveToTrash)
+		move := newButton("Move to Trash…", true, u.moveToTrashClicked)
 		if !m.CanMove() {
 			move.Disable()
 		}

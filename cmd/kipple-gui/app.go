@@ -132,7 +132,7 @@ func (u *ui) runScan(job guimodel.ScanJob, ok bool) {
 	}()
 }
 
-// moveToTrash is ⌘⌫ (menu or canvas) and the action bar's Move to Trash…:
+// moveToTrash is ⌘⌫ (menu or canvas):
 // it opens the confirmation from the review screen. A second ⌘⌫ moves from
 // the confirmation, but only once the sheet has been up for confirmHold and
 // the key has been released since it opened, so holding ⌘⌫ (which macOS
@@ -151,10 +151,27 @@ func (u *ui) moveToTrash() {
 		u.update()
 	case guimodel.SheetConfirm:
 		if !u.keyReleased || u.now().Sub(u.confirmAt) < confirmHold {
+			// This press must be released too, or its key repeat would
+			// confirm once the hold time has passed.
+			u.keyReleased = false
 			return
 		}
 		u.apply()
 	}
+}
+
+// moveToTrashClicked is the action bar's Move to Trash… button. A sheet
+// opened with the mouse has no ⌘⌫ held, so the first ⌘⌫ after the hold
+// time confirms it.
+func (u *ui) moveToTrashClicked() {
+	if u.m.Sheet() != guimodel.SheetNone {
+		return
+	}
+	u.m.OpenConfirm()
+	if u.m.Sheet() == guimodel.SheetConfirm {
+		u.confirmAt, u.keyReleased = u.now(), true
+	}
+	u.update()
 }
 
 // confirmHold is how long the confirmation must have been up before ⌘⌫
