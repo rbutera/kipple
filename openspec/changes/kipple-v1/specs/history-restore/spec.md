@@ -27,3 +27,15 @@ History lists past receipts, and restore moves items from the Trash back to thei
 #### Scenario: Trash emptied
 - **WHEN** the recorded Trash path no longer exists
 - **THEN** the item is skipped with reason `trash_item_missing`
+
+#### Scenario: Restore a pending item
+- **WHEN** a clean run stopped after moving an item but before recording the move, so the receipt lists it as pending
+- **THEN** `kipple history` shows the pending entry, and `kipple restore <item-id> --apply` finds it in the Trash by its identity and tag and puts it back
+
+#### Scenario: Receipt file path refused
+- **WHEN** `kipple restore` is given the path of a receipt file instead of a receipt ID or item ID
+- **THEN** it exits 2 with a usage error and moves nothing; only receipts in kipple's own receipts folder are used
+
+#### Scenario: Restore finds a renamed Trash entry by identity
+- **WHEN** an entry kipple moved was renamed inside the Trash (by Finder, or by a restore interrupted midway)
+- **THEN** restore finds it by its identity and tag and puts it back

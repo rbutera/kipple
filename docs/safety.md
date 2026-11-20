@@ -119,9 +119,9 @@ macOS refuses, kipple falls back to the system's own Trash call
 (NSFileManager `trashItemAtURL`). Immediately before the call kipple
 confirms, through the open parent folder, that the name still holds the
 approved item, and hands the system a file reference to it. The system
-call itself turns that reference back into a path, so another program
-swapping things at that very instant could make it move a different
-object. kipple detects that afterwards (the approved item is still in its
+call itself turns that reference back into a path, so if another object is
+renamed into the item's place at that very instant, the system can move
+that object instead. kipple detects that afterwards (the approved item is still in its
 folder, or the reference does not lead to what was moved) and then skips
 the item with `identity_changed` and records the object that did move in
 the receipt's `displaced` list, with where it is in the Trash and its
@@ -167,8 +167,11 @@ folder.
 
 `kipple restore <receipt-id>` puts items (and any pending or displaced
 entries) back. It is a dry run unless `--apply`. It only uses receipts in
-kipple's own receipts folder, named by their ID from `kipple history` (or
-by an item ID); a receipt file elsewhere is refused. A displaced object
+kipple's own receipts folder (read through that folder, never through a
+symlink), named by their ID from `kipple history` or by an item ID, which
+finds the newest receipt with that item moved, pending or displaced and not
+yet restored; a receipt file elsewhere is refused. `kipple history` shows
+how many entries each receipt has moved, pending and displaced. A displaced object
 goes back to the item's path, if that is free, wherever it was before the
 swap; Finder's "Put Back" may return it to where it came from instead. Receipts are treated as untrusted too: an
 item's ID must be the one its rule and path give, and it is put back only
@@ -183,12 +186,18 @@ its original folder still exists, the original path is free
 passes the same policy checks for the item's rule. The move back refuses to
 replace anything.
 
-The move back is staged: the entry is first renamed to a random name
-inside the Trash and checked there through its descriptor (identity,
-size, modification time, tag); only then is it renamed to the destination.
-If the object that arrives there is not the entry (another program swapped
-names at that instant), it is renamed straight back into the Trash and the
-receipt notes it.
+The move back is staged: the entry is first renamed inside the Trash to a
+visible name, `<name> (kipple restoring <hex>)`, and checked there through
+its descriptor (identity, size, modification time, tag); only then is it
+renamed to the destination. If a different object is found at either step
+(something else was renamed into the Trash name or the staging name at
+that instant), that object is put back in the Trash, under its Trash name
+or a visible `<name> (kipple returned <hex>)` name, and the receipt notes
+which. If kipple stops between the two renames, the entry stays visible in
+the Trash under its staging name, and the next restore finds it by its
+identity and tag; restore does the same for any entry renamed inside the
+Trash (by Finder, for example). Restores and saves of one receipt take a
+lock on it, so two restores at once never lose each other's notes.
 
 What the tag and identity checks protect against is stale or mistaken
 receipts: a receipt for another home, a Trash entry you emptied or

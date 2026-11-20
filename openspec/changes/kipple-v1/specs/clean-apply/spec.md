@@ -45,6 +45,10 @@ Every `--apply` run SHALL write a receipt file recording kipple version, time, h
 - **WHEN** `kipple clean --apply` moves two items and skips one
 - **THEN** a receipt exists in the state directory listing two `moved` and one `skipped` entries
 
+#### Scenario: Receipt save fails before a move
+- **WHEN** the receipt cannot be saved with an item as pending (for example the disk is full)
+- **THEN** that item does not move, no further item moves, the run exits 1 with error code `receipt`, and the JSON error includes what was already moved
+
 ### Requirement: Exit codes
 Apply SHALL exit 0 when every selected item moved, 3 when nothing was selected, 4 when at least one item was skipped or failed, 1 on error.
 
