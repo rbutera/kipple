@@ -27,7 +27,7 @@ func (m Model) View() string {
 	var body, keys string
 	switch m.state {
 	case stateScanning:
-		body = m.center(m.spin.View() + " " + m.th.text.Render("Scanning "+m.cfg.Scan.Env.Home+" …") + "\n\n" + m.th.muted.Render(m.trunc(m.prog.get(), m.width-4)))
+		body = m.center(m.spin.View() + " " + m.th.text.Render("Scanning "+output.SafeText(m.cfg.Scan.Env.Home)+" …") + "\n\n" + m.th.muted.Render(m.trunc(output.SafeText(m.prog.get()), m.width-4)))
 		keys = m.keys("q", "quit")
 	case stateReview:
 		body = m.reviewBody()
@@ -41,7 +41,7 @@ func (m Model) View() string {
 		if m.stopping {
 			line += "  " + m.th.muted.Render("stopping after the current item")
 		}
-		body = m.center(line + "\n\n" + m.th.muted.Render(m.trunc(m.prog.get(), m.width-4)))
+		body = m.center(line + "\n\n" + m.th.muted.Render(m.trunc(output.SafeText(m.prog.get()), m.width-4)))
 		keys = m.keys("ctrl+c", "stop after the current item")
 	case stateDone:
 		body = m.doneBody()
@@ -73,7 +73,7 @@ func (m Model) header() string {
 		right = m.th.muted.Render("level ") + m.th.text.Render(m.plan.Level)
 	}
 	room := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
-	home := m.th.muted.Render(m.trunc(m.cfg.Scan.Env.Home, room))
+	home := m.th.muted.Render(m.trunc(output.SafeText(m.cfg.Scan.Env.Home), room))
 	line1 := spread(left+"  "+home, right, m.width)
 
 	var line2 string
@@ -178,7 +178,7 @@ func (m Model) groupLine(g group, w int) string {
 	right := m.th.muted.Render(fmt.Sprintf("%d · %s", len(g.items), output.Bytes(g.bytes)))
 	badge := m.th.tierBadge(g.tier)
 	room := w - lipgloss.Width(right) - lipgloss.Width(badge) - 3
-	left := m.th.title.Render(m.trunc(g.title, room)) + " " + badge
+	left := m.th.title.Render(m.trunc(output.SafeText(g.title), room)) + " " + badge
 	return spread(left, right, w)
 }
 
@@ -239,7 +239,7 @@ func (m Model) detailView(w, h int) string {
 		title = it.Rule
 	}
 	var lines []string
-	head := th.title.Render(m.trunc(title, w-24)) + " " + th.tierBadge(it.Tier)
+	head := th.title.Render(m.trunc(output.SafeText(title), w-24)) + " " + th.tierBadge(it.Tier)
 	lines = append(lines, spread(head, th.text.Render(output.Bytes(it.AllocatedBytes)), w))
 	lines = append(lines, wrapLines(th.muted, m.rel(it.Path), w)...)
 	field := func(label, value string, st lipgloss.Style) {
@@ -264,7 +264,7 @@ func (m Model) detailView(w, h int) string {
 		}
 		field("Status", "Measured only; kipple never moves it.", th.muted)
 		if cmd != "" {
-			field("Instead", cmd, th.text)
+			field("Instead", output.SafeText(cmd), th.text)
 		}
 	case m.selected[it.ID]:
 		field("Status", "Selected: goes to the Trash when you apply.", th.amber)
@@ -286,9 +286,9 @@ func (m Model) detailView(w, h int) string {
 	field("What", r.What, th.text)
 	field("If removed", r.IfRemoved, th.text)
 	if it.Git != nil {
-		g := it.Git.State
+		g := output.SafeText(it.Git.State)
 		if it.Git.Detail != "" {
-			g += ": " + it.Git.Detail
+			g += ": " + output.SafeText(it.Git.Detail)
 		}
 		field("Git", g, th.text)
 	}
@@ -297,7 +297,7 @@ func (m Model) detailView(w, h int) string {
 		files += ", newest " + it.NewestMtime.Format("2 Jan 2006")
 	}
 	field("Contents", files, th.muted)
-	field("ID", it.ID, th.muted)
+	field("ID", output.SafeText(it.ID), th.muted)
 	if len(lines) > h {
 		lines = lines[:h]
 	}
@@ -373,9 +373,9 @@ func (m Model) doneBody() string {
 				out = append(out, th.muted.Render(fmt.Sprintf("  and %d more", len(r.Skipped)-5)))
 				break
 			}
-			line := m.rel(s.Path) + "  " + s.Reason
+			line := m.rel(s.Path) + "  " + output.SafeText(s.Reason)
 			if s.Detail != "" {
-				line += ": " + s.Detail
+				line += ": " + output.SafeText(s.Detail)
 			}
 			out = append(out, "  "+th.muted.Render(m.trunc(line, w-2)))
 		}
@@ -386,9 +386,9 @@ func (m Model) doneBody() string {
 	}
 	out = append(out, "")
 	if r.ReceiptID != "" {
-		out = append(out, th.label.Render(fmt.Sprintf("%-*s", labelW, "Receipt"))+th.text.Render(r.ReceiptID))
+		out = append(out, th.label.Render(fmt.Sprintf("%-*s", labelW, "Receipt"))+th.text.Render(output.SafeText(r.ReceiptID)))
 		if len(r.Moved) > 0 || len(r.Displaced) > 0 {
-			out = append(out, th.label.Render(fmt.Sprintf("%-*s", labelW, "Undo"))+th.text.Render("kipple restore "+r.ReceiptID+" --apply"))
+			out = append(out, th.label.Render(fmt.Sprintf("%-*s", labelW, "Undo"))+th.text.Render("kipple restore "+output.SafeText(r.ReceiptID)+" --apply"))
 		}
 	}
 	if how := moverNote(r); how != "" {
@@ -401,7 +401,7 @@ func (m Model) doneBody() string {
 		}
 	}
 	for _, warn := range r.Warnings {
-		out = append(out, wrapLines(th.hintWarn, "Warning: "+warn, w)...)
+		out = append(out, wrapLines(th.hintWarn, "Warning: "+output.SafeText(warn), w)...)
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(out, "\n"))
 }
@@ -438,10 +438,10 @@ func (m Model) errorBody() string {
 	if errors.Is(err, apply.ErrTrashAccess) {
 		out = append(out, wrapLines(th.text, "kipple cannot use your Trash folder: macOS lets only apps with Full Disk Access open it, so nothing was moved. Grant Full Disk Access to your terminal (System Settings > Privacy & Security > Full Disk Access) and try again.", w)...)
 	} else if err != nil {
-		out = append(out, wrapLines(th.text, err.Error(), w)...)
+		out = append(out, wrapLines(th.text, output.SafeText(err.Error()), w)...)
 	}
 	if r := m.outcome.Result; r.ReceiptID != "" {
-		out = append(out, "", th.label.Render(fmt.Sprintf("%-*s", labelW, "Receipt"))+th.text.Render(r.ReceiptID))
+		out = append(out, "", th.label.Render(fmt.Sprintf("%-*s", labelW, "Receipt"))+th.text.Render(output.SafeText(r.ReceiptID)))
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(out, "\n"))
 }
@@ -451,13 +451,14 @@ func (m Model) center(s string) string {
 	return lipgloss.Place(m.width, m.bodyHeight(), lipgloss.Center, lipgloss.Center, s)
 }
 
-// rel shows p relative to the home folder as ~/...
+// rel shows p relative to the home folder as ~/..., with every character
+// that could act on the terminal escaped (output.SafeText).
 func (m Model) rel(p string) string {
 	home := m.cfg.Scan.Env.Home
 	if home != "" && strings.HasPrefix(p, home+"/") {
-		return "~/" + strings.TrimPrefix(p, home+"/")
+		p = "~/" + strings.TrimPrefix(p, home+"/")
 	}
-	return p
+	return output.SafeText(p)
 }
 
 func (m Model) trunc(s string, w int) string {

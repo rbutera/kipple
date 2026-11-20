@@ -208,7 +208,7 @@ consent.`,
 				}
 			}
 			if a.rt.isTTY(a.stderr) {
-				opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", msg) }
+				opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", output.SafeText(msg)) }
 			}
 			res, err := apply.Run(a.ctx, opts)
 			if opts.Progress != nil {
@@ -226,7 +226,7 @@ consent.`,
 				return ae
 			}
 			for _, w := range res.Warnings {
-				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", w)
+				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", output.SafeText(w))
 			}
 			a.exit = apply.ExitCode(res)
 			return a.emit(res, func(w io.Writer) error { return output.CleanResult(w, res) })
@@ -320,11 +320,11 @@ func (a *app) historyCommand() *cobra.Command {
 			}
 			for _, err := range errs {
 				doc.Warnings = append(doc.Warnings, err.Error())
-				fmt.Fprintf(a.stderr, "kipple: warning: %v\n", err)
+				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", output.SafeText(err.Error()))
 			}
 			return a.emit(doc, func(w io.Writer) error {
 				if h.fromEnv {
-					fmt.Fprintf(w, "Home: %s\n\n", h.home)
+					fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
 				}
 				return output.History(w, doc)
 			})
@@ -369,6 +369,7 @@ accepted.`,
 			if err != nil {
 				return err
 			}
+			asked := append([]string(nil), ids...)
 			ids = append(ids, extra...)
 			opts := apply.RestoreOptions{
 				Env:     policyEnv(h),
@@ -385,7 +386,14 @@ accepted.`,
 				return a.applyError(err)
 			}
 			a.exit = apply.ExitCode(res)
-			return a.emit(res, func(w io.Writer) error { return output.RestoreResult(w, res) })
+			// The dry run's hint repeats this request, so restoring one item
+			// never suggests a command that restores the whole receipt.
+			again := "kipple restore " + args[0]
+			if len(asked) > 0 {
+				again += " --only " + strings.Join(asked, ",")
+			}
+			again += " --apply"
+			return a.emit(res, func(w io.Writer) error { return output.RestoreResultWith(w, res, again) })
 		},
 	}
 	c.Flags().BoolVar(&doApply, "apply", false, "move the items back (without it, restore is a dry run)")

@@ -69,7 +69,7 @@ and kipple clean --apply --json. NO_COLOR turns colours off.`,
 			// The full-screen view is gone once the TUI exits, so the result
 			// is printed again for the scrollback.
 			for _, w := range out.Result.Warnings {
-				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", w)
+				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", output.SafeText(w))
 			}
 			a.exit = apply.ExitCode(out.Result)
 			return output.CleanResult(a.stdout, out.Result)

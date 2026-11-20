@@ -57,7 +57,7 @@ func NextStep(level string) string {
 // moved, and the next step. titles maps rule IDs to titles (may be nil).
 func Plan(w io.Writer, p plan.Plan, titles map[string]string) error {
 	b := &strings.Builder{}
-	fmt.Fprintf(b, "Home:  %s\nLevel: %s\n", p.Home, p.Level)
+	fmt.Fprintf(b, "Home:  %s\nLevel: %s\n", SafeText(p.Home), SafeText(p.Level))
 	byRule := map[string][]plan.Item{}
 	for _, it := range p.Items {
 		byRule[it.Rule] = append(byRule[it.Rule], it)
@@ -79,15 +79,15 @@ func Plan(w io.Writer, p plan.Plan, titles map[string]string) error {
 		if title == "" {
 			title = r.ID
 		}
-		fmt.Fprintf(b, "\n%s (%s, %s)  %s in %s\n", title, r.ID, r.Tier, Bytes(r.Bytes), count(len(items), "item"))
+		fmt.Fprintf(b, "\n%s (%s, %s)  %s in %s\n", SafeText(title), SafeText(r.ID), SafeText(r.Tier), Bytes(r.Bytes), count(len(items), "item"))
 		for _, it := range items {
 			mark := "[ ]"
 			if it.Selected {
 				mark = "[x]"
 			}
-			fmt.Fprintf(b, "  %s %10s  %s  %s", mark, Bytes(it.AllocatedBytes), it.ID, it.Path)
+			fmt.Fprintf(b, "  %s %10s  %s  %s", mark, Bytes(it.AllocatedBytes), SafeText(it.ID), SafeText(it.Path))
 			if len(it.Reasons) > 0 {
-				fmt.Fprintf(b, "  (%s)", strings.Join(it.Reasons, ", "))
+				fmt.Fprintf(b, "  (%s)", strings.Join(safeList(it.Reasons), ", "))
 			}
 			if it.ScanStatus == plan.ScanPartial {
 				b.WriteString("  [partial]")
@@ -97,17 +97,17 @@ func Plan(w io.Writer, p plan.Plan, titles map[string]string) error {
 			}
 			b.WriteString("\n")
 			if it.OwnerCommand != "" {
-				fmt.Fprintf(b, "      to clean, use: %s\n", it.OwnerCommand)
+				fmt.Fprintf(b, "      to clean, use: %s\n", SafeText(it.OwnerCommand))
 			}
 			for _, pp := range it.ProtectedPaths {
-				fmt.Fprintf(b, "      protected inside: %s\n", pp)
+				fmt.Fprintf(b, "      protected inside: %s\n", SafeText(pp))
 			}
 		}
 	}
 	if len(errored) > 0 || len(p.Warnings) > 0 {
 		b.WriteString("\nWarnings:\n")
 		for _, w := range p.Warnings {
-			fmt.Fprintf(b, "  %s\n", w)
+			fmt.Fprintf(b, "  %s\n", SafeText(w))
 		}
 	}
 	if len(absent) > 0 {
@@ -117,8 +117,7 @@ func Plan(w io.Writer, p plan.Plan, titles map[string]string) error {
 	fmt.Fprintf(b, "\nListed %s, %s. Selected %s, %s (%s reclaimable).\n",
 		count(t.ListedCount, "item"), Bytes(t.ListedBytes), count(t.SelectedCount, "item"), Bytes(t.SelectedBytes), Bytes(t.ReclaimableBytes))
 	fmt.Fprintf(b, "Selected total %s. Nothing was moved (dry run). Next step: %s\n", Bytes(t.SelectedBytes), NextStep(p.Level))
-	_, err := io.WriteString(w, b.String())
-	return err
+	return writeSafe(w, b)
 }
 
 // Rules writes the catalogue grouped by tier with explanations and roots.
@@ -137,16 +136,15 @@ func Rules(w io.Writer, rs []rules.Rule) error {
 			writeRuleBody(b, r, "    ")
 		}
 	}
-	_, err := io.WriteString(w, b.String())
-	return err
+	return writeSafe(w, b)
 }
 
 func writeRuleBody(b *strings.Builder, r rules.Rule, indent string) {
 	fmt.Fprintf(b, "%sWhat:       %s\n", indent, r.What)
 	fmt.Fprintf(b, "%sIf removed: %s\n", indent, r.IfRemoved)
-	fmt.Fprintf(b, "%sRoots:      %s\n", indent, strings.Join(prefixed(r.Roots), ", "))
+	fmt.Fprintf(b, "%sRoots:      %s\n", indent, strings.Join(safeList(prefixed(r.Roots)), ", "))
 	if len(r.Exclude) > 0 {
-		fmt.Fprintf(b, "%sExcludes:   %s\n", indent, strings.Join(r.Exclude, ", "))
+		fmt.Fprintf(b, "%sExcludes:   %s\n", indent, strings.Join(safeList(r.Exclude), ", "))
 	}
 	if c := conditions(r); c != "" {
 		fmt.Fprintf(b, "%sConditions: %s\n", indent, c)
@@ -197,30 +195,29 @@ func ExplainRule(w io.Writer, r rules.Rule) error {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "%s  %s\nTier:       %s (%s)\n", r.ID, r.Title, r.Tier, tierBlurb[r.Tier])
 	writeRuleBody(b, r, "")
-	_, err := io.WriteString(w, b.String())
-	return err
+	return writeSafe(w, b)
 }
 
 // ExplainItem writes an item's path, sizes, selection and reasons, then its
 // rule.
 func ExplainItem(w io.Writer, it plan.Item, r rules.Rule) error {
 	b := &strings.Builder{}
-	fmt.Fprintf(b, "Item %s\nPath:       %s\n", it.ID, it.Path)
+	fmt.Fprintf(b, "Item %s\nPath:       %s\n", SafeText(it.ID), SafeText(it.Path))
 	fmt.Fprintf(b, "Size:       %s on disk, %s logical, %s reclaimable, %d files\n",
 		Bytes(it.AllocatedBytes), Bytes(it.SizeBytes), Bytes(it.ReclaimableBytes), it.FileCount)
-	fmt.Fprintf(b, "Scan:       %s\n", it.ScanStatus)
+	fmt.Fprintf(b, "Scan:       %s\n", SafeText(it.ScanStatus))
 	sel := "no"
 	if it.Selected {
 		sel = "yes"
 	}
 	fmt.Fprintf(b, "Selected:   %s\n", sel)
 	if len(it.Reasons) > 0 {
-		fmt.Fprintf(b, "Reasons:    %s\n", strings.Join(it.Reasons, ", "))
+		fmt.Fprintf(b, "Reasons:    %s\n", strings.Join(safeList(it.Reasons), ", "))
 	}
 	if it.Git != nil {
-		fmt.Fprintf(b, "Git:        %s", it.Git.State)
+		fmt.Fprintf(b, "Git:        %s", SafeText(it.Git.State))
 		if it.Git.Detail != "" {
-			fmt.Fprintf(b, " (%s)", it.Git.Detail)
+			fmt.Fprintf(b, " (%s)", SafeText(it.Git.Detail))
 		}
 		if it.AtRisk {
 			b.WriteString(", at risk")
@@ -228,13 +225,13 @@ func ExplainItem(w io.Writer, it plan.Item, r rules.Rule) error {
 		b.WriteString("\n")
 	}
 	for _, p := range it.ProtectedPaths {
-		fmt.Fprintf(b, "Protected:  %s\n", p)
+		fmt.Fprintf(b, "Protected:  %s\n", SafeText(p))
 	}
 	for _, wn := range it.Warnings {
-		fmt.Fprintf(b, "Warning:    %s\n", wn)
+		fmt.Fprintf(b, "Warning:    %s\n", SafeText(wn))
 	}
 	b.WriteString("\n")
-	if _, err := io.WriteString(w, b.String()); err != nil {
+	if err := writeSafe(w, b); err != nil {
 		return err
 	}
 	return ExplainRule(w, r)

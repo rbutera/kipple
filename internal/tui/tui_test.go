@@ -512,3 +512,59 @@ func TestQuit(t *testing.T) {
 		t.Fatal("quit applied")
 	}
 }
+
+// evilName retitles the terminal, clears the screen, recolours text, starts
+// a new row and reverses what follows when printed raw.
+const evilName = "evil\x1b]0;PWNED\x07\x1b[2J\x1b[31mred\x1b[0m\nrow\u202etxt"
+
+// Must-fix 1 (wave 4 review): a fixture folder whose name carries terminal
+// escapes and a newline is shown escaped in every TUI view, and the layout
+// keeps its rows and widths.
+func TestTerminalEscapesInTUI(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {140, 40}} {
+		f := newFx(t, true)
+		evil := testutil.Abs(f.home, "Library/Caches/"+evilName)
+		if err := os.MkdirAll(evil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(evil+"/blob", make([]byte, 4096), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{evil + "/blob", evil} {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m := start(t, f, size[0], size[1])
+		check := func(name, view string) {
+			t.Helper()
+			for i, r := range view {
+				if r != '\n' && output.Unsafe(r) {
+					t.Fatalf("%v %s: unsafe character %U at byte %d:\n%q", size, name, r, i, view)
+				}
+			}
+			lines := strings.Split(view, "\n")
+			if len(lines) != size[1] {
+				t.Errorf("%v %s: %d rows, want %d", size, name, len(lines), size[1])
+			}
+			for _, l := range lines {
+				if lipgloss.Width(l) > size[0] {
+					t.Errorf("%v %s: row wider than the terminal: %q", size, name, l)
+				}
+			}
+		}
+		m = highlight(t, m, "Library/Caches/"+evilName)
+		view := m.View()
+		check("review", view)
+		if !strings.Contains(view, `\x1b]0;PWNED\x07`) && !strings.Contains(view, `PWNED`) {
+			t.Fatalf("%v: the name is not shown:\n%s", size, view)
+		}
+		m = press(m, "a")
+		check("confirm", m.View())
+		m = press(m, "y")
+		if m.state != stateDone {
+			t.Fatalf("state %d: %v", m.state, m.outcome.Err)
+		}
+		check("done", m.View())
+	}
+}

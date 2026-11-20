@@ -31,6 +31,13 @@ decides that a path may be moved. It checks, in order:
 Symbolic links are never followed, anywhere. A link is refused, not
 resolved.
 
+File names are data, and some are hostile: a folder can be named with
+terminal escape sequences that retitle the window or clear the screen, a
+newline that fakes an extra row, or a right-to-left override that reorders
+what follows. Everything kipple prints for people (the text output of every
+command, and the TUI) shows such characters as visible escapes such as
+`\x1b`, `\n` or `\u202e`; JSON output carries the exact name.
+
 ## Dry run first, Trash by default
 
 Every command that can change your files is a dry run unless you add

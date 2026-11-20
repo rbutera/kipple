@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/rbutera/kipple/internal/apply"
+	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/scan"
@@ -451,7 +452,7 @@ func (m *Model) toggle() {
 		}
 		msg := "Info item: kipple never moves it."
 		if cmd != "" {
-			msg += " Use " + cmd
+			msg += " Use " + output.SafeText(cmd)
 		}
 		m.setHint(msg, true)
 		return

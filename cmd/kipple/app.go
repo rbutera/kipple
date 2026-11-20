@@ -235,7 +235,7 @@ func (v anyValue) Type() string   { return v.typ }
 
 // report prints err to stderr and, with --json, the envelope to stdout.
 func (a *app) report(ce *cliError) int {
-	fmt.Fprintf(a.stderr, "kipple: %s\n", ce.msg)
+	fmt.Fprintf(a.stderr, "kipple: %s\n", output.SafeText(ce.msg))
 	if a.json {
 		var env errorEnvelope
 		env.Error.Code, env.Error.Message = ce.code, ce.msg
@@ -604,7 +604,7 @@ func (a *app) runScanAt(h homeEnv, level string) (plan.Plan, error) {
 	}
 	opts := scanOptions(h, level)
 	if a.rt.isTTY(a.stderr) {
-		opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", msg) }
+		opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", output.SafeText(msg)) }
 	}
 	p, err := scan.Run(a.ctx, opts)
 	if opts.Progress != nil {
@@ -668,7 +668,7 @@ func (a *app) rulesCommand() *cobra.Command {
 			doc := plan.RulesDocument{SchemaVersion: plan.SchemaVersion, Home: h.home, Rules: rs}
 			return a.emit(doc, func(w io.Writer) error {
 				if h.fromEnv {
-					fmt.Fprintf(w, "Home: %s\n\n", h.home)
+					fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
 				}
 				return output.Rules(w, rs)
 			})
@@ -703,7 +703,7 @@ func (a *app) explainCommand() *cobra.Command {
 					doc := explainDocument{SchemaVersion: plan.SchemaVersion, Home: h.home, Rule: r}
 					return a.emit(doc, func(w io.Writer) error {
 						if h.fromEnv {
-							fmt.Fprintf(w, "Home: %s\n\n", h.home)
+							fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
 						}
 						return output.ExplainRule(w, r)
 					})
@@ -726,7 +726,7 @@ func (a *app) explainCommand() *cobra.Command {
 						doc := explainDocument{SchemaVersion: plan.SchemaVersion, Home: h.home, Rule: r, Item: &it}
 						return a.emit(doc, func(w io.Writer) error {
 							if h.fromEnv {
-								fmt.Fprintf(w, "Home: %s\n\n", h.home)
+								fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
 							}
 							return output.ExplainItem(w, it, r)
 						})
@@ -796,7 +796,7 @@ func (a *app) versionCommand() *cobra.Command {
 				}
 				_, err := fmt.Fprintf(w, "kipple %s (commit %s%s, schema_version %d)\n", doc.Version, doc.Commit, built, doc.SchemaVersion)
 				if err == nil && doc.Home != "" {
-					_, err = fmt.Fprintf(w, "home %s\n", doc.Home)
+					_, err = fmt.Fprintf(w, "home %s\n", output.SafeText(doc.Home))
 				}
 				return err
 			})

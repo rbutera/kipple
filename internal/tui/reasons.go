@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 )
 
@@ -37,9 +38,9 @@ func describeReason(r string) string {
 		return s
 	}
 	if strings.HasPrefix(r, plan.RefusedPrefix) {
-		return "refused by the safety policy (" + strings.TrimPrefix(r, plan.RefusedPrefix) + ")"
+		return "refused by the safety policy (" + output.SafeText(strings.TrimPrefix(r, plan.RefusedPrefix)) + ")"
 	}
-	return r
+	return output.SafeText(r)
 }
 
 // blockers returns the reasons other than tier reasons, in words.
