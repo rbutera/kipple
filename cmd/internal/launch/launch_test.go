@@ -117,3 +117,21 @@ func TestOptions(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestInsideRealHome(t *testing.T) {
+	testutil.GuardRealHome(t)
+	real := fakeReal(t)
+	rt := runtimeFor(t, real)
+	for p, want := range map[string]bool{
+		real: true, filepath.Join(real, "Documents"): true, filepath.Dir(real): true,
+		filepath.Join(filepath.Dir(filepath.Dir(real)), "elsewhere"): false,
+	} {
+		if got := InsideRealHome(rt, p); got != want {
+			t.Errorf("%s: %v", p, got)
+		}
+	}
+	rt.RealHomes = func() ([]string, error) { return nil, errors.New("unknown") }
+	if !InsideRealHome(rt, "/tmp/x") {
+		t.Error("an unknown real home must fail closed")
+	}
+}

@@ -124,3 +124,50 @@ func TestRefusals(t *testing.T) {
 		}
 	})
 }
+
+// With KIPPLE_HOME set, Fyne's files go to the run's state folder (or a
+// temp folder), never the real home; a real user's run leaves Fyne alone.
+func TestFyneHome(t *testing.T) {
+	t.Run("a fixture run uses its state folder", func(t *testing.T) {
+		home := testutil.NewHome(t, testutil.Spec{})
+		o, _ := options(t)
+		dir, err := FyneHome(o)
+		if err != nil || dir != filepath.Join(testutil.StateDir(home), "fyne-home") {
+			t.Fatalf("%q %v", dir, err)
+		}
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			t.Fatal("not created")
+		}
+	})
+	t.Run("a state folder inside the real home is not used", func(t *testing.T) {
+		testutil.NewHome(t, testutil.Spec{})
+		o, real := options(t)
+		t.Setenv("KIPPLE_STATE_DIR", filepath.Join(real, "state"))
+		dir, err := FyneHome(o)
+		if err != nil || dir == "" || launch.InsideRealHome(o.Runtime, dir) {
+			t.Fatalf("%q %v", dir, err)
+		}
+		_ = os.RemoveAll(dir)
+		if _, err := os.Stat(filepath.Join(real, "state", "fyne-home")); err == nil {
+			t.Fatal("created inside the real home")
+		}
+	})
+	t.Run("a refused KIPPLE_HOME gets a temp folder", func(t *testing.T) {
+		testutil.NewHome(t, testutil.Spec{})
+		o, real := options(t)
+		t.Setenv("KIPPLE_HOME", real)
+		dir, err := FyneHome(o)
+		if err != nil || dir == "" || launch.InsideRealHome(o.Runtime, dir) {
+			t.Fatalf("%q %v", dir, err)
+		}
+		_ = os.RemoveAll(dir)
+	})
+	t.Run("a real user's run leaves Fyne alone", func(t *testing.T) {
+		testutil.GuardRealHome(t)
+		o, _ := options(t)
+		t.Setenv("KIPPLE_HOME", "")
+		if dir, err := FyneHome(o); dir != "" || err != nil {
+			t.Fatalf("%q %v", dir, err)
+		}
+	})
+}

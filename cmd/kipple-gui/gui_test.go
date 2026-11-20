@@ -404,8 +404,8 @@ func TestOpenChecksPaths(t *testing.T) {
 // The real-home watch notices a file that changes or appears.
 func TestRealHomeWatch(t *testing.T) {
 	testutil.GuardRealHome(t)
-	if os.Getenv("HOME") == "" || len(realHomeFiles()) == 0 {
-		t.Fatal("no HOME during the GUI tests")
+	if len(realHomeFiles()) == 0 {
+		t.Fatal("the real home is unknown during the GUI tests")
 	}
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")

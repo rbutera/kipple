@@ -262,6 +262,22 @@ would give it (for example `git_dirty`, `too_recent`, `owner_running`, or
 - Run git hooks or fsmonitor, write to a repository, or use the network.
 - Run as root or use `sudo`.
 
+## What the app writes
+
+The optional Mac app (`kipple-gui`) moves items and writes receipts exactly
+as `kipple clean --apply` does. Fyne, the toolkit it is built on, also keeps
+two things of its own in your home folder, and they are the only files the
+app writes outside the Trash and the receipts folder:
+
+- `~/Library/Preferences/fyne/com.rbutera.kipple/preferences.json`, Fyne's
+  preferences for the app (kipple stores nothing in it);
+- `~/Library/Caches/font_index_v6.cache`, an index of the system fonts that
+  Fyne's text renderer builds so it can find them quickly.
+
+When `KIPPLE_HOME` is set (a test folder or an agent's sandbox), the app
+puts both under `<state folder>/fyne-home` instead, so a test run writes
+nothing in the real home folder.
+
 ## Codex worktrees
 
 Every git worktree has a `.git` file at its top that points at the main

@@ -7,7 +7,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -26,11 +28,29 @@ var (
 )
 
 func main() {
+	o := guilaunch.Options{Runtime: launch.System(), Geteuid: os.Geteuid, Version: version, Procs: procs.New()}
+	m := guilaunch.Model(o)
+	// With KIPPLE_HOME set, Fyne's preferences and font cache go to the
+	// run's state folder, never the real home. This must happen before
+	// Fyne starts; home resolution above has already read the real HOME.
+	dir, err := guilaunch.FyneHome(o)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "kipple-gui:", err)
+		os.Exit(1)
+	}
+	if dir != "" {
+		for k, v := range map[string]string{
+			"HOME": dir, "XDG_CACHE_HOME": filepath.Join(dir, ".cache"),
+			"XDG_CONFIG_HOME": filepath.Join(dir, ".config"), "XDG_DATA_HOME": filepath.Join(dir, ".local", "share"),
+		} {
+			if err := os.Setenv(k, v); err != nil {
+				fmt.Fprintln(os.Stderr, "kipple-gui:", err)
+				os.Exit(1)
+			}
+		}
+	}
 	a := app.NewWithID("com.rbutera.kipple")
 	a.SetIcon(fyne.NewStaticResource("kipple-icon.png", brand.Icon()))
-	m := guilaunch.Model(guilaunch.Options{
-		Runtime: launch.System(), Geteuid: os.Geteuid, Version: version, Procs: procs.New(),
-	})
 	u := newWindow(a, m, loadSystemFonts(nil))
 	u.win.ShowAndRun()
 }

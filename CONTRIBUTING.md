@@ -24,6 +24,14 @@ delete anything in a real home folder, yours included.**
   fixture instead: `scripts/agent-flow-check.sh` shows how.
 - Looking is fine. `ls` and `stat` on a real cache folder to see what it
   holds are read-only.
+- The GUI (`-tags gui`) runs on Fyne, which writes its own files under
+  `$HOME`: a font index in `~/Library/Caches/font_index_v6.cache` and
+  preferences in `~/Library/Preferences/fyne/com.rbutera.kipple`. The gui
+  tests' `TestMain`, `make test-gui` and `scripts/gui-screenshots.sh` run
+  with a temp `HOME` and fail if those real files change. `kipple-gui` itself
+  sends them to `<KIPPLE_STATE_DIR>/fyne-home` whenever `KIPPLE_HOME` is set.
+  For any other manual GUI check, set `HOME` to a temp folder as well:
+  `HOME=$(mktemp -d) KIPPLE_HOME=<fixture> KIPPLE_STATE_DIR=<state> ./kipple-gui`.
 
 ## Building and checking
 
@@ -40,7 +48,8 @@ make release-snapshot  # the release archives into dist/, unsigned (needs gorele
 `GOTOOLCHAIN=local` with `go get` and `go mod tidy` so the module stays on
 `go 1.23`. New dependencies need a maintainer's agreement first: the
 approved set is cobra, Bubble Tea, bubbles, lipgloss, BurntSushi/toml,
-invopop/jsonschema, santhosh-tekuri/jsonschema (tests) and golang.org/x/sys.
+invopop/jsonschema, santhosh-tekuri/jsonschema (tests), golang.org/x/sys and
+Fyne (only with the `gui` tag).
 
 Tests are table-driven where it helps, and a test that covers a spec
 scenario (under `openspec/changes/*/specs/`) is named after it. Golden files

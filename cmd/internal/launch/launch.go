@@ -422,3 +422,20 @@ type NoGit struct{}
 func (NoGit) Inspect(context.Context, string) gitstate.Result {
 	return gitstate.Result{State: gitstate.StateUnavailable, Detail: "Apple's Command Line Tools are not installed, so kipple did not run git"}
 }
+
+// InsideRealHome reports whether p is, is inside, or contains a real home
+// location, comparing the given and symlink-resolved spellings
+// case-insensitively. It fails closed: when the real home cannot be
+// determined, every path counts as inside it.
+func InsideRealHome(rt Runtime, p string) bool {
+	reals, err := rt.RealHomes()
+	if err != nil || len(reals) == 0 {
+		return true
+	}
+	for _, r := range reals {
+		if within(p, r) || within(r, p) {
+			return true
+		}
+	}
+	return false
+}

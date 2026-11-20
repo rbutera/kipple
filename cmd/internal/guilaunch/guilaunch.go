@@ -7,6 +7,8 @@ package guilaunch
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 
 	"github.com/rbutera/kipple/cmd/internal/launch"
 	"github.com/rbutera/kipple/internal/guimodel"
@@ -72,4 +74,42 @@ func problemKind(o Options, err error) guimodel.ProblemKind {
 		return guimodel.ProblemHomeRefused
 	}
 	return guimodel.ProblemHomeUnreadable
+}
+
+// FyneHome is the folder the GUI hands Fyne as HOME before it starts, for
+// the files Fyne writes outside the app (its preferences under
+// Library/Preferences/fyne and go-text's font index under Library/Caches).
+// For a real user it is "": Fyne uses the real home, as documented in
+// docs/safety.md. When KIPPLE_HOME is set (a test or an agent's sandbox),
+// nothing may be written in the real home, so it is <state dir>/fyne-home,
+// or a new temp folder when that would be in the real home or the home was
+// refused. The folder is created.
+func FyneHome(o Options) (string, error) {
+	if o.Runtime.Getenv == nil || o.Runtime.Getenv("KIPPLE_HOME") == "" {
+		return "", nil
+	}
+	if h, err := launch.Resolve(o.Runtime); err == nil {
+		if d, err := launch.StateDir(o.Runtime, h); err == nil {
+			dir := filepath.Join(d, "fyne-home")
+			if !launch.InsideRealHome(o.Runtime, dir) {
+				return dir, macHome(dir)
+			}
+		}
+	}
+	dir, err := os.MkdirTemp("", "kipple-gui-home-")
+	if err != nil {
+		return "", err
+	}
+	return dir, macHome(dir)
+}
+
+// macHome creates dir with the Library folders a Mac home has; Fyne
+// creates only the last level of its cache folder.
+func macHome(dir string) error {
+	for _, sub := range []string{"Library/Caches", "Library/Preferences"} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(sub)), 0o700); err != nil {
+			return err
+		}
+	}
+	return nil
 }
