@@ -7,7 +7,7 @@ History lists past receipts, and restore moves items from the Trash back to thei
 ## ADDED Requirements
 
 ### Requirement: History listing
-`kipple history` SHALL list receipts newest first with time, items moved, bytes, and skips; `--json` SHALL emit the receipts array.
+`kipple history` SHALL list receipts newest first with time, items moved, bytes, and skips; `--json` SHALL emit one object (schema `kipple schema history`) whose `receipts` field is the receipts array, newest first, alongside `schema_version`, `home`, `receipts_dir` and `warnings`.
 
 #### Scenario: Empty history
 - **WHEN** no receipts exist

@@ -73,14 +73,21 @@ permission, and for each item, immediately before moving it:
   file, an SSH key or a `.git` folder (`contains_protected`).
 - **Conditions are evaluated again:** minimum age (`too_recent`), git state
   (`git_dirty`, `git_unpushed`, ...), and whether the project was touched in
-  the last 30 days (`project_active`). git runs read-only: the repository's
-  hooks and fsmonitor are disabled, untracked files always count, it never
-  rewrites the index, and it gives up after 5 seconds.
+  the last 30 days (`project_active`). git runs read-only and never runs
+  repository code: kipple uses plumbing commands (`ls-files`, `diff-index
+  --cached`, `rev-list`) that never produce a diff, disables the
+  repository's hooks and fsmonitor, sets every filter driver the repository
+  configures to "no filter", reads no global or system git config, never
+  rewrites the index, and gives up after 5 seconds. git is found only in
+  `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/opt/homebrew/bin` and
+  `/usr/local/bin`, never through your `PATH`.
 - **The owner must not be running:** the app that owns a cache (checked with
-  `lsappinfo` and `pgrep`) is `owner_running`, and an agent (`claude`,
-  `codex`, `cursor-agent`) whose working directory is inside a project
-  (checked with `lsof`) is `tool_running`. If kipple cannot tell, it skips
-  `review` and `manual` items and only warns for `safe` ones.
+  `/usr/bin/lsappinfo` and `/usr/bin/pgrep`) is `owner_running`, and an
+  agent (`claude`, `codex`, `cursor-agent`) whose working directory is
+  inside a project (checked with `/usr/sbin/lsof`) is `tool_running`. These
+  tools are run by absolute path, never found through `PATH`. If kipple
+  cannot tell, it skips `review` and `manual` items and only warns for
+  `safe` ones. These are the last checks before the move.
 - **The parent folder is confirmed in place:** the operating system is asked
   where the open parent folder is now (`F_GETPATH`); if it was renamed or
   replaced the item is skipped (`parent_changed`).
@@ -93,6 +100,41 @@ permission, and for each item, immediately before moving it:
 Anything that fails a check is skipped with its reason and the run exits 4
 (partial). The rest of the plan proceeds.
 
+A plan file never raises the level: items it selects at `review` are
+skipped with `tier_review` unless this run says `--level review`. Without
+`--apply`, `kipple clean --plan` runs every check above and reports what
+would move and what would be skipped; it moves nothing and writes no
+receipt. The confirmation on a terminal shows that same total.
+
+`--permanent` deletes from the open item folder down, never following a
+link and stopping at another disk. It checks every entry it is about to
+delete against the protected names (`.env`, keys, a `.git` folder and the
+rest): first in a pass that deletes nothing, then again as it deletes. On
+the first protected entry it stops; the item is skipped with
+`contains_protected`, and if anything was already deleted the skip is
+marked `partial` with how many entries and bytes were removed. The same
+`partial` marking applies to a permanent delete that fails partway.
+
+## The Trash and Full Disk Access
+
+macOS protects `~/.Trash`: only apps with Full Disk Access may open it, and
+a terminal does not have that by default. kipple first tries to open the
+Trash folder and move items into it by rename, as described above. When
+macOS refuses, kipple falls back to the system's own Trash call
+(NSFileManager `trashItemAtURL`), and still acts on the object, not the
+name: it builds a file reference to the very item that passed every check,
+confirms its device and inode immediately before the call, and afterwards
+confirms the item is gone from its folder and is the object now in the
+Trash. The receipt records which way each item was moved (`mover`:
+`rename` or `nsfilemanager`).
+
+If both are refused, `kipple clean --apply` and `kipple restore --apply`
+stop with error code `trash_access` and move nothing. Grant Full Disk Access
+to your terminal (System Settings > Privacy & Security > Full Disk Access),
+or run kipple from a terminal that has it. When `KIPPLE_HOME` points at a
+test folder there is no fallback, since it would put that folder's items in
+your real Trash.
+
 Go's module cache is read-only, and macOS will not move a read-only folder
 to another folder. For such an item kipple adds write permission to that
 one folder for the length of the rename and then sets it back; nothing
@@ -104,13 +146,17 @@ Every `--apply` run writes a receipt, a JSON file in
 `~/Library/Application Support/kipple/receipts` (or `$KIPPLE_STATE_DIR/receipts`).
 It is written before the first move and saved again after every item, so
 even an interrupted run leaves a record. It lists every moved item's
-original path, Trash path, size, device and inode, and every skipped item
-with its reason. `kipple history` lists receipts, newest first.
+original path, Trash path, size on disk, device, inode, its own size and
+modification time, and how it was moved, and every skipped item with its
+reason. `kipple history` lists receipts, newest first.
 
 `kipple restore <receipt>` puts items back. It is a dry run unless
 `--apply`. Receipts are treated as untrusted too: an item is put back only
 if its Trash entry is directly inside the Trash and is the very object
-kipple moved there (`trash_item_missing`, `trash_item_changed` otherwise),
+kipple moved there: same device, inode, size and modification time as the
+receipt, read through the open Trash folder (`trash_item_missing`,
+`trash_item_mismatch` otherwise). Without Full Disk Access the entry is
+reached by its path, with the same checks before and after the move.
 its original folder still exists, the original path is free
 (`destination_exists` otherwise, in any spelling), and the original path
 passes the same policy checks for the item's rule. The move back refuses to
@@ -134,7 +180,7 @@ replace anything.
 | `move_failed` | The move failed for another reason; see the detail. |
 | `destination_exists` | Restore: something is already at the original path. |
 | `trash_item_missing` | Restore: nothing is at the recorded Trash path. |
-| `trash_item_changed` | Restore: the Trash entry is not the item kipple moved there. |
+| `trash_item_mismatch` | Restore: the Trash entry is not the item kipple moved there (device, inode, size or modification time differ from the receipt). |
 | `not_in_trash` | Restore: the receipt's Trash path is not directly inside the Trash. |
 | `already_restored` | Restore: the receipt says the item was already put back. |
 | `deleted_permanently` | Restore: the item was deleted with `--permanent`. |
@@ -170,11 +216,15 @@ can be moved; it is also `manual`, so it moves only when you name it. A
 
 ## Known limits
 
-- The Trash is `~/.Trash`, reached by a rename. Finder's "Put Back" does not
-  know about these items; use `kipple restore`, which does.
-- git status can still run a repository's own content filters for files
-  whose timestamps look modified. kipple disables hooks and fsmonitor but
-  cannot disable every filter a repository configures.
+- Items moved by rename into `~/.Trash` are unknown to Finder's "Put Back";
+  use `kipple restore`, which knows them.
+- A receipt is a file you own. Someone who can write it and can read a
+  Trash entry's identity could forge a receipt that names that entry; it
+  would still only be put back at a path the policy approves for the
+  item's rule.
+- git does not see uncommitted changes inside a submodule's own working
+  tree, and files ignored only through your global git excludes count as
+  untracked (which keeps the project).
 - Between the last check and the rename, a program can still write a new
   file inside an item. Such a file goes to the Trash with the item and can
   be restored from there.

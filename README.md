@@ -17,6 +17,12 @@ with a hard-coded denylist (Documents, Desktop, Photos, Mail, keychains, SSH key
 agent memory and more). Symlinks are never followed. kipple stays inside your home
 folder and refuses to run as root.
 
+macOS lets only apps with Full Disk Access open `~/.Trash`. Without it,
+kipple uses the system's own Trash call instead; if that is refused too,
+`clean --apply` stops with error `trash_access`: grant Full Disk Access to your
+terminal in System Settings > Privacy & Security > Full Disk Access. See
+[docs/safety.md](docs/safety.md).
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
