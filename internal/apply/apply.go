@@ -574,7 +574,7 @@ func (a *applier) trashTagged(f *policy.Fresh, it plan.Item, dev, ino uint64, di
 		d := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, TrashPath: de.Dest, Mover: a.moverName, MovedAt: a.now().UTC()}
 		if de.Known {
 			d.Dev, d.Ino, d.Size, d.Mtime = de.Dev, de.Ino, de.Size, de.Mtime
-			if terr := tagPath(de.Dest, tag); terr != nil {
+			if terr := tagDisplaced(de.Dest, de.Dev, de.Ino, tag); terr != nil {
 				a.warn("%s: the displaced object at %s could not be tagged for restore: %v", it.Path, de.Dest, terr)
 			}
 		} else {

@@ -306,3 +306,22 @@ func stillAt(path string, dev, ino uint64) bool {
 	var st unix.Stat_t
 	return unix.Lstat(path, &st) == nil && uint64(st.Dev) == dev && uint64(st.Ino) == ino
 }
+
+// tagDisplaced tags a displaced object through a descriptor: the path is
+// opened without following a symlink or blocking, and the descriptor must
+// be the identity recorded for the object before the tag is written.
+func tagDisplaced(path string, dev, ino uint64, tag []byte) error {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	st, err := fstatOf(fd)
+	if err != nil {
+		return err
+	}
+	if identOf(&st) != (ident{dev, ino}) {
+		return trash.ErrItemChanged
+	}
+	return setTag(fd, tag)
+}

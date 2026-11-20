@@ -41,12 +41,6 @@ func tagMatches(fd int, value []byte) bool {
 	return err == nil && bytes.Equal(buf[:n], value)
 }
 
-// tagPath tags the object at path itself (never following a symlink); used
-// for a displaced Trash entry kipple did not open.
-func tagPath(path string, value []byte) error {
-	return unix.Lsetxattr(path, tagName, value, unix.XATTR_NOFOLLOW)
-}
-
 func withWrite(fd int, fn func() error) error {
 	err := fn()
 	if !errors.Is(err, fs.ErrPermission) {
