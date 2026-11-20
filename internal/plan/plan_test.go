@@ -146,8 +146,12 @@ func TestEverySchemaCompilesAndValidates(t *testing.T) {
 	docs := map[string]any{
 		"plan":    samplePlan(),
 		"rules":   RulesDocument{SchemaVersion: SchemaVersion, Rules: rules.Catalogue()},
-		"receipt": Receipt{SchemaVersion: SchemaVersion, KippleVersion: "x", Home: "/h", Moved: []MovedItem{}, Skipped: []SkippedItem{}},
-		"result":  Result{SchemaVersion: SchemaVersion, Moved: []MovedItem{}, Skipped: []SkippedItem{}, Untouched: []string{}},
+		"receipt": Receipt{SchemaVersion: SchemaVersion, ID: "20261120T093000Z-abc123", KippleVersion: "x", Home: "/h", Level: "safe", Moved: []MovedItem{}, Skipped: []SkippedItem{}},
+		"result": func() Result {
+			r := Result{SchemaVersion: SchemaVersion, Command: "clean", Home: "/h"}
+			r.Normalize()
+			return r
+		}(),
 	}
 	for _, name := range Schemas() {
 		t.Run(name, func(t *testing.T) {
