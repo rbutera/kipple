@@ -258,7 +258,7 @@ func TestRestoreForgedReceiptCopiedIdentity(t *testing.T) {
 	forged.Receipt.Moved = append([]plan.MovedItem(nil), e.Receipt.Moved...)
 	m := &forged.Receipt.Moved[0]
 	m.TrashPath, m.Dev, m.Ino, m.Size = foreign, uint64(st.Dev), st.Ino, st.Size
-	m.Mtime = time.Unix(st.Mtimespec.Unix()).UTC()
+	m.Mtime = fi.ModTime().UTC()
 	res := f.restore(forged, true, m.ID)
 	if len(res.Restored) != 0 || len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipTrashItemMismatch || !exists(foreign) {
 		t.Fatalf("%+v", res)
@@ -305,7 +305,7 @@ func (d displacingTrasher) TrashExpect(int, string, uint64, uint64) (string, err
 		return "", err
 	}
 	st := fi.Sys().(*syscall.Stat_t)
-	return d.dest, &trash.DisplacedError{Dest: d.dest, Dev: uint64(st.Dev), Ino: st.Ino, Size: st.Size, Mtime: time.Unix(st.Mtimespec.Unix()).UTC(), Known: true, Why: "test"}
+	return d.dest, &trash.DisplacedError{Dest: d.dest, Dev: uint64(st.Dev), Ino: st.Ino, Size: st.Size, Mtime: fi.ModTime().UTC(), Known: true, Why: "test"}
 }
 
 // Must-fix 4 and 6: an object displaced into the Trash is recorded in the
