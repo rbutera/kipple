@@ -7,7 +7,16 @@
 package main
 
 import (
+	"os"
+
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+
+	"github.com/rbutera/kipple/assets/brand"
+	"github.com/rbutera/kipple/cmd/internal/guilaunch"
+	"github.com/rbutera/kipple/cmd/internal/launch"
+	"github.com/rbutera/kipple/internal/guimodel"
+	"github.com/rbutera/kipple/internal/procs"
 )
 
 // Set with -ldflags "-X main.version=... -X main.commit=..." (see .goreleaser.yaml).
@@ -18,5 +27,24 @@ var (
 
 func main() {
 	a := app.NewWithID("com.rbutera.kipple")
-	_ = a
+	a.SetIcon(fyne.NewStaticResource("kipple-icon.png", brand.Icon()))
+	m := guilaunch.Model(guilaunch.Options{
+		Runtime: launch.System(), Geteuid: os.Geteuid, Version: version, Procs: procs.New(),
+	})
+	u := newWindow(a, m, loadSystemFonts(nil))
+	u.win.ShowAndRun()
+}
+
+// newWindow builds the window for m.
+func newWindow(a fyne.App, m *guimodel.Model, fonts systemFonts) *ui {
+	th := newTheme(fonts)
+	a.Settings().SetTheme(th)
+	w := a.NewWindow("kipple")
+	u := newUI(a, w, th, m)
+	w.SetMainMenu(u.menus())
+	w.SetCloseIntercept(u.requestQuit)
+	w.Resize(fyne.NewSize(960, 640))
+	a.Settings().AddListener(func(fyne.Settings) { u.update() })
+	u.update()
+	return u
 }
