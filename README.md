@@ -20,7 +20,8 @@ folder and refuses to run as root.
 macOS lets only apps with Full Disk Access open `~/.Trash`. Without it,
 kipple uses the system's own Trash call instead; if that is refused too,
 `clean --apply` stops with error `trash_access`: grant Full Disk Access to your
-terminal in System Settings > Privacy & Security > Full Disk Access. See
+terminal in System Settings > Privacy & Security > Full Disk Access.
+`kipple restore --apply` always needs that access. See
 [docs/safety.md](docs/safety.md).
 
 ## Licence
