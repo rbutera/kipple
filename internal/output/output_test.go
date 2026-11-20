@@ -43,8 +43,9 @@ func fixturePlan(level string) plan.Plan {
 	env.ProtectedPaths = []string{".env"}
 	info := item("ollama.models", "info", ".ollama/models/blobs", 4_200_000_000, false, plan.ReasonTierInfo)
 	info.OwnerCommand = "ollama rm <model>"
-	nm := item("project.node-modules", "review", "dev/app/node_modules", 120_000_000, false, plan.ReasonTierReview, plan.ReasonGitUnchecked)
-	nm.Git = &plan.Git{State: plan.GitUnchecked}
+	nm := item("project.node-modules", "review", "dev/app/node_modules", 120_000_000, false, plan.ReasonTierReview, plan.ReasonGitUnpushed)
+	nm.Git = &plan.Git{State: plan.GitUnpushed}
+	nm.AtRisk = true
 	return plan.Plan{
 		SchemaVersion: 1, GeneratedAt: mt, KippleVersion: "test", Home: home, Level: level,
 		Totals: plan.Totals{ListedCount: 5, ListedBytes: 4_320_120_000 + 12288, SelectedCount: 1, SelectedBytes: 1_500_000, ReclaimableBytes: 1_500_000},

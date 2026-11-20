@@ -509,3 +509,39 @@ func TestHomeIdentityPinned(t *testing.T) {
 		}
 	})
 }
+
+// A git-worktree rule exempts exactly its item's top-level .git regular
+// file; every other rule, and every other .git, stays protected.
+func TestGuardWorktreePointer(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".codex/worktrees/w"}}})
+	s, err := NewSession(Env{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	item := home + "/.codex/worktrees/w"
+	wt := StaticRule{ID: "wt", Roots: []string{".codex/worktrees"}, Kind: MatchChildren, GitWorktree: true}
+	plain := StaticRule{ID: "plain", Roots: []string{".codex/worktrees"}, Kind: MatchChildren}
+	cases := []struct {
+		name      string
+		rule      Rule
+		rel, base string
+		mode      fs.FileMode
+		protected bool
+	}{
+		{"pointer file exempt", wt, ".git", ".git", 0, false},
+		{"pointer directory protected", wt, ".git", ".git", fs.ModeDir, true},
+		{"pointer symlink protected", wt, ".git", ".git", fs.ModeSymlink, true},
+		{"nested .git file protected", wt, "vendor/.git", ".git", 0, true},
+		{"other rule protected", plain, ".git", ".git", 0, true},
+		{"other deny names still protected", wt, ".env", ".env", 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, hit := s.Guard(tc.rule, item).CheckMode(tc.rel, tc.base, 1, 99999999, tc.mode)
+			if hit != tc.protected {
+				t.Fatalf("protected = %v, want %v", hit, tc.protected)
+			}
+		})
+	}
+}

@@ -43,10 +43,6 @@ const (
 	ReasonGitNoUpstream  = "git_no_upstream"
 	ReasonGitNotARepo    = "git_not_a_repo"
 	ReasonGitUnavailable = "git_unavailable"
-	// ReasonGitUnchecked: the git condition has not been evaluated. Wave 2
-	// scans never check git, so every project artifact carries it.
-	// TODO(wave 3): gitstate.Inspect replaces it with a real state.
-	ReasonGitUnchecked = "git_unchecked"
 	// ReasonOwnerRunning: the owning app or process is running (wave 3).
 	ReasonOwnerRunning = "owner_running"
 	// ReasonScanPartial: part of the item could not be read or sat on another
@@ -58,6 +54,9 @@ const (
 	// ReasonContainsProtected: something inside the item is denylisted or
 	// user-protected (listed in protected_paths).
 	ReasonContainsProtected = "contains_protected"
+	// ReasonNotRequested: kipple clean --only named other items, so this
+	// one would be left alone (dry-run plans only).
+	ReasonNotRequested = "not_requested"
 	// RefusedPrefix prefixes a policy refusal reason, for example
 	// "refused:symlink_in_path".
 	RefusedPrefix = "refused:"
@@ -70,8 +69,9 @@ func Refused(policyReason string) string { return RefusedPrefix + policyReason }
 var baseReasons = []string{
 	ReasonTierReview, ReasonTierManual, ReasonTierInfo, ReasonTooRecent,
 	ReasonProjectActive, ReasonGitDirty, ReasonGitUnpushed, ReasonGitNoUpstream,
-	ReasonGitNotARepo, ReasonGitUnavailable, ReasonGitUnchecked,
+	ReasonGitNotARepo, ReasonGitUnavailable,
 	ReasonOwnerRunning, ReasonScanPartial, ReasonContainsMount, ReasonContainsProtected,
+	ReasonNotRequested,
 }
 
 // Reasons returns every item reason, including "refused:" plus each policy
@@ -97,7 +97,7 @@ const (
 	RuleError   = "error"
 )
 
-// Git states. Wave 2 emits only GitUnchecked.
+// Git states (internal/gitstate).
 const (
 	GitCleanPushed = "clean_pushed"
 	GitDirty       = "dirty"
@@ -105,7 +105,6 @@ const (
 	GitNoUpstream  = "no_upstream"
 	GitNotARepo    = "not_a_repo"
 	GitUnavailable = "git_unavailable"
-	GitUnchecked   = "unchecked"
 )
 
 // Plan is the scan result: what kipple would move, and why or why not.
@@ -138,6 +137,17 @@ type RuleStatus struct {
 	Status    string `json:"status" jsonschema:"enum=present,enum=absent,enum=error"`
 	ItemCount int    `json:"item_count"`
 	Bytes     int64  `json:"bytes" jsonschema:"description=Allocated bytes of the rule's items."`
+	// Roots are the rule's root folders that existed, with their identity
+	// at scan time. Apply refuses an item whose root is no longer the same
+	// directory (reason root_changed).
+	Roots []RootIdentity `json:"roots,omitempty"`
+}
+
+// RootIdentity is one existing rule root and its (st_dev, st_ino).
+type RootIdentity struct {
+	Path string `json:"path" jsonschema:"description=Home-relative path of the root folder."`
+	Dev  uint64 `json:"dev"`
+	Ino  uint64 `json:"ino"`
 }
 
 // Item is one candidate.
@@ -165,7 +175,9 @@ type Item struct {
 
 // Git is a project artifact's repository state.
 type Git struct {
-	State string `json:"state" jsonschema:"enum=clean_pushed,enum=dirty,enum=unpushed,enum=no_upstream,enum=not_a_repo,enum=git_unavailable,enum=unchecked"`
+	State string `json:"state" jsonschema:"enum=clean_pushed,enum=dirty,enum=unpushed,enum=no_upstream,enum=not_a_repo,enum=git_unavailable"`
+	// Detail explains a state other than clean_pushed, for people.
+	Detail string `json:"detail,omitempty"`
 }
 
 // JSONSchemaExtend pins schema_version.

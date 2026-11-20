@@ -124,6 +124,11 @@ type Rule struct {
 	// keychains, password databases, photo libraries); inside every other
 	// rule's items *.pem and .git do too. See policy.Rule.RulePackageCache.
 	PackageCache bool `json:"-"`
+	// GitWorktree marks items that are git worktrees (codex.worktrees):
+	// their own top-level .git pointer file is not a protected entry, and
+	// the rule must require a clean, pushed git state. See
+	// policy.GitWorktreeRule.
+	GitWorktree bool `json:"-"`
 }
 
 // RuleID implements policy.Rule.
@@ -156,6 +161,9 @@ func (r Rule) RuleMatchMarkers() []string { return r.Match.Markers }
 
 // RulePackageCache implements policy.Rule.
 func (r Rule) RulePackageCache() bool { return r.PackageCache }
+
+// RuleGitWorktree implements policy.GitWorktreeRule.
+func (r Rule) RuleGitWorktree() bool { return r.GitWorktree }
 
 // agentProcesses are the agent CLIs whose working directory blocks a project
 // artifact (reason tool_running).

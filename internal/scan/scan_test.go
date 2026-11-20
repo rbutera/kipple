@@ -72,9 +72,9 @@ func fixtureSpec() testutil.Spec {
 	dir(".cache/uv/archive-v0/abc", old)
 	file("dev/py/pyproject.toml", 10, old)
 	file("dev/py/.venv/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem", kib, old)
-	// A worktree's .git is a file; codex.worktrees is not a package cache, so
-	// it makes the item contains_protected (the pointer-file exemption waits
-	// for wave 3's clean-and-pushed check).
+	// A worktree's .git is a file. codex.worktrees exempts exactly that
+	// top-level pointer file, and requires a clean, pushed checkout (this
+	// one is not a real worktree, so it is blocked by its git state).
 	file(".codex/worktrees/wt1/.git", 40, old)
 	file(".codex/worktrees/wt1/main.go", 10, old)
 
@@ -180,7 +180,7 @@ func TestReviewLevel(t *testing.T) {
 		t.Fatalf("review item with no conditions should be selected: %+v", it)
 	}
 	idle := items["dev/idle/node_modules"]
-	if idle.Selected || !slices.Equal(idle.Reasons, []string{plan.ReasonGitUnchecked}) || idle.Git == nil || idle.Git.State != plan.GitUnchecked {
+	if idle.Selected || !slices.Equal(idle.Reasons, []string{plan.ReasonGitNotARepo}) || idle.Git == nil || idle.Git.State != plan.GitNotARepo {
 		t.Fatalf("idle project artifact: selected=%v reasons=%v git=%+v", idle.Selected, idle.Reasons, idle.Git)
 	}
 	active := items["dev/active/node_modules"]
@@ -424,8 +424,8 @@ func TestProtectedDescendantsPerRule(t *testing.T) {
 	home := testutil.NewHome(t, spec)
 	items := byRel(t, runScan(t, home, rules.LevelReview), home)
 	venv := items["dev/py/.venv"]
-	if !slices.Equal(venv.Reasons, []string{plan.ReasonGitUnchecked}) || len(venv.ProtectedPaths) != 0 {
-		t.Errorf("venv with cacert.pem: reasons %v protected %v, want only the wave 2 git placeholder", venv.Reasons, venv.ProtectedPaths)
+	if !slices.Equal(venv.Reasons, []string{plan.ReasonGitNotARepo}) || len(venv.ProtectedPaths) != 0 {
+		t.Errorf("venv with cacert.pem: reasons %v protected %v, want only git_not_a_repo", venv.Reasons, venv.ProtectedPaths)
 	}
 	if uv := items[".cache/uv/archive-v0"]; !uv.Selected {
 		t.Errorf("uv cache with cacert.pem not selected: %+v", uv.Reasons)
@@ -444,11 +444,13 @@ func TestProtectedDescendantsPerRule(t *testing.T) {
 			t.Errorf("%s: selected=%v reasons=%v protected=%v", rel, it.Selected, it.Reasons, it.ProtectedPaths)
 		}
 	}
-	// Not package caches: .git, .envrc and *.p12 inside refuse the item.
+	// codex.worktrees: the top-level .git pointer file is exempt, but the
+	// checkout must be clean and pushed, which this fake one is not.
 	wt := items[".codex/worktrees/wt1"]
-	if wt.Selected || !slices.Contains(wt.Reasons, plan.ReasonContainsProtected) || !slices.Equal(wt.ProtectedPaths, []string{".git"}) {
+	if wt.Selected || slices.Contains(wt.Reasons, plan.ReasonContainsProtected) || len(wt.ProtectedPaths) != 0 || wt.Git == nil || wt.Git.State == plan.GitCleanPushed {
 		t.Errorf("codex worktree with a .git file: %+v", wt)
 	}
+	// Not package caches: .envrc and *.p12 inside refuse the item.
 	for rel, want := range map[string]string{"Library/Caches/withenvrc": ".envrc", "Library/Caches/withkey": "certs/server.p12"} {
 		it := items[rel]
 		if it.Selected || !slices.Contains(it.Reasons, plan.ReasonContainsProtected) || !slices.Equal(it.ProtectedPaths, []string{want}) {

@@ -374,14 +374,19 @@ var catalogue = []Rule{
 		IfRemoved: "Each model downloads again, often several gigabytes, the next time code loads it.",
 	},
 	{
-		ID:        "codex.worktrees",
-		Title:     "Codex worktrees",
-		Tier:      TierManual,
-		Roots:     []string{".codex/worktrees"},
-		Match:     children,
-		Owner:     ownerCodex,
-		What:      "Separate git checkouts that Codex creates so tasks can run in parallel without touching your main checkout.",
-		IfRemoved: "Any uncommitted or unpushed work in that checkout leaves your disk with it, and git keeps listing the worktree until you run git worktree prune.",
+		ID:    "codex.worktrees",
+		Title: "Codex worktrees",
+		Tier:  TierManual,
+		Roots: []string{".codex/worktrees"},
+		Match: children,
+		// Only a checkout with nothing uncommitted and nothing unpushed is
+		// ever movable; its own .git pointer file is then not a protected
+		// entry (a .git directory, or any nested .git, still is).
+		Conditions:  Conditions{RequiresCleanGit: true, SkipIfOwnerRunning: true},
+		GitWorktree: true,
+		Owner:       ownerCodex,
+		What:        "Separate git checkouts that Codex creates so tasks can run in parallel without touching your main checkout.",
+		IfRemoved:   "Any uncommitted or unpushed work in that checkout leaves your disk with it, and git keeps listing the worktree until you run git worktree prune.",
 	},
 	{
 		ID:         "downloads.installers",

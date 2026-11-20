@@ -208,6 +208,7 @@ MANUAL: never selected; cleaned only by naming the item ID
     What:       Separate git checkouts that Codex creates so tasks can run in parallel without touching your main checkout.
     If removed: Any uncommitted or unpushed work in that checkout leaves your disk with it, and git keeps listing the worktree until you run git worktree prune.
     Roots:      ~/.codex/worktrees
+    Conditions: git committed and pushed; owner not running
     Owner:      Codex
 
   downloads.installers  Old installers in Downloads

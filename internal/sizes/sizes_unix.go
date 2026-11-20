@@ -155,7 +155,7 @@ func (w *walker) entry(fd int, rel, name string, depth int, inProtected bool) er
 		return nil
 	}
 	protected := inProtected
-	if !inProtected && w.opts.Protected != nil && w.opts.Protected(p, name, dev, st.Ino, st.Mode&unix.S_IFMT == unix.S_IFDIR) {
+	if !inProtected && w.protected(p, name, dev, st) {
 		protected = true
 		w.r.ProtectedCount++
 		if len(w.r.Protected) < w.opts.MaxProtected {
@@ -203,6 +203,39 @@ func (w *walker) entry(fd int, rel, name string, depth int, inProtected bool) er
 	w.r.AllocatedBytes += alloc
 	w.r.ReclaimableBytes += alloc
 	return nil
+}
+
+// protected asks the caller's Protected or ProtectedMode callback.
+func (w *walker) protected(rel, name string, dev uint64, st unix.Stat_t) bool {
+	if w.opts.ProtectedMode != nil {
+		return w.opts.ProtectedMode(rel, name, dev, st.Ino, typeOf(uint32(st.Mode)))
+	}
+	if w.opts.Protected != nil {
+		return w.opts.Protected(rel, name, dev, st.Ino, st.Mode&unix.S_IFMT == unix.S_IFDIR)
+	}
+	return false
+}
+
+// typeOf returns the fs.FileMode type bits of a raw st_mode.
+func typeOf(m uint32) fs.FileMode {
+	switch m & unix.S_IFMT {
+	case unix.S_IFDIR:
+		return fs.ModeDir
+	case unix.S_IFLNK:
+		return fs.ModeSymlink
+	case unix.S_IFREG:
+		return 0
+	case unix.S_IFIFO:
+		return fs.ModeNamedPipe
+	case unix.S_IFSOCK:
+		return fs.ModeSocket
+	case unix.S_IFCHR:
+		return fs.ModeDevice | fs.ModeCharDevice
+	case unix.S_IFBLK:
+		return fs.ModeDevice
+	default:
+		return fs.ModeIrregular
+	}
 }
 
 func relOrDot(rel string) string {

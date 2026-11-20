@@ -721,7 +721,10 @@
     "match": {
       "kind": "children"
     },
-    "conditions": {},
+    "conditions": {
+      "requires_clean_git": true,
+      "skip_if_owner_running": true
+    },
     "owner": {
       "name": "Codex",
       "processes": [

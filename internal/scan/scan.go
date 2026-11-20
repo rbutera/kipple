@@ -10,9 +10,13 @@
 // everything else the policy refuses (denylisted, protected, excluded, not
 // an item of the rule) is not listed at all.
 //
-// Wave 2 does not evaluate git or running-process conditions: project
-// artifacts carry git.state "unchecked" and reason git_unchecked and are
-// never selected, and owner_running is not checked. Wave 3 adds both.
+// Conditions (minimum age, idle project, clean and pushed git state,
+// partial walks, mounts and protected contents) are evaluated by the same
+// code apply runs again immediately before each move (see Checker). Running
+// owners and agents are checked by apply only, at move time.
+//
+// Every existing rule root is recorded in the plan with its (dev, ino), so
+// apply can refuse an item whose root was replaced after the scan.
 package scan
 
 import (
@@ -20,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -28,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rbutera/kipple/internal/gitstate"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/rules"
@@ -56,6 +60,9 @@ type Options struct {
 	Workers int
 	// Progress, when set, receives short progress messages (for stderr).
 	Progress func(string)
+	// Git classifies repositories for RequiresCleanGit conditions
+	// (gitstate.Inspector with home's parent as ceiling when nil).
+	Git GitInspector
 }
 
 // EffectiveRules returns cat with every project artifact rule's roots
@@ -89,9 +96,11 @@ type scanner struct {
 	sess  *policy.Session
 	home  string
 	now   time.Time
+	cond  *conditions
 
 	warnings []string
-	status   []string // per rule
+	status   []string              // per rule
+	roots    [][]plan.RootIdentity // per rule: existing roots and identities
 }
 
 // Run scans and returns the plan. It fails only when home cannot be used
@@ -118,7 +127,12 @@ func Run(ctx context.Context, opts Options) (plan.Plan, error) {
 	}
 	defer func() { _ = sess.Close() }()
 
-	s := &scanner{ctx: ctx, opts: opts, rules: rs, sess: sess, home: opts.Env.Home, now: opts.Now(), status: make([]string, len(rs))}
+	git := opts.Git
+	if git == nil {
+		git = gitstate.Inspector{Ceiling: filepath.Dir(opts.Env.Home)}
+	}
+	s := &scanner{ctx: ctx, opts: opts, rules: rs, sess: sess, home: opts.Env.Home, now: opts.Now(), status: make([]string, len(rs)), roots: make([][]plan.RootIdentity, len(rs))}
+	s.cond = &conditions{ctx: ctx, sess: sess, rules: rs, now: s.now, git: git, idle: map[string]bool{}, repos: map[string]gitstate.Result{}}
 	var cands []*candidate
 	projects := map[string][]int{} // project roots -> project rule indexes
 	for i, r := range rs {
@@ -144,10 +158,9 @@ func Run(ctx context.Context, opts Options) (plan.Plan, error) {
 	if err := s.measure(cands); err != nil {
 		return plan.Plan{}, err
 	}
-	idle := map[string]bool{}
 	for _, c := range cands {
 		if c.list {
-			s.decide(c, idle)
+			s.decide(c)
 		}
 	}
 	return s.build(cands), nil
@@ -188,6 +201,21 @@ func (s *scanner) rootError(i int, root string, err error) {
 }
 
 func (s *scanner) rel(abs string) string { return strings.TrimPrefix(abs, s.home+"/") }
+
+// recordRoot remembers an existing root folder of rule i and its identity.
+func (s *scanner) recordRoot(i int, dir string, info fs.FileInfo) {
+	dev, ino, ok := policy.Identity(info)
+	if !ok {
+		return
+	}
+	rel := s.rel(dir)
+	for _, r := range s.roots[i] {
+		if r.Path == rel {
+			return
+		}
+	}
+	s.roots[i] = append(s.roots[i], plan.RootIdentity{Path: rel, Dev: dev, Ino: ino})
+}
 
 // expandRoot resolves a home-relative root with at most one glob segment
 // to the existing directories it names. Directories that do not exist are
@@ -260,6 +288,7 @@ func (s *scanner) ruleCandidates(i int) []*candidate {
 				continue
 			}
 			s.setStatus(i, plan.RulePresent)
+			s.recordRoot(i, dir, e.Info)
 			sort.Strings(names)
 			for _, n := range names {
 				out = append(out, &candidate{rule: i, path: dir + "/" + n})
@@ -367,11 +396,7 @@ func (s *scanner) measureOne(c *candidate) {
 	defer func() { _ = e.Dir.Close() }()
 	opts := sizes.Options{}
 	if c.guard {
-		g := s.sess.Guard(s.rules[c.rule], c.path)
-		opts.Protected = func(rel, name string, dev, ino uint64, isDir bool) bool {
-			_, hit := g.Check(rel, name, dev, ino, isDir)
-			return hit
-		}
+		opts = guardOptions(s.sess, s.rules[c.rule], c.path)
 	}
 	res, err := measureDir(s.ctx, e.Dir, opts)
 	if err != nil && res.Status == "" {
@@ -382,7 +407,7 @@ func (s *scanner) measureOne(c *candidate) {
 }
 
 // decide fills sizes, conditions, reasons and selection for a listed item.
-func (s *scanner) decide(c *candidate, idle map[string]bool) {
+func (s *scanner) decide(c *candidate) {
 	r := s.rules[c.rule]
 	it := &c.item
 	res := c.res
@@ -415,104 +440,12 @@ func (s *scanner) decide(c *candidate, idle map[string]bool) {
 		reasons = append(reasons, plan.ReasonTierInfo) // unknown tier: never selected
 	}
 	if !refused {
-		// A partial walk cannot prove the item old enough: the unread part
-		// may hold newer files.
-		if days := r.Conditions.MinAgeDays; days > 0 && (it.ScanStatus == plan.ScanPartial || s.now.Sub(res.NewestMtime) < time.Duration(days)*24*time.Hour) {
-			reasons = append(reasons, plan.ReasonTooRecent)
-		}
-		if r.Match.Kind == rules.MatchProjectArtifact {
-			it.Git = &plan.Git{State: plan.GitUnchecked}
-			if r.Conditions.RequiresIdleProject && !s.projectIdle(filepath.Dir(c.path), r.Conditions.IdleDays, idle) {
-				reasons = append(reasons, plan.ReasonProjectActive)
-			}
-			if r.Conditions.RequiresCleanGit {
-				// TODO(wave 3): gitstate.Inspect replaces this placeholder.
-				reasons = append(reasons, plan.ReasonGitUnchecked)
-			}
-		}
-		// An item that was not fully inspected may hide something protected.
-		if it.ScanStatus == plan.ScanPartial {
-			reasons = append(reasons, plan.ReasonScanPartial)
-		}
-		if len(res.Mounts) > 0 {
-			reasons = append(reasons, plan.ReasonContainsMount)
-		}
-		if res.ProtectedCount > 0 && r.Tier != rules.TierInfo {
-			reasons = append(reasons, plan.ReasonContainsProtected)
-		}
+		v := s.cond.evaluate(r, c.path, res, it.ScanStatus == plan.ScanPartial)
+		reasons = append(reasons, v.reasons...)
+		it.Git, it.AtRisk = v.git, v.atRisk
 	}
 	it.Reasons = append(it.Reasons, reasons...)
 	it.Selected = len(it.Reasons) == 0
-}
-
-// projectIdle reports whether no file in project outside artifact
-// directories changed within days. Results are cached per project.
-//
-// An artifact directory is one named like a project artifact with one of
-// that artifact's markers beside it as a regular file (spec "Marker
-// adjacency"): the candidate itself, its siblings such as .venv beside
-// pyproject.toml, and nested installs with their own manifest. A folder
-// that merely shares a name (a target/ with no Cargo.toml beside it) is
-// project content, so recent edits inside it keep the project active.
-func (s *scanner) projectIdle(project string, days int, cache map[string]bool) bool {
-	key := fmt.Sprintf("%s\x00%d", project, days)
-	if v, ok := cache[key]; ok {
-		return v
-	}
-	idle := false
-	if e, err := s.sess.Open(project); err == nil && e.Dir != nil {
-		markers := s.artifactMarkers()
-		skip := func(rel, name string) bool {
-			ms, ok := markers[name]
-			if !ok {
-				return false
-			}
-			parent := project
-			if d := path.Dir(rel); d != "." {
-				parent += "/" + d
-			}
-			return s.hasRegularFile(parent, ms)
-		}
-		res, err := sizes.MeasureDir(s.ctx, e.Dir, sizes.Options{SkipDir: skip})
-		_ = e.Dir.Close()
-		// An incomplete walk cannot prove the project idle.
-		idle = err == nil && res.Status == sizes.StatusComplete &&
-			s.now.Sub(res.NewestFileMtime) >= time.Duration(days)*24*time.Hour
-	}
-	cache[key] = idle
-	return idle
-}
-
-// artifactMarkers maps each project-artifact directory name to the markers
-// that make a directory of that name an artifact.
-func (s *scanner) artifactMarkers() map[string][]string {
-	out := map[string][]string{}
-	for _, r := range s.rules {
-		if r.Match.Kind == rules.MatchProjectArtifact {
-			for _, n := range r.Match.Names {
-				out[n] = append(out[n], r.Match.Markers...)
-			}
-		}
-	}
-	return out
-}
-
-// hasRegularFile reports whether dir holds a regular file named one of
-// names, opened through the session (no symlink is followed).
-func (s *scanner) hasRegularFile(dir string, names []string) bool {
-	for _, n := range names {
-		e, err := s.sess.Open(dir + "/" + n)
-		if err != nil {
-			continue
-		}
-		if e.Dir != nil {
-			_ = e.Dir.Close()
-		}
-		if e.Info.Mode().IsRegular() {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *scanner) artifactNames() map[string]bool {
@@ -557,6 +490,7 @@ func (s *scanner) projectCandidates(roots map[string][]int) []*candidate {
 		}
 		for _, i := range idx {
 			s.setStatus(i, plan.RulePresent)
+			s.recordRoot(i, abs, e.Info)
 		}
 		if e.Dir == nil {
 			continue
@@ -662,7 +596,7 @@ func (s *scanner) build(cands []*candidate) plan.Plan {
 		if st == "" {
 			st = plan.RuleAbsent
 		}
-		p.Rules = append(p.Rules, plan.RuleStatus{ID: r.ID, Tier: string(r.Tier), Status: st, ItemCount: ruleCount[i], Bytes: ruleBytes[i]})
+		p.Rules = append(p.Rules, plan.RuleStatus{ID: r.ID, Tier: string(r.Tier), Status: st, ItemCount: ruleCount[i], Bytes: ruleBytes[i], Roots: s.roots[i]})
 	}
 	p.Normalize()
 	return p

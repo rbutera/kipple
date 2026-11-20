@@ -8,7 +8,7 @@ App caches (caches.user, safe)  1.5 MB in 3 items
       protected inside: .env
 
 Project node_modules (project.node-modules, review)  120.0 MB in 1 item
-  [ ]   120.0 MB  ukeacnnziynv  /tmp/fx/home/dev/app/node_modules  (tier_review, git_unchecked)
+  [ ]   120.0 MB  ukeacnnziynv  /tmp/fx/home/dev/app/node_modules  (tier_review, git_unpushed)  [at risk: uncommitted or unpushed work]
 
 Ollama models (ollama.models, info)  4.2 GB in 1 item
   [ ]     4.2 GB  xpkwypbdgoao  /tmp/fx/home/.ollama/models/blobs  (tier_info)

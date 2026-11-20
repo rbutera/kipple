@@ -70,7 +70,7 @@ func samplePlan() Plan {
 				ID: ID("project.node-modules", "dev/app/node_modules"), Rule: "project.node-modules", Tier: "review",
 				Path: "/tmp/fx/home/dev/app/node_modules", SizeBytes: 10, AllocatedBytes: 4096, ReclaimableBytes: 4096,
 				FileCount: 1, NewestMtime: old, ScanStatus: ScanComplete,
-				Reasons: []string{ReasonTierReview, ReasonGitUnchecked}, Git: &Git{State: GitUnchecked},
+				Reasons: []string{ReasonTierReview, ReasonGitUnpushed}, Git: &Git{State: GitUnpushed, Detail: "1 commits not pushed to origin/main"}, AtRisk: true,
 			},
 			{
 				ID: ID("ollama.models", ".ollama/models/blobs"), Rule: "ollama.models", Tier: "info",
@@ -196,8 +196,8 @@ func TestReasonsClosedSet(t *testing.T) {
 		seen[r] = true
 	}
 	for _, r := range []string{"tier_review", "tier_manual", "tier_info", "too_recent", "project_active", "git_dirty",
-		"git_unpushed", "git_no_upstream", "git_not_a_repo", "git_unavailable", "git_unchecked", "owner_running",
-		"scan_partial", "contains_mount", "contains_protected", "refused:symlink_in_path", "refused:denylisted"} {
+		"git_unpushed", "git_no_upstream", "git_not_a_repo", "git_unavailable", "owner_running",
+		"scan_partial", "contains_mount", "contains_protected", "not_requested", "refused:symlink_in_path", "refused:denylisted"} {
 		if !seen[r] {
 			t.Errorf("missing reason %q", r)
 		}

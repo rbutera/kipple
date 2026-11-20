@@ -72,8 +72,8 @@ hard-linked file counted once across the whole plan.
 | `protected_paths` | Present only when something inside the item is protected: up to five item-relative paths. |
 | `warnings` | Present only for partial or unmeasurable items. |
 | `owner_command` | Present only on `info` items: the owning tool's own cleanup command. |
-| `git` | Present only on project artifacts: `{"state": ...}`. |
-| `at_risk` | Present (true) only when a project's git state is `dirty` or `unpushed` (wave 3). |
+| `git` | Present only on items of rules that require a clean git state (project artifacts and Codex worktrees): `{"state": ..., "detail": ...}`. `detail` explains any state other than `clean_pushed`. |
+| `at_risk` | Present (true) only when the git state is `dirty` or `unpushed`: removing the item's project files would lose work. |
 
 ## Item reasons
 
@@ -91,12 +91,12 @@ when it carries none.
 | `git_unpushed` | The project has commits its upstream does not. |
 | `git_no_upstream` | The project's branch has no upstream. |
 | `git_not_a_repo` | The project is not a git repository. |
-| `git_unavailable` | `git` could not be run. |
-| `git_unchecked` | The git condition was not evaluated. Builds without git checking (the wave 2 read-only CLI) put it on every project artifact, which is therefore never selected. |
+| `git_unavailable` | `git` could not be run, timed out (5 seconds), or failed. |
 | `owner_running` | The app or tool that owns the item is running. |
 | `scan_partial` | Part of the item could not be read, or sat on another volume, so kipple could not inspect everything inside it. Such items are never pre-selected, since an unread folder could hide something protected. See the item's `warnings`. |
 | `contains_mount` | Another volume is mounted somewhere inside the item. kipple never crosses into it and never selects the item, since moving it would take the mounted volume with it. The item also carries `scan_partial`. |
 | `contains_protected` | Something inside the item cannot be regenerated or is protected by your config: a `.env` or `.env.*` file, a keychain, a Photos library, a KeePass `.kdbx` file, anything under a denylisted location, the same file as a protected one through a hard link, or a `.git` folder inside a project artifact such as `node_modules`. See `protected_paths`. Regenerable files that are only refused as item paths, such as `cacert.pem` in a virtualenv or a worktree's `.git` file, do not count. |
+| `not_requested` | Only in the plan `kipple clean --only ...` prints as a dry run: another item was named, so this one would be left alone. |
 | `refused:<reason>` | The safety policy refused the path itself. `<reason>` is a policy reason: `symlink_in_path`, `different_device`, `name_mismatch` and the rest of the list in the policy package. Such items are shown so you can see what kipple declined to touch; they have no sizes. |
 
 Paths the policy refuses because they are denylisted, protected by config,
@@ -106,8 +106,19 @@ at all.
 ## Git states
 
 `git.state` is one of `clean_pushed`, `dirty`, `unpushed`, `no_upstream`,
-`not_a_repo`, `git_unavailable`, or `unchecked`. Only `clean_pushed`
-satisfies a project rule's git condition.
+`not_a_repo` or `git_unavailable`. Only `clean_pushed` satisfies a rule's
+git condition. kipple runs `git status --porcelain=v2 --branch` with the
+repository's fsmonitor and hooks disabled, untracked files always listed,
+a 5 second timeout, and `GIT_OPTIONAL_LOCKS=0`, so the check never runs
+repository code and never writes to the repository. A project artifact is
+checked in its project folder (the artifact's parent); a Codex worktree is
+checked in the worktree itself.
+
+## Rule roots
+
+`rules[].roots` lists each of the rule's root folders that exists, with its
+`dev` and `ino` at scan time. `kipple clean --plan` refuses an item whose
+root is no longer that same folder (skip reason `root_changed`).
 
 ## Example
 
@@ -128,7 +139,8 @@ A plan for a small fixture home at level `safe`:
     "reclaimable_bytes": 1503232
   },
   "rules": [
-    { "id": "caches.user", "tier": "safe", "status": "present", "item_count": 2, "bytes": 1503232 },
+    { "id": "caches.user", "tier": "safe", "status": "present", "item_count": 2, "bytes": 1503232,
+      "roots": [{ "path": "Library/Caches", "dev": 16777232, "ino": 1180311 }] },
     { "id": "xcode.deriveddata", "tier": "safe", "status": "absent", "item_count": 0, "bytes": 0 },
     { "id": "project.node-modules", "tier": "review", "status": "present", "item_count": 1, "bytes": 119748096 },
     { "id": "ollama.models", "tier": "info", "status": "present", "item_count": 1, "bytes": 4200000000 }
@@ -180,8 +192,9 @@ A plan for a small fixture home at level `safe`:
       "newest_mtime": "2026-03-02T10:00:00Z",
       "scan_status": "complete",
       "selected": false,
-      "reasons": ["tier_review", "git_unchecked"],
-      "git": { "state": "unchecked" }
+      "reasons": ["tier_review", "git_unpushed"],
+      "git": { "state": "unpushed", "detail": "2 commits not pushed to origin/main" },
+      "at_risk": true
     },
     {
       "id": "xpkwypbdgoao",

@@ -44,6 +44,11 @@ type Guard struct {
 	// artifact is set for project artifact items, where a .git directory
 	// is protected: an artifact never legitimately contains a repository.
 	artifact bool
+	// worktree is set for git-worktree rules (GitWorktreeRule): the item's
+	// own top-level .git, when it is a regular file (the pointer to the
+	// main repository), is not protected. A .git directory, or a .git at
+	// any other depth, still is.
+	worktree bool
 	// narrow is set for package-cache rules: only descendantComponents
 	// (every deny component but *.pem and .git) refuse by name. Otherwise
 	// every deny component does.
@@ -99,6 +104,22 @@ var foldedDenyComponents = func() []string {
 	return out
 }()
 
+// GitWorktreeRule is implemented by rules whose items are git worktrees
+// (codex.worktrees). Every worktree has a top-level .git file pointing at
+// its main repository; for such a rule the Guard does not count that one
+// regular file as protected. The rule must also require a clean, pushed
+// git state, which scan and apply check before anything moves.
+type GitWorktreeRule interface {
+	RuleGitWorktree() bool
+}
+
+// IsGitWorktreeRule reports whether rule implements GitWorktreeRule and
+// returns true.
+func IsGitWorktreeRule(rule Rule) bool {
+	w, ok := rule.(GitWorktreeRule)
+	return ok && w.RuleGitWorktree()
+}
+
 // newGuard builds the Guard for item (absolute, clean, below home). A nil
 // rule gets the full deny-component set.
 func newGuard(env Env, ids *protectedIDs, rule Rule, item string) *Guard {
@@ -106,6 +127,7 @@ func newGuard(env Env, ids *protectedIDs, rule Rule, item string) *Guard {
 		ids:      ids,
 		artifact: rule != nil && rule.RuleMatchKind() == MatchProjectArtifact,
 		narrow:   rule != nil && rule.RulePackageCache(),
+		worktree: rule != nil && IsGitWorktreeRule(rule),
 	}
 	if !strings.HasPrefix(item, env.Home+"/") {
 		return g
@@ -150,7 +172,27 @@ func newGuard(env Env, ids *protectedIDs, rule Rule, item string) *Guard {
 // denylist prefix or user protection, or when it is the same object as an
 // existing protected location.
 func (g *Guard) Check(rel, name string, dev, ino uint64, isDir bool) (string, bool) {
+	var mode fs.FileMode
+	if isDir {
+		mode = fs.ModeDir
+	}
+	return g.CheckMode(rel, name, dev, ino, mode)
+}
+
+// CheckMode is Check with the entry's file type (as fs.FileMode type
+// bits). For a git-worktree rule it exempts exactly one entry: the item's
+// top-level .git when it is a regular file.
+func (g *Guard) CheckMode(rel, name string, dev, ino uint64, mode fs.FileMode) (string, bool) {
 	if g == nil {
+		return "", false
+	}
+	isDir := mode.IsDir()
+	if g.worktree && rel == ".git" && name == ".git" && mode.IsRegular() {
+		if g.ids != nil {
+			if r, ok := g.ids.objects[fileID{dev: dev, ino: ino}]; ok {
+				return r, true
+			}
+		}
 		return "", false
 	}
 	fn := foldName(name)

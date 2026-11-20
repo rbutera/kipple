@@ -74,11 +74,13 @@
       "selected": false,
       "reasons": [
         "tier_review",
-        "git_unchecked"
+        "git_unpushed"
       ],
       "git": {
-        "state": "unchecked"
-      }
+        "state": "unpushed",
+        "detail": "1 commits not pushed to origin/main"
+      },
+      "at_risk": true
     },
     {
       "id": "xpkwypbdgoao",

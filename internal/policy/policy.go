@@ -177,6 +177,8 @@ type StaticRule struct {
 	Markers    []string
 	// PackageCache narrows the protected-descendant check (RulePackageCache).
 	PackageCache bool
+	// GitWorktree marks items as git worktrees (GitWorktreeRule).
+	GitWorktree bool
 }
 
 func (r StaticRule) RuleID() string                { return r.ID }
@@ -188,6 +190,7 @@ func (r StaticRule) RuleMatchNames() []string      { return r.Names }
 func (r StaticRule) RuleMatchMarkers() []string    { return r.Markers }
 func (r StaticRule) RuleMatchKind() string         { return r.Kind }
 func (r StaticRule) RulePackageCache() bool        { return r.PackageCache }
+func (r StaticRule) RuleGitWorktree() bool         { return r.GitWorktree }
 
 // Decision is the outcome of Authorize. Reason is empty when Allowed.
 type Decision struct {

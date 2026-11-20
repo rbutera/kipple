@@ -92,6 +92,9 @@ func Plan(w io.Writer, p plan.Plan, titles map[string]string) error {
 			if it.ScanStatus == plan.ScanPartial {
 				b.WriteString("  [partial]")
 			}
+			if it.AtRisk {
+				b.WriteString("  [at risk: uncommitted or unpushed work]")
+			}
 			b.WriteString("\n")
 			if it.OwnerCommand != "" {
 				fmt.Fprintf(b, "      to clean, use: %s\n", it.OwnerCommand)
@@ -213,6 +216,16 @@ func ExplainItem(w io.Writer, it plan.Item, r rules.Rule) error {
 	fmt.Fprintf(b, "Selected:   %s\n", sel)
 	if len(it.Reasons) > 0 {
 		fmt.Fprintf(b, "Reasons:    %s\n", strings.Join(it.Reasons, ", "))
+	}
+	if it.Git != nil {
+		fmt.Fprintf(b, "Git:        %s", it.Git.State)
+		if it.Git.Detail != "" {
+			fmt.Fprintf(b, " (%s)", it.Git.Detail)
+		}
+		if it.AtRisk {
+			b.WriteString(", at risk")
+		}
+		b.WriteString("\n")
 	}
 	for _, p := range it.ProtectedPaths {
 		fmt.Fprintf(b, "Protected:  %s\n", p)

@@ -12,6 +12,7 @@ package sizes
 
 import (
 	"fmt"
+	"io/fs"
 	"time"
 )
 
@@ -44,6 +45,10 @@ type Options struct {
 	// the entry in Result.Protected. Entries below a protected directory are
 	// still measured but not reported again.
 	Protected func(rel, name string, dev, ino uint64, isDir bool) bool
+	// ProtectedMode is Protected with the entry's file type (fs.ModeDir,
+	// fs.ModeSymlink, 0 for a regular file, and so on); when set it is
+	// used instead of Protected.
+	ProtectedMode func(rel, name string, dev, ino uint64, mode fs.FileMode) bool
 	// MaxProtected caps Result.Protected (DefaultMaxProtected when zero).
 	MaxProtected int
 	// SkipDir, when set, is called for every directory below the root;
