@@ -3,9 +3,7 @@
 package apply
 
 import (
-	"io/fs"
 	"os"
-	"time"
 
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
@@ -16,13 +14,6 @@ func openItem(*policy.Fresh, uint64, uint64) (*os.File, error) { return nil, tra
 func withOwnerWrite(*os.File, func() error) error              { return trash.ErrUnsupported }
 func isPermission(error) bool                                  { return false }
 
-type protectFunc func(rel, name string, dev, ino uint64, mode fs.FileMode) (string, bool)
-
-type removal struct{ count, bytes int64 }
-
-func removeItem(*policy.Fresh, uint64, uint64, protectFunc, time.Time) (removal, error) {
-	return removal{}, trash.ErrUnsupported
-}
 func classify(error) string { return plan.SkipMoveFailed }
 func openHomeTrash(*policy.Session, string) (*trash.DirTrasher, error) {
 	return nil, trash.ErrUnsupported

@@ -109,13 +109,16 @@ skipped with a reason and the run exits 4. A receipt is written for every
 (never info items). --plan <file|-> acts on a plan from kipple scan --json;
 it is untrusted: items are matched by ID against a scan made now, and an
 item whose path, identity or rule root changed is refused. --permanent
-deletes safe items instead of trashing them and skips every other tier.
+(delete instead of trashing) is not available in this release.
 
 On a terminal, --apply asks for confirmation unless --yes is given. With
 --json, or when stdout is not a terminal, it never prompts: --apply is the
 consent.`,
 		Args: noArgs,
 		RunE: func(*cobra.Command, []string) error {
+			if permanent && !apply.PermanentAvailable {
+				return usageErr("%v", apply.ErrPermanentUnavailable)
+			}
 			if permanent && !doApply {
 				return usageErr("--permanent needs --apply")
 			}
@@ -235,7 +238,7 @@ consent.`,
 	f := c.Flags()
 	f.BoolVar(&doApply, "apply", false, "move the selected items (without it, clean is a dry run)")
 	f.BoolVar(&yes, "yes", false, "do not ask for confirmation on a terminal")
-	f.BoolVar(&permanent, "permanent", false, "delete safe items instead of moving them to the Trash (needs --apply)")
+	f.BoolVar(&permanent, "permanent", false, "not available in this release (items always go to the Trash)")
 	f.StringVar(&planFile, "plan", "", "act on this plan (from kipple scan --json; - reads stdin)")
 	f.StringSliceVar(&only, "only", nil, "act only on these item IDs (comma-separated or repeated)")
 	return c

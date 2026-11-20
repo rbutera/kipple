@@ -2,7 +2,7 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 
-.PHONY: all build test lint vet fmt-check check check-no-real-home
+.PHONY: all build test test-permanent lint vet fmt-check check check-no-real-home
 
 all: check
 
@@ -11,6 +11,11 @@ build:
 
 test:
 	$(GO) test -race ./...
+
+# --permanent is built only with the kipple_permanent tag (not in v0.1.0);
+# its code and tests must stay green.
+test-permanent:
+	$(GO) test -race -tags kipple_permanent ./internal/apply/... ./cmd/...
 
 vet:
 	$(GO) vet ./...
@@ -23,7 +28,7 @@ fmt-check:
 # golangci-lint is mandatory in CI. Locally it is skipped with a message if absent.
 lint:
 	@if command -v $(GOLANGCI_LINT) >/dev/null 2>&1; then \
-		$(GOLANGCI_LINT) run ./...; \
+		$(GOLANGCI_LINT) run ./... && $(GOLANGCI_LINT) run --build-tags kipple_permanent ./...; \
 	else \
 		echo "lint: SKIPPED (golangci-lint not installed locally; CI runs it)"; \
 	fi
@@ -32,5 +37,5 @@ lint:
 check-no-real-home:
 	$(GO) run ./tools/checkhome .
 
-check: fmt-check vet lint check-no-real-home test build
+check: fmt-check vet lint check-no-real-home test test-permanent build
 	@echo "make check: OK"

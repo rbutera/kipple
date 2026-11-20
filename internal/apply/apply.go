@@ -173,6 +173,9 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	if o.Env.HomeIdentity == nil {
 		return res, errors.New("apply: the home folder's identity is not pinned")
 	}
+	if o.Permanent && !PermanentAvailable {
+		return res, ErrPermanentUnavailable
+	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
