@@ -4,7 +4,12 @@
 // with modification times 200 days ago. It writes only inside the folder it
 // is given, which must not exist yet or be empty.
 //
-// Usage: go run ./tools/mkfixture <new-folder>
+// With -gui it writes a larger, realistic home for scripts/gui-screenshots.sh
+// (about 70 MB of app, package-manager and Xcode caches, project folders,
+// and a git repository with uncommitted work), so every kind of row in the
+// GUI appears with believable sizes.
+//
+// Usage: go run ./tools/mkfixture [-gui] <new-folder>
 package main
 
 import (
@@ -28,11 +33,20 @@ var files = []struct {
 }
 
 func main() {
-	if len(os.Args) != 2 || !filepath.IsAbs(os.Args[1]) {
-		fmt.Fprintln(os.Stderr, "usage: mkfixture <absolute path of a new or empty folder>")
+	args := os.Args[1:]
+	gui := len(args) == 2 && args[0] == "-gui"
+	if gui {
+		args = args[1:]
+	}
+	if len(args) != 1 || !filepath.IsAbs(args[0]) {
+		fmt.Fprintln(os.Stderr, "usage: mkfixture [-gui] <absolute path of a new or empty folder>")
 		os.Exit(2)
 	}
-	if err := build(filepath.Clean(os.Args[1])); err != nil {
+	b := build
+	if gui {
+		b = buildGUI
+	}
+	if err := b(filepath.Clean(args[0])); err != nil {
 		fmt.Fprintln(os.Stderr, "mkfixture:", err)
 		os.Exit(1)
 	}
