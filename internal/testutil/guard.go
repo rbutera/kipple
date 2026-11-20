@@ -100,6 +100,14 @@ func GuardedMain(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, "testutil.GuardedMain:", err)
 		return 1
 	}
+	// git run by the code under test (internal/gitstate) must not depend
+	// on the developer's own git configuration.
+	for k, v := range map[string]string{"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_NOSYSTEM": "1"} {
+		if err := os.Setenv(k, v); err != nil {
+			fmt.Fprintln(os.Stderr, "testutil.GuardedMain:", err)
+			return 1
+		}
+	}
 	if err := checkEnv(); err != nil {
 		fmt.Fprintln(os.Stderr, "testutil.GuardedMain:", err)
 		return 1
