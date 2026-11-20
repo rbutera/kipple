@@ -196,8 +196,11 @@ or a visible `<name> (kipple returned <hex>)` name, and the receipt notes
 which. If kipple stops between the two renames, the entry stays visible in
 the Trash under its staging name, and the next restore finds it by its
 identity and tag; restore does the same for any entry renamed inside the
-Trash (by Finder, for example). Restores and saves of one receipt take a
-lock on it, so two restores at once never lose each other's notes.
+Trash (by Finder, for example). Applying restores and saves of one receipt
+take a lock on it, so two restores at once never lose each other's notes; a
+dry-run restore takes no lock and writes nothing, so it also works with a
+read-only receipts folder. The receipt's home is checked on the copy loaded
+from the receipts folder, the one restore acts on.
 
 What the tag and identity checks protect against is stale or mistaken
 receipts: a receipt for another home, a Trash entry you emptied or

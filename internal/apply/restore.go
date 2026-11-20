@@ -90,27 +90,32 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 	if o.Env.HomeIdentity == nil {
 		return res, errors.New("restore: the home folder's identity is not pinned")
 	}
-	if rc.Home != o.Env.Home {
-		return res, fmt.Errorf("restore: receipt %s is for home %s, not %s", rc.ID, rc.Home, o.Env.Home)
-	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	// Work from the receipt as saved now, not as the caller loaded it.
 	// Concurrent restores (and saves) of one receipt must not overwrite each
-	// other's annotations: hold the receipt's lock for the whole restore and
-	// work from the receipt as saved now, not as the caller loaded it.
+	// other's annotations, so an applying restore holds the receipt's lock
+	// for the whole run. A dry run writes nothing: it takes no lock, creates
+	// no lock file, and works with a read-only receipts folder.
 	if o.Store != nil {
-		unlock, err := o.Store.Lock(rc.ID)
-		if err != nil {
-			return res, fmt.Errorf("restore: %w", err)
+		if o.Apply {
+			unlock, err := o.Store.Lock(rc.ID)
+			if err != nil {
+				return res, fmt.Errorf("restore: %w", err)
+			}
+			defer unlock()
 		}
-		defer unlock()
 		e, err := o.Store.Load(rc.ID)
 		if err != nil {
 			return res, fmt.Errorf("restore: %w", err)
 		}
 		rc = e.Receipt
 		rc.Normalize()
+	}
+	// The home check runs on the receipt that is acted on, after the reload.
+	if rc.Home != o.Env.Home {
+		return res, fmt.Errorf("restore: receipt %s is for home %s, not %s", rc.ID, rc.Home, o.Env.Home)
 	}
 	sess, err := policy.NewSession(o.Env)
 	if err != nil {

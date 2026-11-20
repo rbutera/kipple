@@ -149,11 +149,74 @@ func TestRestoreUntrustedReceipt(t *testing.T) {
 	if len(res.Restored) != 0 || exists(f.abs("Documents/stolen")) {
 		t.Fatalf("restored %+v", res.Restored)
 	}
+	// The home check runs on the receipt as saved in the store, not on the
+	// caller's copy: a caller copy naming this home does not get a stored
+	// receipt for another home restored.
 	other := e
 	other.Receipt.Home = "/somewhere/else"
+	if err := f.store.Save(other.Receipt); err != nil {
+		t.Fatal(err)
+	}
 	store := f.store
-	if _, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: other, Store: &store, Apply: true}); err == nil {
-		t.Fatal("restored a receipt for another home")
+	if _, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true}); err == nil {
+		t.Fatal("restored a stored receipt for another home")
+	}
+	for _, m := range e.Receipt.Moved {
+		if exists(m.Path) {
+			t.Fatalf("%s restored", m.Path)
+		}
+	}
+}
+
+// The home check runs after the receipt is reloaded from the store, so a
+// stale caller copy naming another home does not block a stored receipt for
+// this one, and the stored receipt is the one acted on.
+func TestRestoreHomeCheckUsesStoredReceipt(t *testing.T) {
+	f, e, _ := cleaned(t)
+	stale := e
+	stale.Receipt.Home = "/somewhere/else"
+	store := f.store
+	res, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: stale, Store: &store, Apply: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Home != f.home || len(res.Restored) != 3 {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// A dry-run restore writes nothing to the receipts folder: it takes no
+// lock, creates no lock file, and works when the folder is read-only.
+func TestRestoreDryRunTakesNoLock(t *testing.T) {
+	f, e, _ := cleaned(t)
+	lock := filepath.Join(f.store.Dir(), "."+e.Receipt.ID+".lock")
+	if err := os.Remove(lock); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f.store.Dir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.store.Dir(), 0o700) })
+	store := f.store
+	res, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: false})
+	if err != nil {
+		t.Fatalf("dry run with a read-only receipts folder: %v", err)
+	}
+	if !res.DryRun || len(res.Restored) != 3 {
+		t.Fatalf("%+v", res)
+	}
+	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
+		t.Fatalf("dry run created a lock file: %v", err)
+	}
+	for _, m := range e.Receipt.Moved {
+		if exists(m.Path) {
+			t.Fatalf("dry run restored %s", m.Path)
+		}
+	}
+	// An applying restore of the same receipt still takes the lock (and so
+	// needs a writable folder).
+	if _, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true}); err == nil {
+		t.Fatal("applying restore succeeded without being able to lock the receipt")
 	}
 }
 
