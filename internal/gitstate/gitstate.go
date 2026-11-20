@@ -16,6 +16,12 @@
 // configured filter to do it. No command here produces a diff, so no
 // textconv or external diff driver is ever run.
 //
+// Partial clones never fetch: GIT_NO_LAZY_FETCH=1 and protocol.allow=never
+// turn a missing object into an error, and a repository configured as a
+// partial clone (extensions.partialClone or a promisor remote) is
+// git_unavailable outright, since its state cannot be proven without
+// fetching.
+//
 // git runs from a fixed PATH (FixedPath, never the caller's), with an
 // environment built from nothing: HOME and XDG_CONFIG_HOME point at an
 // empty temporary folder, GIT_CONFIG_GLOBAL=/dev/null and
@@ -100,10 +106,19 @@ type Inspector struct {
 // baseArgs disable everything in a repository's config that would run a
 // program during these commands, apart from filter drivers, which are
 // disabled by name (filterOverrides).
+//
+// Partial clones fetch missing objects on demand ("lazy fetch") through
+// the repository's remote, which can run its core.sshCommand or reach the
+// network: GIT_NO_LAZY_FETCH=1 and protocol.allow=never forbid every
+// transport, so a missing object is an error (git_unavailable), never a
+// fetch.
 var baseArgs = []string{
 	"-c", "core.fsmonitor=",
 	"-c", "core.hooksPath=/dev/null",
 	"-c", "core.untrackedCache=false",
+	"-c", "protocol.allow=never",
+	"-c", "fetch.recurseSubmodules=no",
+	"-c", "uploadpack.allowAnySHA1InWant=false",
 	"--no-pager",
 }
 
@@ -159,6 +174,7 @@ func (in Inspector) start(ctx context.Context, dir string) (*gitCall, func(), er
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_NO_LAZY_FETCH=1",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
@@ -269,6 +285,13 @@ func (in Inspector) Inspect(ctx context.Context, dir string) Result {
 	}
 	if strings.TrimSpace(string(out)) != "true" {
 		return Result{State: StateNotARepo, Detail: "not inside a working tree"}
+	}
+	// A partial clone may be missing objects that only a fetch could
+	// supply, so its state cannot be proven; it is never clean_pushed.
+	if out, _, err := g.run([]int{1}, "config", "--get-regexp", `^extensions\.partialclone$|^remote\..*\.promisor$`); err != nil {
+		return failed(err)
+	} else if len(bytes.TrimSpace(out)) > 0 {
+		return Result{State: StateUnavailable, Detail: "partial clone: kipple cannot prove its state without fetching missing objects"}
 	}
 	if err := g.filterOverrides(); err != nil {
 		return failed(err)

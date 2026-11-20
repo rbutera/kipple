@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +251,8 @@ func TestSafetyArgumentsAndEnvironment(t *testing.T) {
 			switch {
 			case strings.Contains(joined, "--is-inside-work-tree"):
 				return []byte("true\n"), nil, nil
+			case strings.Contains(joined, "partialclone"):
+				return nil, nil, exitCode(1)
 			case strings.Contains(joined, "--get-regexp"):
 				return []byte("filter.lfs.clean git-lfs clean -- %f\nfilter.lfs.process git-lfs filter-process\n"), nil, nil
 			case strings.Contains(joined, "symbolic-ref"):
@@ -270,14 +273,24 @@ func TestSafetyArgumentsAndEnvironment(t *testing.T) {
 			t.Fatalf("args %v lack the safety flags", args)
 		}
 	}
-	lsFiles := strings.Join(calls[2], " ")
+	var lsFiles string
+	for _, c := range calls {
+		if j := strings.Join(c, " "); strings.Contains(j, " ls-files ") {
+			lsFiles = j
+		}
+	}
+	for _, want := range []string{"protocol.allow=never", "fetch.recurseSubmodules=no"} {
+		if !strings.Contains(lsFiles, want) {
+			t.Errorf("git call lacks %s", want)
+		}
+	}
 	for _, want := range []string{"filter.lfs.clean=", "filter.lfs.smudge=", "filter.lfs.process=", "filter.lfs.required=false", "ls-files"} {
 		if !strings.Contains(lsFiles, want) {
 			t.Errorf("ls-files call %q lacks %q", lsFiles, want)
 		}
 	}
 	allowed := map[string]bool{"PATH": true, "HOME": true, "XDG_CONFIG_HOME": true, "GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_NOSYSTEM": true,
-		"GIT_OPTIONAL_LOCKS": true, "GIT_TERMINAL_PROMPT": true, "GIT_ASKPASS": true, "SSH_ASKPASS": true, "LC_ALL": true, "LANG": true, "GIT_CEILING_DIRECTORIES": true}
+		"GIT_OPTIONAL_LOCKS": true, "GIT_NO_LAZY_FETCH": true, "GIT_TERMINAL_PROMPT": true, "GIT_ASKPASS": true, "SSH_ASKPASS": true, "LC_ALL": true, "LANG": true, "GIT_CEILING_DIRECTORIES": true}
 	has := map[string]string{}
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -286,7 +299,7 @@ func TestSafetyArgumentsAndEnvironment(t *testing.T) {
 		}
 		has[k] = v
 	}
-	if has["PATH"] != FixedPath || has["GIT_CONFIG_GLOBAL"] != os.DevNull || has["GIT_OPTIONAL_LOCKS"] != "0" || has["GIT_CEILING_DIRECTORIES"] != "/fx" {
+	if has["GIT_NO_LAZY_FETCH"] != "1" || has["PATH"] != FixedPath || has["GIT_CONFIG_GLOBAL"] != os.DevNull || has["GIT_OPTIONAL_LOCKS"] != "0" || has["GIT_CEILING_DIRECTORIES"] != "/fx" {
 		t.Errorf("environment %v", env)
 	}
 	if fi, err := os.Stat(has["HOME"]); err == nil || !os.IsNotExist(err) {
@@ -328,3 +341,53 @@ func TestWorktrees(t *testing.T) {
 		t.Fatalf("err = %v, want not a repo", err)
 	}
 }
+
+// Re-review finding 5: a partial clone with a missing object must not
+// lazily fetch it (which runs the remote's core.sshCommand or reaches the
+// network), and must never classify as clean_pushed.
+func TestPartialCloneNeverFetches(t *testing.T) {
+	for _, missing := range []string{"commit", "roottree", "tree"} {
+		t.Run(missing, func(t *testing.T) {
+			home := testutil.NewHome(t, testutil.Spec{Repos: []testutil.Repo{{
+				Path:     "dev/p",
+				Commits:  []testutil.Commit{commit("a.txt", "sub/b.txt")},
+				Upstream: true, Pushed: true,
+			}}})
+			repo := filepath.Join(home, "dev/p")
+			marker := filepath.Join(filepath.Dir(home), "MARKER")
+			evil := filepath.Join(filepath.Dir(home), "evil")
+			if err := os.WriteFile(evil, []byte("#!/bin/sh\necho \"$*\" >> "+marker+"\nexit 1\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, kv := range [][2]string{
+				{"core.repositoryformatversion", "1"}, {"extensions.partialClone", "origin"},
+				{"remote.origin.url", "ssh://kipple.invalid/x"}, {"remote.origin.promisor", "true"},
+				{"core.sshCommand", evil},
+			} {
+				testutil.Git(t, repo, "config", kv[0], kv[1])
+			}
+			rev := map[string]string{"commit": "HEAD", "roottree": "HEAD^{tree}", "tree": "HEAD:sub"}[missing]
+			oid := testutil.Git(t, repo, "rev-parse", rev)
+			obj := filepath.Join(repo, ".git/objects", oid[:2], oid[2:])
+			if _, err := os.Stat(obj); err != nil {
+				t.Skipf("object %s is not loose in this git version", oid)
+			}
+			if err := os.Remove(obj); err != nil {
+				t.Fatal(err)
+			}
+			r := inspector(home).Inspect(context.Background(), repo)
+			if r.State == StateCleanPushed {
+				t.Fatalf("a repository with a missing %s classified clean_pushed: %+v", missing, r)
+			}
+			if b, err := os.ReadFile(marker); err == nil {
+				t.Fatalf("lazy fetch ran core.sshCommand: %s", b)
+			}
+		})
+	}
+}
+
+// exitCode is a fake *exec.ExitError.
+type exitCode int
+
+func (e exitCode) Error() string { return "exit status " + strconv.Itoa(int(e)) }
+func (e exitCode) ExitCode() int { return int(e) }
