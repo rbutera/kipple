@@ -22,6 +22,7 @@ import (
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/scan"
+	"github.com/rbutera/kipple/internal/selection"
 )
 
 // Config is what cmd/kipple hands the TUI: the same scan and apply options
@@ -130,7 +131,7 @@ type Model struct {
 	rows     []row
 	cursor   int // index into rows, always an item row
 	offset   int // first visible list row
-	selected map[string]bool
+	sel      *selection.Set
 
 	hint     string
 	hintWarn bool
@@ -165,7 +166,7 @@ func New(cfg Config) Model {
 	}
 	return Model{
 		cfg: cfg, ctx: ctx, cancel: cancel, th: th, spin: sp, prog: &progress{},
-		width: 80, height: 24, ruleByID: byID, selected: map[string]bool{},
+		width: 80, height: 24, ruleByID: byID, sel: selection.New(plan.Plan{}),
 	}
 }
 
@@ -299,7 +300,7 @@ func (m Model) reviewKey(s string) (tea.Model, tea.Cmd) {
 	case " ":
 		m.toggle()
 	case "a":
-		if len(m.selected) == 0 {
+		if m.sel.Len() == 0 {
 			m.setHint("Nothing is selected. Press space on an item to select it.", true)
 			return m, nil
 		}
@@ -329,10 +330,8 @@ func (m *Model) load(p plan.Plan, started time.Time) {
 		g := &m.groups[gi]
 		g.items = append(g.items, i)
 		g.bytes += it.AllocatedBytes
-		if it.Selected && it.Tier != string(rules.TierInfo) {
-			m.selected[it.ID] = true
-		}
 	}
+	m.sel = selection.New(p)
 	tierRank := map[string]int{"safe": 0, "review": 1, "manual": 2, "info": 3}
 	sort.SliceStable(m.groups, func(a, b int) bool {
 		ga, gb := m.groups[a], m.groups[b]
@@ -460,22 +459,17 @@ func (m *Model) toggle() {
 		m.setHint(msg, true)
 		return
 	}
-	if m.selected[it.ID] {
-		delete(m.selected, it.ID)
+	switch m.sel.Toggle(it.ID) {
+	case selection.Removed:
 		m.setHint("", false)
 		return
+	case selection.RefusedBlocked:
+		m.setHint("Can't select this item: "+strings.Join(blockers(it.Reasons), "; ")+".", true)
+		return
+	case selection.Added:
+	default:
+		return
 	}
-	pv := apply.Preview(m.plan, []string{it.ID})
-	for _, p := range pv.Items {
-		if p.ID != it.ID {
-			continue
-		}
-		if !p.Selected {
-			m.setHint("Can't select this item: "+strings.Join(blockers(p.Reasons), "; ")+".", true)
-			return
-		}
-	}
-	m.selected[it.ID] = true
 	switch it.Tier {
 	case string(rules.TierManual):
 		m.setHint("Selected a manual item. Read \"If removed\" before you apply.", true)
@@ -487,24 +481,7 @@ func (m *Model) toggle() {
 }
 
 // selectedIDs returns the selection in plan order.
-func (m Model) selectedIDs() []string {
-	var out []string
-	for _, it := range m.plan.Items {
-		if m.selected[it.ID] {
-			out = append(out, it.ID)
-		}
-	}
-	return out
-}
+func (m Model) selectedIDs() []string { return m.sel.IDs() }
 
 // selectedTotal returns the selected count and allocated bytes.
-func (m Model) selectedTotal() (int, int64) {
-	n, b := 0, int64(0)
-	for _, it := range m.plan.Items {
-		if m.selected[it.ID] {
-			n++
-			b += it.AllocatedBytes
-		}
-	}
-	return n, b
-}
+func (m Model) selectedTotal() (int, int64) { return m.sel.Total() }

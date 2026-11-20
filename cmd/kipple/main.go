@@ -3,11 +3,12 @@
 package main
 
 import (
+	"io"
+	"os"
+
 	"github.com/rbutera/kipple/cmd/internal/launch"
 	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/procs"
-	"io"
-	"os"
 )
 
 // Set with -ldflags "-X main.version=... -X main.commit=... -X main.date=..."

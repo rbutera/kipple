@@ -242,7 +242,7 @@ func TestModelTest(t *testing.T) {
 	f := newFx(t, false)
 	m := highlight(t, start(t, f, 100, 30), "Library/Caches/com.example.app")
 	it := item(t, m, "Library/Caches/com.example.app")
-	if !m.selected[it.ID] {
+	if !m.sel.Selected(it.ID) {
 		t.Fatal("the safe item is not pre-selected")
 	}
 	n0, b0 := m.selectedTotal()
@@ -250,8 +250,8 @@ func TestModelTest(t *testing.T) {
 	m = press(m, " ")
 	n1, b1 := m.selectedTotal()
 	view := m.View()
-	if m.selected[it.ID] || n1 != n0-1 || b1 != b0-it.AllocatedBytes {
-		t.Fatalf("after space: selected=%v total %d/%d -> %d/%d", m.selected[it.ID], n0, b0, n1, b1)
+	if m.sel.Selected(it.ID) || n1 != n0-1 || b1 != b0-it.AllocatedBytes {
+		t.Fatalf("after space: selected=%v total %d/%d -> %d/%d", m.sel.Selected(it.ID), n0, b0, n1, b1)
 	}
 	after := selectedLine(t, view)
 	if after == before || !strings.Contains(after, output.Bytes(b1)) {
@@ -268,7 +268,7 @@ func TestModelTest(t *testing.T) {
 		t.Fatalf("no unselected row for the item:\n%s", view)
 	}
 	// Space again selects it again.
-	if m = press(m, " "); !m.selected[it.ID] {
+	if m = press(m, " "); !m.sel.Selected(it.ID) {
 		t.Fatal("space did not select the item again")
 	}
 }
@@ -282,7 +282,7 @@ func TestToggleInfoItem(t *testing.T) {
 	n0, _ := m.selectedTotal()
 	m = press(m, " ")
 	n1, _ := m.selectedTotal()
-	if m.selected[it.ID] || n1 != n0 {
+	if m.sel.Selected(it.ID) || n1 != n0 {
 		t.Fatal("space selected an info item")
 	}
 	if !strings.Contains(m.View(), "ollama rm <model>") || !strings.Contains(m.hint, "ollama rm <model>") {
@@ -297,7 +297,7 @@ func TestBlockedItemRefused(t *testing.T) {
 	m := highlight(t, start(t, f, 100, 30), "Downloads/New.dmg")
 	it := item(t, m, "Downloads/New.dmg")
 	m = press(m, " ")
-	if m.selected[it.ID] {
+	if m.sel.Selected(it.ID) {
 		t.Fatal("selected an item that is too recent")
 	}
 	if !strings.Contains(m.hint, "changed too recently") {
@@ -313,10 +313,10 @@ func TestReviewAndManualSelectable(t *testing.T) {
 	for _, rel := range []string{"go/pkg/mod/github.com", "Library/Developer/Xcode/Archives/2026-01-01"} {
 		m = highlight(t, m, rel)
 		it := item(t, m, rel)
-		if m.selected[it.ID] {
+		if m.sel.Selected(it.ID) {
 			t.Fatalf("%s pre-selected at level safe", rel)
 		}
-		if m = press(m, " "); !m.selected[it.ID] {
+		if m = press(m, " "); !m.sel.Selected(it.ID) {
 			t.Fatalf("%s not selectable: %q", rel, m.hint)
 		}
 	}
@@ -355,8 +355,8 @@ func TestCancel(t *testing.T) {
 func TestApplyWithNothingSelected(t *testing.T) {
 	f := newFx(t, false)
 	m := start(t, f, 100, 30)
-	for id := range m.selected {
-		delete(m.selected, id)
+	for _, id := range m.sel.IDs() {
+		m.sel.Toggle(id)
 	}
 	if m = press(m, "a"); m.state != stateReview || !strings.Contains(m.hint, "Nothing is selected") {
 		t.Fatalf("state %d hint %q", m.state, m.hint)

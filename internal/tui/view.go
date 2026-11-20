@@ -226,7 +226,7 @@ func (m Model) itemLine(it plan.Item, w int, cur bool) string {
 	selectable := it.Tier != string(rules.TierInfo) && len(blockers(it.Reasons)) == 0
 	mark, markSt, pathSt := th.markOff, th.muted, th.text
 	switch {
-	case m.selected[it.ID]:
+	case m.sel.Selected(it.ID):
 		mark, markSt = th.markOn, th.amber
 	case it.Tier == string(rules.TierInfo):
 		mark, pathSt = th.markInfo, th.muted
@@ -291,7 +291,7 @@ func (m Model) detailView(w, h int) string {
 		if cmd != "" {
 			field("Instead", output.SafeText(cmd), th.text)
 		}
-	case m.selected[it.ID]:
+	case m.sel.Selected(it.ID):
 		field("Status", "Selected: goes to the Trash when you apply.", th.amber)
 	default:
 		why := blockers(it.Reasons)
@@ -333,7 +333,7 @@ func (m Model) confirmBox() string {
 	n, b := m.selectedTotal()
 	rulesN := map[string]bool{}
 	for _, it := range m.plan.Items {
-		if m.selected[it.ID] {
+		if m.sel.Selected(it.ID) {
 			rulesN[it.Rule] = true
 		}
 	}
