@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -268,9 +270,13 @@ func TestRestoreCLI(t *testing.T) {
 	}
 }
 
-// End-to-end on a fixture (wave 3 brief; task 4.5's flow): scan --json,
-// clean --apply --json --only <two ids>, history --json, restore --apply;
-// every step exits 0 and the fixture is restored to its original checksum.
+// Task 4.5, end to end on a fixture: scan --json, clean --apply --json
+// --only <two ids> (a safe item and a manual one, which naming consents
+// to), history --json, restore <receipt> --apply; every step exits 0 and the
+// fixture is restored to its original checksum. The home is compared with
+// ContentChecksum (moving an item out and back changes its parent folders'
+// mtimes, which kipple does not promise to keep) and each moved item's own
+// tree with the strict Checksum, directory mtimes included.
 func TestEndToEnd(t *testing.T) {
 	home := cleanFixture(t)
 	before := testutil.ContentChecksum(t, home, ".Trash")
@@ -282,9 +288,11 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("scan exit %d", code)
 	}
 	var ids []string
+	strict := map[string]string{}
 	for _, it := range p.Items {
 		if strings.HasSuffix(it.Path, "/Library/Logs/app") || strings.HasSuffix(it.Path, "/Downloads/Old.dmg") {
 			ids = append(ids, it.ID)
+			strict[it.Path] = itemChecksum(t, it.Path)
 		}
 	}
 	if len(ids) != 2 {
@@ -321,6 +329,31 @@ func TestEndToEnd(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(home, ".Trash")); len(entries) != 0 {
 		t.Fatalf("the Trash still holds %v", entries)
 	}
+	for path, sum := range strict {
+		if itemChecksum(t, path) != sum {
+			t.Errorf("%s differs from its original checksum", path)
+		}
+	}
+}
+
+// itemChecksum is testutil.Checksum of an item's tree plus the item's own
+// mode, mtime and (for a file) contents, which Checksum, rooted at the
+// item, does not cover.
+func itemChecksum(t *testing.T, path string) string {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := fmt.Sprintf("%o %d ", uint32(fi.Mode()), fi.ModTime().UnixNano())
+	if fi.Mode().IsRegular() {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sum + fmt.Sprintf("%x", sha256.Sum256(data))
+	}
+	return sum + testutil.Checksum(t, path)
 }
 
 // "café" with a precomposed é (NFC) and with e plus a combining acute

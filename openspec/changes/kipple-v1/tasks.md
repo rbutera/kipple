@@ -40,7 +40,7 @@ Waves for the /wave skill. Each wave ends with `make check` green (lint, vet, ra
 - [ ] 4.2 Write the full `README.md` (pitch, safety model, install via release binary and `go install`, usage, "For agents" section with scan/inspect/subset-apply/restore flow, exit codes, schema, verification of signatures, comparison table to Mole/Dusty/ElfClean, roadmap) and `llms.txt`; verify by running the agent-section commands against a fixture in a CI step (`scripts/agent-flow-check.sh`)
 - [ ] 4.3 Add `.goreleaser.yaml` (darwin arm64/amd64, universal binary, ldflags version/commit, checksums, archives, ad-hoc codesign hook) and `.github/workflows/release.yml` (on `v*` tags, waits for CI green on the same SHA, goreleaser, cosign keyless signing of `checksums.txt`); verify with `goreleaser release --snapshot --clean` locally and `actionlint`
 - [ ] 4.4 Add `CONTRIBUTING.md` (fixture-only testing rule, how to add a rule with tests), issue templates for "path escaped the allowlist" and "new rule"; verify files exist and the add-a-rule steps work on a scratch rule in a test
-- [ ] 4.5 Integration check: on a fixture home, run `kipple scan --json`, `kipple clean --apply --json --only <two ids>`, `kipple history --json`, `kipple restore <id> --apply`, assert exit codes 0/0/0/0 and the fixture equals its original checksum at the end; verify as `TestEndToEnd` in `cmd/kipple`
+- [x] 4.5 Integration check: on a fixture home, run `kipple scan --json`, `kipple clean --apply --json --only <two ids>`, `kipple history --json`, `kipple restore <id> --apply`, assert exit codes 0/0/0/0 and the fixture equals its original checksum at the end; verify as `TestEndToEnd` in `cmd/kipple`
 
 ## 5. Wave 5: optional GUI
 
