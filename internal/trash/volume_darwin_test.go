@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/rbutera/kipple/internal/testutil"
@@ -113,5 +114,53 @@ func TestFinderTrasher(t *testing.T) {
 	}
 	if _, err := os.Lstat(src); !os.IsNotExist(err) {
 		t.Fatalf("source still present: %v", err)
+	}
+}
+
+// FinderTrasher acts on the approved object: a mismatched identity moves
+// nothing; the approved one lands at the returned path and is gone from
+// its folder.
+func TestFinderTrasherChecksIdentity(t *testing.T) {
+	mnt := mountVolume(t)
+	home := filepath.Join(mnt, "home")
+	if err := os.MkdirAll(filepath.Join(home, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KIPPLE_HOME", home)
+	t.Setenv("KIPPLE_STATE_DIR", filepath.Join(filepath.Dir(mnt), "state"))
+	testutil.GuardRealHome(t)
+	for _, n := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(home, n), []byte(n), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tr, err := NewFinderTrasher(nil)
+	if errors.Is(err, ErrUnsupported) {
+		t.Skip("built without cgo")
+	}
+	fa, _ := os.Lstat(filepath.Join(home, "a.txt"))
+	fb, _ := os.Lstat(filepath.Join(home, "b.txt"))
+	sa, sb := fa.Sys().(*syscall.Stat_t), fb.Sys().(*syscall.Stat_t)
+	pfd := parentFd(t, home)
+	if _, err := tr.TrashExpect(pfd, "a.txt", uint64(sb.Dev), uint64(sb.Ino)); !errors.Is(err, ErrItemChanged) {
+		t.Fatalf("err = %v, want ErrItemChanged", err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, "a.txt")); err != nil {
+		t.Fatal("moved despite the identity mismatch")
+	}
+	dest, err := tr.TrashExpect(pfd, "a.txt", uint64(sa.Dev), uint64(sa.Ino))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Lstat(dest)
+	if err != nil || !os.SameFile(fa, after) {
+		t.Fatalf("not at %s: %v", dest, err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, "a.txt")); !os.IsNotExist(err) {
+		t.Fatal("still in its folder")
+	}
+	dd, _ := os.Lstat(filepath.Join(home, "d"))
+	if dest, err := tr.TrashExpect(pfd, "d", uint64(dd.Sys().(*syscall.Stat_t).Dev), uint64(dd.Sys().(*syscall.Stat_t).Ino)); err != nil || !strings.HasPrefix(dest, mnt+"/") {
+		t.Fatalf("directory: %s %v", dest, err)
 	}
 }

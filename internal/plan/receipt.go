@@ -46,9 +46,10 @@ const (
 	SkipDestinationExists = "destination_exists"
 	// SkipTrashItemMissing: restore found nothing at the recorded Trash path.
 	SkipTrashItemMissing = "trash_item_missing"
-	// SkipTrashItemChanged: the object at the recorded Trash path is not the
-	// one kipple moved there.
-	SkipTrashItemChanged = "trash_item_changed"
+	// SkipTrashItemMismatch: the object at the recorded Trash path is not
+	// the one kipple moved there (its dev, ino, size or mtime differ from the
+	// receipt).
+	SkipTrashItemMismatch = "trash_item_mismatch"
 	// SkipNotInTrash: the receipt's Trash path is not directly inside the
 	// Trash folder kipple uses (receipts are untrusted input).
 	SkipNotInTrash = "not_in_trash"
@@ -63,7 +64,7 @@ var skipOnly = []string{
 	SkipNotFound, SkipInfoTier, SkipPermanentNotAllowed, SkipToolRunning,
 	SkipIdentityChanged, SkipRootChanged, SkipParentChanged, SkipDifferentDevice,
 	SkipTrashChanged, SkipPermissionDenied, SkipMoveFailed,
-	SkipDestinationExists, SkipTrashItemMissing, SkipTrashItemChanged,
+	SkipDestinationExists, SkipTrashItemMissing, SkipTrashItemMismatch,
 	SkipNotInTrash, SkipAlreadyRestored, SkipDeletedPermanently,
 }
 
@@ -72,6 +73,21 @@ var skipOnly = []string{
 func SkipReasons() []string {
 	return append(Reasons(), skipOnly...)
 }
+
+// Movers: how a run moved items.
+const (
+	// MoverRename: renameatx_np from the verified parent descriptor into the
+	// verified ~/.Trash descriptor (the default).
+	MoverRename = "rename"
+	// MoverNSFileManager: NSFileManager trashItemAtURL on a file reference
+	// to the approved object, used when ~/.Trash cannot be opened (no Full
+	// Disk Access).
+	MoverNSFileManager = "nsfilemanager"
+	// MoverDelete: --permanent.
+	MoverDelete = "delete"
+	// MoverNone: nothing needed moving.
+	MoverNone = "none"
+)
 
 // Receipt records one --apply run (specs/clean-apply "Receipts"). Apply
 // writes it before the first move and rewrites it after every item, so a
@@ -88,6 +104,7 @@ type Receipt struct {
 	Level         string        `json:"level" jsonschema:"enum=safe,enum=review"`
 	Permanent     bool          `json:"permanent" jsonschema:"description=The run used --permanent: safe items were deleted, not moved to the Trash."`
 	TrashDir      string        `json:"trash_dir" jsonschema:"description=The Trash folder items were moved into."`
+	Mover         string        `json:"mover" jsonschema:"enum=rename,enum=nsfilemanager,enum=delete,enum=none,description=How items were moved."`
 	PlanGenerated time.Time     `json:"plan_generated_at"`
 	Moved         []MovedItem   `json:"moved"`
 	Skipped       []SkippedItem `json:"skipped"`
@@ -106,8 +123,13 @@ type MovedItem struct {
 	ReclaimableBytes int64 `json:"reclaimable_bytes" jsonschema:"description=Allocated bytes excluding files with other hard links: what emptying the Trash frees."`
 	// Dev and Ino identify the moved object; a rename keeps them, so
 	// restore checks the Trash entry is the same object.
-	Dev        uint64     `json:"dev"`
-	Ino        uint64     `json:"ino"`
+	Dev uint64 `json:"dev"`
+	Ino uint64 `json:"ino"`
+	// Size and Mtime are the moved object's own st_size and st_mtime, which a
+	// rename keeps; restore requires the Trash entry to match them too.
+	Size       int64      `json:"size"`
+	Mtime      time.Time  `json:"mtime"`
+	Mover      string     `json:"mover,omitempty" jsonschema:"enum=rename,enum=nsfilemanager,enum=delete"`
 	MovedAt    time.Time  `json:"moved_at"`
 	Permanent  bool       `json:"permanent,omitempty"`
 	RestoredAt *time.Time `json:"restored_at,omitempty" jsonschema:"description=Set when kipple restore put the item back."`
@@ -143,8 +165,10 @@ type RestoredItem struct {
 type Result struct {
 	SchemaVersion int    `json:"schema_version"`
 	Command       string `json:"command" jsonschema:"enum=clean,enum=restore"`
-	// DryRun is set for kipple restore without --apply: restored then lists
-	// what would be put back, and nothing moved.
+	// DryRun is set when nothing moved: kipple restore without --apply
+	// (restored lists what would be put back) and kipple clean --plan
+	// without --apply (moved lists what would be moved, after every check
+	// apply runs).
 	DryRun      bool           `json:"dry_run"`
 	Home        string         `json:"home"`
 	ReceiptID   string         `json:"receipt_id,omitempty"`

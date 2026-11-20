@@ -27,5 +27,16 @@ func openHomeTrash(*policy.Session, string) (*trash.DirTrasher, error) {
 	return nil, trash.ErrUnsupported
 }
 
-func statAt(int, string) (fs.FileMode, uint64, uint64, error)         { return 0, 0, 0, trash.ErrUnsupported }
 func moveBack(int, string, *policy.Fresh, uint64, uint64, bool) error { return trash.ErrUnsupported }
+
+type fdSource struct{ tr *trash.DirTrasher }
+
+func (s fdSource) dir() string                                    { return "" }
+func (s fdSource) stat(string) (entryInfo, error)                 { return entryInfo{}, trash.ErrUnsupported }
+func (s fdSource) moveOut(string, *policy.Fresh, entryInfo) error { return trash.ErrUnsupported }
+
+type pathSource struct{ d string }
+
+func (s pathSource) dir() string                                    { return s.d }
+func (s pathSource) stat(string) (entryInfo, error)                 { return entryInfo{}, trash.ErrUnsupported }
+func (s pathSource) moveOut(string, *policy.Fresh, entryInfo) error { return trash.ErrUnsupported }

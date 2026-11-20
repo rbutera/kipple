@@ -19,7 +19,10 @@
 //  5. the item moves with renameatx_np(RENAME_EXCL) from that parent
 //     descriptor into the verified Trash descriptor (trash.DirTrasher), which
 //     refuses unless the entry is still the approved (dev, ino). A different
-//     device is skipped, never copied.
+//     device is skipped, never copied. When ~/.Trash cannot be opened (macOS
+//     TCC: no Full Disk Access), Options.Finder supplies the NSFileManager
+//     mover, which trashes a file reference to the same approved object;
+//     when that is missing or refused too, Run returns ErrTrashAccess.
 //
 // Plan files are untrusted: items are matched by ID against a fresh scan,
 // which re-derives each path from its rule; an item whose (dev, ino), or
@@ -91,6 +94,15 @@ type Options struct {
 	// Trash is where items go (the home folder's .Trash, opened through the
 	// session, when nil).
 	Trash *trash.DirTrasher
+	// Finder, when set, is the fallback mover used when the home .Trash
+	// cannot be opened for lack of permission (macOS protects ~/.Trash:
+	// only apps with Full Disk Access can open it). cmd/ sets it to
+	// trash.NewFinderTrasher for the real home. When it is nil, or it too
+	// is refused, Run returns ErrTrashAccess.
+	Finder func() (trash.ExpectTrasher, error)
+	// DryRun runs every check, plan-level and move-time, and moves nothing:
+	// Moved then lists what would be moved. No receipt is written.
+	DryRun bool
 	// Receipts stores the run's receipt.
 	Receipts receipt.Store
 	// KippleVersion is recorded in the receipt.
@@ -107,7 +119,15 @@ type Options struct {
 	// beforeMove, in tests, runs after every check and immediately before
 	// the parent re-check and the move.
 	beforeMove func(plan.Item)
+	// openTrash, in tests, replaces opening the home .Trash.
+	openTrash func() (*trash.DirTrasher, error)
 }
+
+// ErrTrashAccess: the Trash folder cannot be opened (macOS protects
+// ~/.Trash; only apps with Full Disk Access may open it) and the
+// NSFileManager fallback was unavailable or refused too. cmd/ reports it
+// with error code trash_access and how to grant Full Disk Access.
+var ErrTrashAccess = errors.New("kipple cannot use your Trash folder")
 
 // target is an item that passed the plan-level checks.
 type target struct {
@@ -116,20 +136,24 @@ type target struct {
 }
 
 type applier struct {
-	ctx   context.Context
-	o     Options
-	sess  *policy.Session
-	check *scan.Checker
-	trash *trash.DirTrasher
-	procs procs.Inspector
-	now   func() time.Time
-	res   *plan.Result
+	ctx       context.Context
+	o         Options
+	sess      *policy.Session
+	check     *scan.Checker
+	mover     trash.ExpectTrasher
+	moverName string
+	procs     procs.Inspector
+	now       func() time.Time
+	res       *plan.Result
+	// trashDenied is set when the NSFileManager fallback was refused
+	// before anything moved: the run stops with ErrTrashAccess.
+	trashDenied error
 }
 
 // Run executes o.Plan and returns the result. It returns an error, having
 // moved nothing, when home, the Trash or the receipt cannot be used.
 func Run(ctx context.Context, o Options) (plan.Result, error) {
-	res := plan.Result{SchemaVersion: plan.SchemaVersion, Command: "clean", Home: o.Env.Home}
+	res := plan.Result{SchemaVersion: plan.SchemaVersion, Command: "clean", DryRun: o.DryRun, Home: o.Env.Home}
 	res.Normalize()
 	if o.Env.HomeIdentity == nil {
 		return res, errors.New("apply: the home folder's identity is not pinned")
@@ -150,14 +174,42 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	a.check = scan.NewChecker(ctx, sess, o.Rules, o.Git, o.Now())
 
 	targets := a.selectTargets()
-	if len(targets) > 0 && !o.Permanent {
-		if o.Trash != nil {
-			a.trash = o.Trash
-		} else {
-			if a.trash, err = openHomeTrash(sess, o.Env.Home); err != nil {
-				return res, fmt.Errorf("apply: %w", err)
+	if o.DryRun {
+		for _, t := range targets {
+			a.one(t)
+		}
+		res.Normalize()
+		return res, nil
+	}
+	trashDir := o.Env.Home + "/.Trash"
+	switch {
+	case o.Permanent:
+		a.moverName = plan.MoverDelete
+	case len(targets) == 0:
+		a.moverName = plan.MoverNone
+	case o.Trash != nil:
+		a.mover, a.moverName, trashDir = o.Trash, plan.MoverRename, o.Trash.Path()
+	default:
+		open := o.openTrash
+		if open == nil {
+			open = func() (*trash.DirTrasher, error) { return openHomeTrash(sess, o.Env.Home) }
+		}
+		tr, err := open()
+		switch {
+		case err == nil:
+			defer func() { _ = tr.Close() }()
+			a.mover, a.moverName, trashDir = tr, plan.MoverRename, tr.Path()
+		case isPermission(err) && o.Finder != nil:
+			ft, ferr := o.Finder()
+			if ferr != nil {
+				return res, fmt.Errorf("%w: %v; the NSFileManager fallback is unavailable: %v", ErrTrashAccess, err, ferr)
 			}
-			defer func() { _ = a.trash.Close() }()
+			a.mover, a.moverName = ft, plan.MoverNSFileManager
+			res.Warnings = append(res.Warnings, "the Trash folder cannot be opened without Full Disk Access; moving items with NSFileManager instead")
+		case isPermission(err):
+			return res, fmt.Errorf("%w: %v", ErrTrashAccess, err)
+		default:
+			return res, fmt.Errorf("apply: %w", err)
 		}
 	}
 
@@ -173,9 +225,7 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	if rc.Level == "" {
 		rc.Level = rules.LevelSafe
 	}
-	if a.trash != nil {
-		rc.TrashDir = a.trash.Path()
-	}
+	rc.TrashDir, rc.Mover = trashDir, a.moverName
 	path, err := o.Receipts.Create(&rc)
 	if err != nil {
 		return res, fmt.Errorf("apply: cannot write the receipt, so nothing was moved: %w", err)
@@ -186,6 +236,10 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	for _, t := range targets {
 		if saveErr != nil {
 			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the receipt could not be saved")
+			continue
+		}
+		if a.trashDenied != nil {
+			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the Trash cannot be used")
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -205,6 +259,9 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		res.Warnings = append(res.Warnings, "the receipt could not be completed: "+err.Error())
 	}
 	res.Normalize()
+	if a.trashDenied != nil {
+		return res, fmt.Errorf("%w: %v", ErrTrashAccess, a.trashDenied)
+	}
 	return res, nil
 }
 
@@ -393,8 +450,17 @@ func (a *applier) one(t target) {
 		a.skip(it, reason, "the parent folder changed immediately before the move")
 		return
 	}
+	moved := plan.MovedItem{
+		ID: it.ID, Rule: it.Rule, Path: it.Path,
+		Bytes: rc.Measure.AllocatedBytes, ReclaimableBytes: rc.Measure.ReclaimableBytes,
+		Dev: dev, Ino: ino, Size: f.Info.Size(), Mtime: f.Info.ModTime().UTC(), Mover: a.moverName,
+	}
+	if a.o.DryRun {
+		moved.Mover = ""
+		a.res.Moved = append(a.res.Moved, moved)
+		return
+	}
 	a.progress("moving " + it.Path)
-	moved := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, Bytes: rc.Measure.AllocatedBytes, ReclaimableBytes: rc.Measure.ReclaimableBytes, Dev: dev, Ino: ino}
 	var err error
 	if a.o.Permanent {
 		g := a.sess.Guard(r, it.Path)
@@ -411,6 +477,9 @@ func (a *applier) one(t target) {
 		}
 	} else {
 		moved.TrashPath, err = a.trashItem(f, dev, ino, dir)
+		if err != nil && a.moverName == plan.MoverNSFileManager && isPermission(err) && len(a.res.Moved) == 0 {
+			a.trashDenied = err
+		}
 	}
 	if err != nil {
 		a.skip(it, classify(err), err.Error())
@@ -425,11 +494,11 @@ func (a *applier) one(t target) {
 // it (macOS needs write permission on a directory to move it to another
 // folder; Go's module cache is read-only). Contents are never changed.
 func (a *applier) trashItem(f *policy.Fresh, dev, ino uint64, dir *os.File) (string, error) {
-	dest, err := a.trash.TrashExpect(f.ParentFd, f.Name, dev, ino)
+	dest, err := a.mover.TrashExpect(f.ParentFd, f.Name, dev, ino)
 	if err != nil && dir != nil && isPermission(err) {
 		err = withOwnerWrite(dir, func() error {
 			var e error
-			dest, e = a.trash.TrashExpect(f.ParentFd, f.Name, dev, ino)
+			dest, e = a.mover.TrashExpect(f.ParentFd, f.Name, dev, ino)
 			return e
 		})
 	}

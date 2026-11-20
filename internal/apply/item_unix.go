@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"sort"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -254,14 +255,58 @@ func openHomeTrash(sess *policy.Session, home string) (*trash.DirTrasher, error)
 	return trash.NewDirTrasher(e.Dir, path)
 }
 
-// statAt returns the type and identity of name in the directory open at
-// dirfd, without following a symlink.
-func statAt(dirfd int, name string) (fs.FileMode, uint64, uint64, error) {
+func infoOf(st *unix.Stat_t) entryInfo {
+	return entryInfo{kind: policy.StatMode(uint32(st.Mode)), dev: uint64(st.Dev), ino: uint64(st.Ino), size: st.Size, mtime: time.Unix(st.Mtim.Unix()).UTC()}
+}
+
+// fdSource reaches Trash entries through the verified Trash descriptor.
+type fdSource struct{ tr *trash.DirTrasher }
+
+func (s fdSource) dir() string { return s.tr.Path() }
+
+func (s fdSource) stat(name string) (entryInfo, error) {
 	var st unix.Stat_t
-	if err := fstatat(dirfd, name, &st); err != nil {
-		return 0, 0, 0, err
+	if err := fstatat(s.tr.Fd(), name, &st); err != nil {
+		return entryInfo{}, err
 	}
-	return policy.StatMode(uint32(st.Mode)), uint64(st.Dev), uint64(st.Ino), nil
+	return infoOf(&st), nil
+}
+
+func (s fdSource) moveOut(name string, dst *policy.Fresh, want entryInfo) error {
+	return moveBack(s.tr.Fd(), name, dst, want.dev, want.ino, want.kind.IsDir())
+}
+
+// pathSource reaches Trash entries by path, for when the Trash folder
+// cannot be opened. Each move is checked: the entry must be the approved
+// object immediately before, and the object that arrives must be it.
+type pathSource struct{ d string }
+
+func (s pathSource) dir() string { return s.d }
+
+func (s pathSource) stat(name string) (entryInfo, error) {
+	var st unix.Stat_t
+	if err := unix.Lstat(s.d+"/"+name, &st); err != nil {
+		return entryInfo{}, err
+	}
+	return infoOf(&st), nil
+}
+
+func (s pathSource) moveOut(name string, dst *policy.Fresh, want entryInfo) error {
+	got, err := s.stat(name)
+	if err != nil {
+		return err
+	}
+	if got.dev != want.dev || got.ino != want.ino {
+		return trash.ErrItemChanged
+	}
+	if err := trash.MoveNoReplaceFrom(s.d+"/"+name, dst.ParentFd, dst.Name); err != nil {
+		return err
+	}
+	var st unix.Stat_t
+	if err := fstatat(dst.ParentFd, dst.Name, &st); err != nil || uint64(st.Dev) != want.dev || uint64(st.Ino) != want.ino {
+		return fmt.Errorf("%w: the object restored to %s is not the approved one", trash.ErrItemChanged, dst.Name)
+	}
+	return nil
 }
 
 // moveBack moves name from the Trash descriptor to the authorised

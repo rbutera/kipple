@@ -20,3 +20,18 @@ func MoveNoReplace(fromFd int, from string, toFd int, to string) error {
 		}
 	}
 }
+
+// MoveNoReplaceFrom is MoveNoReplace with the source given as an absolute,
+// clean path (restore uses it when the Trash folder cannot be opened). The
+// caller checks the source's identity before and after.
+func MoveNoReplaceFrom(from string, toFd int, to string) error {
+	if !absClean(from) || !validName(to) {
+		return ErrInvalidName
+	}
+	for {
+		err := unix.RenameatxNp(unix.AT_FDCWD, from, toFd, to, unix.RENAME_EXCL)
+		if err != unix.EINTR {
+			return err
+		}
+	}
+}

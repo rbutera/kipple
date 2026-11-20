@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/policy"
+	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/testutil"
 	"github.com/rbutera/kipple/internal/trash"
 )
@@ -104,5 +106,47 @@ func TestTrashOnAnotherDevice(t *testing.T) {
 				t.Errorf("copied into the other volume: %s", e.Name())
 			}
 		}
+	}
+}
+
+// The real NSFileManager fallback, end to end, on a fixture home that lives
+// on its own disk image (so the item goes to that volume's .Trashes, never
+// to the real ~/.Trash): opening .Trash fails with EPERM, the item is
+// trashed through a file reference to the approved object, and the receipt
+// records the mover.
+func TestFinderFallbackOnVolume(t *testing.T) {
+	mnt := mountVolume(t)
+	home := filepath.Join(mnt, "home")
+	for _, d := range []string{home + "/.Trash", home + "/Library/Caches/com.example.a"} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(home+"/Library/Caches/com.example.a/blob", []byte("cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KIPPLE_HOME", home)
+	t.Setenv("KIPPLE_STATE_DIR", filepath.Join(filepath.Dir(mnt), "state"))
+	testutil.GuardRealHome(t)
+	fi, err := os.Lstat(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, ino, _ := policy.Identity(fi)
+	store, _ := receipt.Open(filepath.Join(filepath.Dir(mnt), "state"))
+	f := &fx{t: t, home: home, env: policy.Env{Home: home, HomeIdentity: &policy.FileIdentity{Dev: dev, Ino: ino}}, store: store}
+	o := f.opts(f.scan(""))
+	o.openTrash = errTrashEPERM(home)
+	o.Finder = func() (trash.ExpectTrasher, error) { return trash.NewFinderTrasher(nil) }
+	res := f.run(o)
+	if len(res.Moved) != 1 || !strings.HasPrefix(res.Moved[0].TrashPath, mnt+"/.Trashes/") {
+		t.Fatalf("%+v", res)
+	}
+	if exists(home + "/Library/Caches/com.example.a") {
+		t.Fatal("still in place")
+	}
+	e, err := store.Load(res.ReceiptID)
+	if err != nil || e.Receipt.Mover != plan.MoverNSFileManager {
+		t.Fatalf("receipt %+v %v", e.Receipt, err)
 	}
 }

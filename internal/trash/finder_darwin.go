@@ -6,27 +6,65 @@ package trash
 #cgo CFLAGS: -x objective-c -fobjc-arc
 #cgo LDFLAGS: -framework Foundation
 #import <Foundation/Foundation.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
-// kipple_trash asks NSFileManager to move path to the Trash. On success it
-// returns the resulting path (malloc'd); on failure NULL with *err set to a
-// malloc'd description.
-static char *kipple_trash(const char *path, char **err) {
+enum { KT_OK = 0, KT_CHANGED = 1, KT_PERMISSION = 2, KT_ERROR = 3 };
+
+static int isPermission(NSError *e) {
+	for (NSError *x = e; x != nil; x = x.userInfo[NSUnderlyingErrorKey]) {
+		if ([x.domain isEqualToString:NSCocoaErrorDomain] &&
+		    (x.code == NSFileWriteNoPermissionError || x.code == NSFileReadNoPermissionError)) {
+			return 1;
+		}
+		if ([x.domain isEqualToString:NSPOSIXErrorDomain] && (x.code == EPERM || x.code == EACCES)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// kipple_trash_object trashes the object at path, which must be the object
+// (dev, ino). It makes a file reference URL (bound to the object, not the
+// name), checks that it resolves back to path and that lstat there is
+// (dev, ino), and trashes through the reference. Afterwards the reference
+// must resolve to the returned path, and, where lstat is allowed there, the
+// object there must be (dev, ino).
+static int kipple_trash_object(const char *path, unsigned long long dev, unsigned long long ino, char **out) {
 	@autoreleasepool {
-		NSString *p = [[NSFileManager defaultManager] stringWithFileSystemRepresentation:path length:strlen(path)];
-		NSURL *url = [NSURL fileURLWithPath:p isDirectory:NO];
+		NSFileManager *fm = [NSFileManager defaultManager];
+		NSString *p = [fm stringWithFileSystemRepresentation:path length:strlen(path)];
+		NSURL *ref = [[NSURL fileURLWithPath:p] fileReferenceURL];
+		if (ref == nil) {
+			*out = strdup("the item has no file reference (it vanished?)");
+			return KT_CHANGED;
+		}
+		NSString *now = [[ref filePathURL] path];
+		struct stat st;
+		if (now == nil || ![now isEqualToString:p] || lstat([now fileSystemRepresentation], &st) != 0 ||
+		    (unsigned long long)st.st_dev != dev || (unsigned long long)st.st_ino != ino) {
+			*out = strdup("the item is not the approved object");
+			return KT_CHANGED;
+		}
 		NSURL *result = nil;
 		NSError *e = nil;
-		if (![[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:&result error:&e]) {
-			*err = strdup(e ? [[e localizedDescription] UTF8String] : "unknown error");
-			return NULL;
+		if (![fm trashItemAtURL:ref resultingItemURL:&result error:&e] || result == nil) {
+			*out = strdup(e ? [[e description] UTF8String] : "NSFileManager returned no destination");
+			return e && isPermission(e) ? KT_PERMISSION : KT_ERROR;
 		}
-		if (result == nil) {
-			*err = strdup("NSFileManager returned no destination");
-			return NULL;
+		NSString *dest = [result path];
+		NSString *where = [[ref filePathURL] path];
+		*out = strdup([dest fileSystemRepresentation]);
+		if (where == nil || ![where isEqualToString:dest]) {
+			return KT_CHANGED;
 		}
-		return strdup([result fileSystemRepresentation]);
+		if (lstat([dest fileSystemRepresentation], &st) == 0 &&
+		    ((unsigned long long)st.st_dev != dev || (unsigned long long)st.st_ino != ino)) {
+			return KT_CHANGED;
+		}
+		return KT_OK;
 	}
 }
 */
@@ -35,7 +73,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
+	"io/fs"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -45,14 +83,15 @@ import (
 
 // FinderTrasher moves items with NSFileManager trashItemAtURL, which picks
 // the Trash for the item's volume (~/.Trash, or <volume>/.Trashes/<uid>),
-// resolves name collisions, and returns where the item landed.
+// resolves name collisions, and returns where the item landed. It works
+// without Full Disk Access, which opening ~/.Trash directly needs.
 //
-// The API takes a path, so FinderTrasher derives it from the parent
-// descriptor with F_GETPATH, checks that the path still reaches the very
-// object the descriptor holds, and after the move checks that the object at
-// the returned path is that object. When Expect is set, the item must land
-// directly inside that verified directory. The descriptor-based DirTrasher
-// has no window between check and move; apply uses it by default.
+// It acts on the object, not the name: the path comes from the verified
+// parent descriptor (F_GETPATH) and the stored name, is turned into a file
+// reference URL bound to that object, and is trashed through the reference
+// only after the reference is confirmed to be the approved (dev, ino).
+// Afterwards the parent descriptor must no longer hold the object under
+// that name, and the reference must resolve to the returned path.
 type FinderTrasher struct {
 	// Expect, when set, is the Trash folder the item must arrive in.
 	Expect *DirTrasher
@@ -60,57 +99,80 @@ type FinderTrasher struct {
 
 // NewFinderTrasher returns a FinderTrasher. It fails only in builds without
 // cgo (finder_nocgo.go).
-func NewFinderTrasher(expect *DirTrasher) (Trasher, error) {
+func NewFinderTrasher(expect *DirTrasher) (ExpectTrasher, error) {
 	return FinderTrasher{Expect: expect}, nil
 }
 
-// Trash implements Trasher.
+// Trash implements Trasher for whatever object is at name now.
 func (f FinderTrasher) Trash(parentFd int, name string) (string, error) {
+	var st unix.Stat_t
+	if err := fstatat(parentFd, name, &st); err != nil {
+		return "", fmt.Errorf("trash: %s: %w", name, err)
+	}
+	return f.TrashExpect(parentFd, name, uint64(st.Dev), uint64(st.Ino))
+}
+
+// TrashExpect implements ExpectTrasher.
+func (f FinderTrasher) TrashExpect(parentFd int, name string, dev, ino uint64) (string, error) {
 	if !validName(name) {
 		return "", ErrInvalidName
 	}
-	var ist unix.Stat_t
-	if err := fstatat(parentFd, name, &ist); err != nil {
+	var st unix.Stat_t
+	if err := fstatat(parentFd, name, &st); err != nil {
 		return "", fmt.Errorf("trash: %s: %w", name, err)
+	}
+	if uint64(st.Dev) != dev || uint64(st.Ino) != ino {
+		return "", ErrItemChanged
 	}
 	dir, err := policy.DescriptorPath(parentFd)
 	if err != nil {
 		return "", fmt.Errorf("trash: parent of %s: %w", name, err)
 	}
-	src := filepath.Join(dir, name)
-	var pst unix.Stat_t
-	if err := unix.Lstat(src, &pst); err != nil || pst.Dev != ist.Dev || pst.Ino != ist.Ino {
-		return "", ErrItemChanged
-	}
 	if f.Expect != nil {
 		if err := f.Expect.Verify(); err != nil {
 			return "", err
 		}
-		if uint64(ist.Dev) != f.Expect.dev {
+		if dev != f.Expect.dev {
 			return "", ErrDifferentDevice
 		}
 	}
-	cs := C.CString(src)
+	cs := C.CString(dir + "/" + name)
 	defer C.free(unsafe.Pointer(cs))
-	var cerr *C.char
-	res := C.kipple_trash(cs, &cerr)
-	if res == nil {
-		msg := C.GoString(cerr)
-		C.free(unsafe.Pointer(cerr))
-		return "", fmt.Errorf("trash: NSFileManager: %s", msg)
+	var out *C.char
+	code := C.kipple_trash_object(cs, C.ulonglong(dev), C.ulonglong(ino), &out)
+	msg := C.GoString(out)
+	C.free(unsafe.Pointer(out))
+	switch code {
+	case C.KT_OK:
+	case C.KT_CHANGED:
+		if msg != "" && msg[0] == '/' {
+			return msg, fmt.Errorf("%w: NSFileManager moved something other than the approved item to %s", ErrItemChanged, msg)
+		}
+		return "", fmt.Errorf("%w: %s", ErrItemChanged, msg)
+	case C.KT_PERMISSION:
+		return "", fmt.Errorf("trash: NSFileManager: %s: %w", msg, fs.ErrPermission)
+	default:
+		return "", errors.New("trash: NSFileManager: " + msg)
 	}
-	dest := C.GoString(res)
-	C.free(unsafe.Pointer(res))
-
-	var dst unix.Stat_t
-	if err := unix.Lstat(dest, &dst); err != nil || dst.Dev != ist.Dev || dst.Ino != ist.Ino {
-		return dest, fmt.Errorf("%w: %s is not the object that was trashed", ErrItemChanged, dest)
+	dest := msg
+	// The approved object must be gone from its parent.
+	if err := fstatat(parentFd, name, &st); err == nil && uint64(st.Dev) == dev && uint64(st.Ino) == ino {
+		return dest, fmt.Errorf("%w: the item is still in its folder after NSFileManager reported %s", ErrItemChanged, dest)
 	}
 	if f.Expect != nil {
 		var pd unix.Stat_t
-		if err := unix.Lstat(filepath.Dir(dest), &pd); err != nil || uint64(pd.Dev) != f.Expect.dev || uint64(pd.Ino) != f.Expect.ino {
+		if err := unix.Lstat(dest[:len(dest)-len(lastName(dest))-1], &pd); err != nil || uint64(pd.Dev) != f.Expect.dev || uint64(pd.Ino) != f.Expect.ino {
 			return dest, errors.New("trash: NSFileManager moved the item outside the expected Trash folder: " + dest)
 		}
 	}
 	return dest, nil
+}
+
+func lastName(p string) string {
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' {
+			return p[i+1:]
+		}
+	}
+	return p
 }

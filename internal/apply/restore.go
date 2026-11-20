@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"time"
 
@@ -40,6 +41,8 @@ type RestoreOptions struct {
 
 	// beforeMove, in tests, runs immediately before the parent re-check.
 	beforeMove func(plan.MovedItem)
+	// openTrash, in tests, replaces opening the home .Trash.
+	openTrash func() (*trash.DirTrasher, error)
 }
 
 // Restore moves items recorded in a receipt from the Trash back to their
@@ -116,16 +119,32 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 	if len(todo) == 0 {
 		return res, nil
 	}
-	tr := o.Trash
-	if tr == nil {
-		if tr, err = openHomeTrash(sess, o.Env.Home); err != nil {
+	var src trashSource
+	if o.Trash != nil {
+		if err := o.Trash.Verify(); err != nil {
 			return res, fmt.Errorf("restore: %w", err)
 		}
-		defer func() { _ = tr.Close() }()
+		src = fdSource{o.Trash}
+	} else {
+		open := o.openTrash
+		if open == nil {
+			open = func() (*trash.DirTrasher, error) { return openHomeTrash(sess, o.Env.Home) }
+		}
+		tr, err := open()
+		switch {
+		case err == nil:
+			defer func() { _ = tr.Close() }()
+			src = fdSource{tr}
+		case isPermission(err):
+			// No Full Disk Access: reach each entry by its path in the Trash,
+			// with the same identity checks before and after the move.
+			src = pathSource{d: o.Env.Home + "/.Trash"}
+			res.Warnings = append(res.Warnings, "the Trash folder cannot be opened without Full Disk Access; reaching items by path")
+		default:
+			return res, fmt.Errorf("restore: %w", err)
+		}
 	}
-	if err := tr.Verify(); err != nil {
-		return res, fmt.Errorf("restore: %w", err)
-	}
+	var denied error
 
 	annotated := false
 	for _, m := range todo {
@@ -133,21 +152,30 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			skip(m, plan.SkipMoveFailed, "not attempted: interrupted")
 			continue
 		}
-		name := filepath.Base(m.TrashPath)
-		if m.TrashPath == "" || filepath.Dir(m.TrashPath) != tr.Path() || !validName(name) {
-			skip(m, plan.SkipNotInTrash, "the recorded Trash path is not directly inside "+tr.Path())
+		if denied != nil {
+			skip(m, plan.SkipMoveFailed, "not attempted: the Trash cannot be used")
 			continue
 		}
-		kind, dev, ino, err := statAt(tr.Fd(), name)
+		name := filepath.Base(m.TrashPath)
+		if m.TrashPath == "" || filepath.Dir(m.TrashPath) != src.dir() || !validName(name) {
+			skip(m, plan.SkipNotInTrash, "the recorded Trash path is not directly inside "+src.dir())
+			continue
+		}
+		info, err := src.stat(name)
 		if err != nil {
+			if isPermission(err) && len(res.Restored) == 0 {
+				denied = err
+				skip(m, plan.SkipMoveFailed, "the Trash cannot be used: "+err.Error())
+				continue
+			}
 			skip(m, plan.SkipTrashItemMissing, "nothing at "+m.TrashPath)
 			continue
 		}
-		if m.Dev == 0 || dev != m.Dev || ino != m.Ino {
-			skip(m, plan.SkipTrashItemChanged, m.TrashPath+" is not the object kipple moved there")
+		if m.Dev == 0 || info.dev != m.Dev || info.ino != m.Ino || info.size != m.Size || !info.mtime.Equal(m.Mtime) {
+			skip(m, plan.SkipTrashItemMismatch, m.TrashPath+" is not the object kipple moved there (identity, size or modification time differ from the receipt)")
 			continue
 		}
-		dst, d := sess.AuthorizeDestination(ruleByID[m.Rule], m.Path, kind)
+		dst, d := sess.AuthorizeDestination(ruleByID[m.Rule], m.Path, info.kind)
 		if !d.Allowed {
 			reason := plan.Refused(d.Reason)
 			if d.Reason == policy.ReasonDestinationExists {
@@ -174,9 +202,12 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			skip(m, reason, "the destination folder changed immediately before the move")
 			continue
 		}
-		err = moveBack(tr.Fd(), name, dst, dev, ino, kind.IsDir())
+		err = src.moveOut(name, dst, info)
 		_ = dst.Close()
 		if err != nil {
+			if isPermission(err) && len(res.Restored) == 0 {
+				denied = err
+			}
 			skip(m, classify(err), err.Error())
 			continue
 		}
@@ -191,7 +222,26 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 		}
 	}
 	res.Normalize()
+	if denied != nil {
+		return res, fmt.Errorf("%w: %v", ErrTrashAccess, denied)
+	}
 	return res, nil
+}
+
+// entryInfo is a Trash entry's type and identity.
+type entryInfo struct {
+	kind     fs.FileMode
+	dev, ino uint64
+	size     int64
+	mtime    time.Time
+}
+
+// trashSource reaches entries of the Trash folder: by its verified
+// descriptor (fdSource) or, without Full Disk Access, by path (pathSource).
+type trashSource interface {
+	dir() string
+	stat(name string) (entryInfo, error)
+	moveOut(name string, dst *policy.Fresh, want entryInfo) error
 }
 
 func validName(name string) bool {

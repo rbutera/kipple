@@ -2,7 +2,10 @@ package apply
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/testutil"
+	"github.com/rbutera/kipple/internal/trash"
 )
 
 // cleaned runs a clean of threeSafe and returns the fixture, the receipt,
@@ -126,7 +130,7 @@ func TestRestoreUntrustedReceipt(t *testing.T) {
 	want := map[string]string{
 		bad.Receipt.Moved[0].ID: plan.Refused(policy.ReasonDenylisted),
 		bad.Receipt.Moved[1].ID: plan.SkipNotInTrash,
-		bad.Receipt.Moved[2].ID: plan.SkipTrashItemChanged,
+		bad.Receipt.Moved[2].ID: plan.SkipTrashItemMismatch,
 	}
 	for _, s := range res.Skipped {
 		if want[s.ID] != s.Reason {
@@ -171,5 +175,69 @@ func TestRestoreParentSwapped(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(f.abs("decoy")); len(entries) != 0 {
 		t.Fatal("restored through the swapped parent")
+	}
+}
+
+// Red-team finding: a forged receipt cannot resurrect a Trash entry kipple
+// never created. The entry must match the receipt's dev, ino, size and
+// mtime, read through the verified Trash descriptor.
+func TestRestoreForgedReceiptForeignTrashEntry(t *testing.T) {
+	f, e, _ := cleaned(t)
+	foreign := f.abs(".Trash/foreign-secret")
+	if err := os.WriteFile(foreign, []byte("not kipple's"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	forged := e
+	forged.Receipt.Moved = append([]plan.MovedItem(nil), e.Receipt.Moved...)
+	forged.Receipt.Moved[0].TrashPath = foreign
+	stale := forged.Receipt.Moved[1]
+	stale.Mtime = stale.Mtime.Add(time.Second)
+	forged.Receipt.Moved[1] = stale
+	res := f.restore(forged, true, forged.Receipt.Moved[0].ID, stale.ID)
+	if len(res.Restored) != 0 || len(res.Skipped) != 2 {
+		t.Fatalf("%+v", res)
+	}
+	for _, s := range res.Skipped {
+		if s.Reason != plan.SkipTrashItemMismatch {
+			t.Errorf("%s: %s, want %s", s.ID, s.Reason, plan.SkipTrashItemMismatch)
+		}
+	}
+	if !exists(foreign) || exists(forged.Receipt.Moved[0].Path) {
+		t.Fatal("the foreign Trash entry was moved")
+	}
+}
+
+// Without Full Disk Access the Trash folder cannot be opened: restore
+// reaches entries by path with the same identity checks.
+func TestRestoreWithoutTrashDescriptor(t *testing.T) {
+	f, e, sums := cleaned(t)
+	store := f.store
+	o := RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true,
+		openTrash: func() (*trash.DirTrasher, error) {
+			return nil, &fs.PathError{Op: "open", Path: f.abs(".Trash"), Err: syscall.EPERM}
+		}}
+	res, err := Restore(context.Background(), o)
+	if err != nil || len(res.Restored) != 3 || len(res.Warnings) == 0 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	for p, sum := range sums {
+		if testutil.Checksum(t, p) != sum {
+			t.Errorf("%s not restored intact", p)
+		}
+	}
+}
+
+// When neither the Trash descriptor nor the paths inside it can be used,
+// restore fails with ErrTrashAccess and moves nothing.
+func TestRestoreTrashAccessDenied(t *testing.T) {
+	f, e, _ := cleaned(t)
+	if err := os.Chmod(f.abs(".Trash"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.abs(".Trash"), 0o700) })
+	store := f.store
+	res, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true})
+	if !errors.Is(err, ErrTrashAccess) || len(res.Restored) != 0 {
+		t.Fatalf("err %v result %+v", err, res)
 	}
 }

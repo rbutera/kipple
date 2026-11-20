@@ -27,6 +27,7 @@ package trash
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 )
 
@@ -55,7 +56,20 @@ type Trasher interface {
 	Trash(parentFd int, name string) (string, error)
 }
 
+// ExpectTrasher is a Trasher that can also refuse, moving nothing, unless
+// the entry is the approved object (dev, ino). DirTrasher and FinderTrasher
+// implement it; apply uses it.
+type ExpectTrasher interface {
+	Trasher
+	TrashExpect(parentFd int, name string, dev, ino uint64) (string, error)
+}
+
 // validName reports whether name is a single, ordinary directory entry name.
 func validName(name string) bool {
 	return name != "" && name != "." && name != ".." && !strings.ContainsRune(name, '/') && !strings.ContainsRune(name, 0)
+}
+
+// absClean reports whether p is absolute and clean.
+func absClean(p string) bool {
+	return p != "" && p[0] == '/' && filepath.Clean(p) == p && !strings.ContainsRune(p, 0)
 }
