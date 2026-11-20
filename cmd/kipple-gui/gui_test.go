@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -269,5 +270,70 @@ func TestSystemFonts(t *testing.T) {
 	}
 	if !isSFNT(f.bold.Content()) {
 		t.Fatal("the extracted bold face is not a font file")
+	}
+}
+
+// Holding ⌘⌫ repeats the shortcut (Fyne passes key repeats on, and AppKit
+// repeats menu key equivalents). The repeats must never confirm the sheet:
+// only a ⌘⌫ after a key release, with the sheet up for a second, moves.
+func TestHeldShortcutDoesNotConfirm(t *testing.T) {
+	home := fixture(t)
+	before := testutil.Checksum(t, home)
+	u := newTestUI(t, false)
+	var mu sync.Mutex
+	u.do = func(fn func()) { mu.Lock(); defer mu.Unlock(); fn() }
+	clock := time.Now()
+	u.now = func() time.Time { return clock }
+	u.m.ScanNow()
+	u.update()
+
+	u.moveToTrash() // opens the sheet
+	u.moveToTrash() // the same press, or its first repeat
+	clock = clock.Add(300 * time.Millisecond)
+	u.moveToTrash() // a repeat at 300 ms
+	clock = clock.Add(2 * time.Second)
+	u.moveToTrash() // still held after 2 s: no key-up yet
+	if u.m.Sheet() != guimodel.SheetConfirm {
+		t.Fatalf("sheet %d: a held ⌘⌫ confirmed the move", u.m.Sheet())
+	}
+	if testutil.Checksum(t, home) != before {
+		t.Fatal("the fixture changed")
+	}
+
+	// Released, then pressed again: moves.
+	u.keyUp(&fyne.KeyEvent{Name: fyne.KeyBackspace})
+	clock = clock.Add(400 * time.Millisecond)
+	u.moveToTrash()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		done := u.m.Screen() == guimodel.ScreenDone
+		mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the deliberate second ⌘⌫ did not move")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A release that comes too soon after the sheet opened is not enough.
+func TestShortcutNeedsTheSheetUpForASecond(t *testing.T) {
+	home := fixture(t)
+	before := testutil.Checksum(t, home)
+	u := newTestUI(t, false)
+	clock := time.Now()
+	u.now = func() time.Time { return clock }
+	u.m.ScanNow()
+	u.update()
+	u.moveToTrash()
+	clock = clock.Add(200 * time.Millisecond)
+	u.keyUp(&fyne.KeyEvent{Name: fyne.KeyBackspace})
+	clock = clock.Add(400 * time.Millisecond)
+	u.moveToTrash()
+	if u.m.Sheet() != guimodel.SheetConfirm || testutil.Checksum(t, home) != before {
+		t.Fatalf("sheet %d: ⌘⌫ confirmed after 0.6 s", u.m.Sheet())
 	}
 }

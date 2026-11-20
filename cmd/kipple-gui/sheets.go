@@ -103,11 +103,12 @@ func (u *ui) confirmSheet() (fyne.CanvasObject, fyne.Focusable) {
 		col.Add(container.NewBorder(nil, nil, container.NewHBox(bar, spacer(8, 1)), nil, para(v.Note, cInk, theme.SizeNameText, false)))
 	}
 	cancel := newButton("Cancel", false, func() { u.m.CancelConfirm(); u.update() })
-	move := newButton("Move to Trash", true, u.moveToTrash)
+	move := newButton("Move to Trash", true, u.apply)
 	if !v.CanMove {
 		move.Disable()
 	}
 	cancel.fallback, move.fallback = u.typedKey, u.typedKey
+	cancel.keyUp, move.keyUp = u.keyUp, u.keyUp
 	col.Add(spacer(1, 12))
 	col.Add(buttonsRight(cancel, move))
 	return col, cancel

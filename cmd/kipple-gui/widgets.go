@@ -381,6 +381,19 @@ type kbutton struct {
 	widget.Button
 	// fallback receives the keys the button does not handle (Esc).
 	fallback func(*fyne.KeyEvent)
+	// keyUp receives key releases while the button has focus (the window
+	// sees none then).
+	keyUp func(*fyne.KeyEvent)
+}
+
+// KeyDown implements desktop.Keyable.
+func (b *kbutton) KeyDown(*fyne.KeyEvent) {}
+
+// KeyUp implements desktop.Keyable.
+func (b *kbutton) KeyUp(ev *fyne.KeyEvent) {
+	if b.keyUp != nil {
+		b.keyUp(ev)
+	}
 }
 
 func newButton(label string, primary bool, tapped func()) *kbutton {

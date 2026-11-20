@@ -37,11 +37,18 @@ type ui struct {
 	sheet     fyne.CanvasObject
 	sheetKind guimodel.Sheet
 	last      map[string]time.Time
-	menu      *fyne.MainMenu
+	// now is the clock (time.Now; tests replace it).
+	now func() time.Time
+	// confirmAt is when the confirmation opened, and keyReleased whether a
+	// Backspace key-up has been seen since; together they keep a held ⌘⌫
+	// (key repeat) from confirming a sheet nobody has read.
+	confirmAt   time.Time
+	keyReleased bool
+	menu        *fyne.MainMenu
 }
 
 func newUI(a fyne.App, w fyne.Window, th *kippleTheme, m *guimodel.Model) *ui {
-	u := &ui{app: a, win: w, th: th, m: m, do: fyne.Do, last: map[string]time.Time{}}
+	u := &ui{app: a, win: w, th: th, m: m, do: fyne.Do, last: map[string]time.Time{}, now: time.Now}
 	u.open = func(args ...string) {
 		cmd := exec.Command("/usr/bin/open", args...) // never a shell
 		if err := cmd.Start(); err == nil {
@@ -50,6 +57,9 @@ func newUI(a fyne.App, w fyne.Window, th *kippleTheme, m *guimodel.Model) *ui {
 	}
 	u.quit = a.Quit
 	w.Canvas().SetOnTypedKey(u.typedKey)
+	if dc, ok := w.Canvas().(desktop.Canvas); ok {
+		dc.SetOnKeyUp(u.keyUp)
+	}
 	u.shortcuts()
 	return u
 }
@@ -118,8 +128,12 @@ func (u *ui) runScan(job guimodel.ScanJob, ok bool) {
 	}()
 }
 
-// moveToTrash is ⌘⌫ and the Move buttons: it opens the confirmation from
-// the review screen, and moves from the confirmation.
+// moveToTrash is ⌘⌫ (menu or canvas) and the action bar's Move to Trash…:
+// it opens the confirmation from the review screen. A second ⌘⌫ moves from
+// the confirmation, but only once the sheet has been up for confirmHold and
+// the key has been released since it opened, so holding ⌘⌫ (which macOS
+// and Fyne repeat) never confirms a sheet that was not read. The sheet's
+// own Move to Trash button moves at once.
 func (u *ui) moveToTrash() {
 	if !u.debounce("move") {
 		return
@@ -127,9 +141,26 @@ func (u *ui) moveToTrash() {
 	switch u.m.Sheet() {
 	case guimodel.SheetNone:
 		u.m.OpenConfirm()
+		if u.m.Sheet() == guimodel.SheetConfirm {
+			u.confirmAt, u.keyReleased = u.now(), false
+		}
 		u.update()
 	case guimodel.SheetConfirm:
+		if !u.keyReleased || u.now().Sub(u.confirmAt) < confirmHold {
+			return
+		}
 		u.apply()
+	}
+}
+
+// confirmHold is how long the confirmation must have been up before ⌘⌫
+// confirms it.
+const confirmHold = time.Second
+
+// keyUp notes a released Backspace while the confirmation is up.
+func (u *ui) keyUp(ev *fyne.KeyEvent) {
+	if ev.Name == fyne.KeyBackspace && u.m.Sheet() == guimodel.SheetConfirm {
+		u.keyReleased = true
 	}
 }
 
@@ -162,7 +193,7 @@ func (u *ui) putBack() {
 // debounce ignores a repeat of the same action within 250ms, so one key
 // press that reaches both a menu and the canvas never acts twice.
 func (u *ui) debounce(key string) bool {
-	now := time.Now()
+	now := u.now()
 	if t, ok := u.last[key]; ok && now.Sub(t) < 250*time.Millisecond {
 		return false
 	}
