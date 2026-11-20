@@ -420,3 +420,45 @@ func TestPendingItemIsRestored(t *testing.T) {
 		t.Fatal("the pending entry was not annotated")
 	}
 }
+
+// Item 8: a .Trash that is a symlink is never used, by clean or by
+// restore, and nothing reaches the folder it points to.
+func TestTrashSymlinkIsRefused(t *testing.T) {
+	f, e, _ := cleaned(t)
+	if err := os.Rename(f.abs(".Trash"), f.abs("real-trash")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.abs("elsewhere"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(f.abs("elsewhere"), f.abs(".Trash")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Apply: true}); err == nil || errors.Is(err, ErrTrashAccess) {
+		t.Fatalf("restore through a symlinked .Trash: %v", err)
+	}
+	g := newFx(t, threeSafe())
+	if err := os.Remove(g.abs(".Trash")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(g.abs("elsewhere"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(g.abs("elsewhere"), g.abs(".Trash")); err != nil {
+		t.Fatal(err)
+	}
+	p := g.scan("")
+	if _, err := Run(context.Background(), g.opts(p)); err == nil || errors.Is(err, ErrTrashAccess) {
+		t.Fatalf("clean through a symlinked .Trash: %v", err)
+	}
+	for _, d := range []string{f.abs("elsewhere"), g.abs("elsewhere")} {
+		if entries, _ := os.ReadDir(d); len(entries) != 0 {
+			t.Fatalf("something reached %s: %v", d, entries)
+		}
+	}
+	for _, it := range p.Items {
+		if !exists(it.Path) {
+			t.Fatalf("%s moved", it.Path)
+		}
+	}
+}
