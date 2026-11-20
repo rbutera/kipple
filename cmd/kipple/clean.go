@@ -6,42 +6,22 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/rbutera/kipple/cmd/internal/launch"
 	"github.com/rbutera/kipple/internal/apply"
 	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/rules"
-	"github.com/rbutera/kipple/internal/trash"
 )
 
-// stateDir is $KIPPLE_STATE_DIR, or ~/Library/Application Support/kipple
-// under the effective home.
-func (a *app) stateDir(h homeEnv) (string, error) {
-	if d := a.rt.getenv("KIPPLE_STATE_DIR"); d != "" {
-		if !filepath.IsAbs(d) {
-			return "", fail(codeReceipt, "KIPPLE_STATE_DIR %q is not an absolute path", d)
-		}
-		return filepath.Clean(d), nil
-	}
-	return filepath.Join(h.home, "Library", "Application Support", "kipple"), nil
-}
-
 func (a *app) store(h homeEnv) (receipt.Store, error) {
-	dir, err := a.stateDir(h)
-	if err != nil {
-		return receipt.Store{}, err
-	}
-	s, err := receipt.Open(dir)
-	if err != nil {
-		return receipt.Store{}, fail(codeReceipt, "%v", err)
-	}
-	return s, nil
+	s, err := launch.Store(a.rt.launch(), h)
+	return s, launchErr(err)
 }
 
 // parseIDs splits --only values on commas and checks each is an item ID.
@@ -130,15 +110,15 @@ consent.`,
 			if err != nil {
 				return err
 			}
-			level := a.effectiveLevel(h.cfg)
+			level := a.effectiveLevel(h.Config)
 			var src *plan.Plan
 			if planFile != "" {
 				p, err := a.readPlan(planFile)
 				if err != nil {
 					return err
 				}
-				if p.Home != h.home {
-					return fail(codePlan, "the plan is for home %s, not %s", p.Home, h.home)
+				if p.Home != h.Path {
+					return fail(codePlan, "the plan is for home %s, not %s", p.Home, h.Path)
 				}
 				// A plan file never raises the level: items it selects at a
 				// higher level than this invocation allows are skipped with
@@ -244,20 +224,7 @@ consent.`,
 // applyOptions are the apply options every apply path (clean, tui)
 // starts from; the caller sets the plan and what to act on.
 func (a *app) applyOptions(h homeEnv, store receipt.Store) apply.Options {
-	opts := apply.Options{
-		Env:           policyEnv(h),
-		Rules:         effectiveRules(h.cfg),
-		Receipts:      store,
-		KippleVersion: version,
-		Procs:         a.rt.procs,
-		SaveReceipt:   a.rt.saveReceipt,
-	}
-	// The NSFileManager fallback moves items into the real Trash, so it is
-	// used only for the real home, never for a KIPPLE_HOME.
-	if a.rt.getenv("KIPPLE_HOME") == "" {
-		opts.Finder = func() (trash.ExpectTrasher, error) { return trash.NewFinderTrasher(nil) }
-	}
-	return opts
+	return h.ApplyOptions(store, version, a.rt.procs, a.rt.saveReceipt)
 }
 
 // trashAccessHelp is the message for apply.ErrTrashAccess.
@@ -314,7 +281,7 @@ func (a *app) historyCommand() *cobra.Command {
 				return err
 			}
 			list, errs := store.List()
-			doc := plan.History{SchemaVersion: plan.SchemaVersion, Home: h.home, ReceiptsDir: store.Dir(), Receipts: []plan.Receipt{}, Warnings: []string{}}
+			doc := plan.History{SchemaVersion: plan.SchemaVersion, Home: h.Path, ReceiptsDir: store.Dir(), Receipts: []plan.Receipt{}, Warnings: []string{}}
 			for _, e := range list {
 				doc.Receipts = append(doc.Receipts, e.Receipt)
 			}
@@ -323,8 +290,8 @@ func (a *app) historyCommand() *cobra.Command {
 				fmt.Fprintf(a.stderr, "kipple: warning: %s\n", output.SafeText(err.Error()))
 			}
 			return a.emit(doc, func(w io.Writer) error {
-				if h.fromEnv {
-					fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
+				if h.FromEnv {
+					fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.Path))
 				}
 				return output.History(w, doc)
 			})
@@ -372,8 +339,8 @@ accepted.`,
 			asked := append([]string(nil), ids...)
 			ids = append(ids, extra...)
 			opts := apply.RestoreOptions{
-				Env:     policyEnv(h),
-				Rules:   effectiveRules(h.cfg),
+				Env:     h.PolicyEnv(),
+				Rules:   h.Rules(),
 				Receipt: e,
 				Only:    ids,
 				Apply:   doApply,

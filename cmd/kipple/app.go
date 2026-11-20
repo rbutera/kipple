@@ -7,13 +7,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/rbutera/kipple/cmd/internal/launch"
 	"github.com/rbutera/kipple/internal/apply"
 	"github.com/rbutera/kipple/internal/config"
 	"github.com/rbutera/kipple/internal/homeguard"
@@ -79,14 +79,6 @@ type runtimeEnv struct {
 	// tui runs the interactive front end (tui.Run when nil). Tests drive
 	// the model headlessly instead.
 	tui func(cfg tui.Config, in io.Reader, out io.Writer) (tui.Outcome, error)
-}
-
-// fs returns the identity lookups, the real file system by default.
-func (rt runtimeEnv) fs() homeguard.FS {
-	if rt.guardFS.Chain == nil || rt.guardFS.Stat == nil || rt.guardFS.MountPoint == nil {
-		return homeguard.System()
-	}
-	return rt.guardFS
 }
 
 // cliError carries an exit code and a machine-readable code.
@@ -335,50 +327,29 @@ func (a *app) emit(v any, human func(io.Writer) error) error {
 	return human(a.stdout)
 }
 
-// homeEnv resolves home and loads config.
-type homeEnv struct {
-	home    string
-	fromEnv bool
-	// id is the identity of the approved home directory; the scan's policy
-	// session refuses home if its path names another directory by then.
-	id  homeguard.ID
-	cfg config.Config
+// homeEnv is the resolved home and its config (launch.Home).
+type homeEnv = launch.Home
+
+// launch is the part of the runtime environment home resolution uses.
+func (rt runtimeEnv) launch() launch.Runtime {
+	return launch.Runtime{Getenv: rt.getenv, UserHome: rt.userHome, RealHomes: rt.realHomes, GuardFS: rt.guardFS}
+}
+
+// launchErr maps a launch error to a CLI error with the same code.
+func launchErr(err error) error {
+	var le *launch.Error
+	if errors.As(err, &le) {
+		return fail(le.Code, "%s", le.Msg)
+	}
+	return err
 }
 
 func (a *app) resolve() (homeEnv, error) {
-	home, fromEnv, id, err := resolveHome(a.rt)
+	h, err := launch.Resolve(a.rt.launch())
 	if err != nil {
-		return homeEnv{}, err
+		return homeEnv{}, launchErr(err)
 	}
-	cfg, err := loadConfig(home, id)
-	if err != nil {
-		return homeEnv{}, err
-	}
-	return homeEnv{home: home, fromEnv: fromEnv, id: id, cfg: cfg}, nil
-}
-
-// loadConfig reads the config file relative to the approved home's
-// descriptor (a policy session pinned to its identity), so a home swapped
-// after it was approved cannot supply the config.
-func loadConfig(home string, id homeguard.ID) (config.Config, error) {
-	sess, err := policy.NewSession(policy.Env{Home: home, HomeIdentity: &policy.FileIdentity{Dev: id.Dev, Ino: id.Ino}})
-	defer func() { _ = sess.Close() }()
-	if err != nil {
-		return config.Config{}, fail(codeHome, "%v", err)
-	}
-	cfg, err := config.LoadWith(home, sess.OpenUnderHome)
-	if err != nil {
-		return config.Config{}, fail(codeConfig, "%v", err)
-	}
-	return cfg, nil
-}
-
-// policyEnv is the policy environment for h: config protections and the
-// pinned home identity.
-func policyEnv(h homeEnv) policy.Env {
-	env := h.cfg.PolicyEnv(h.home)
-	env.HomeIdentity = &policy.FileIdentity{Dev: h.id.Dev, Ino: h.id.Ino}
-	return env
+	return h, nil
 }
 
 // effectiveLevel is --level, else the config level, else safe.
@@ -392,218 +363,17 @@ func (a *app) effectiveLevel(cfg config.Config) string {
 	return rules.LevelSafe
 }
 
-func effectiveRules(cfg config.Config) []rules.Rule {
-	return scan.EffectiveRules(rules.Catalogue(), cfg.EffectiveProjectRoots())
-}
-
-// resolveHome returns KIPPLE_HOME, or the real home, with symlinks resolved
-// and each component spelled as stored on disk, so the policy's
-// byte-identical name checks match (design D3). This is the only place
-// kipple reads the real home.
-//
-// The respelling happens before the KIPPLE_HOME guard, and the guard checks
-// the exact path returned, so nothing after the check changes what was
-// checked. It also returns the identity of the directory it approved (for
-// KIPPLE_HOME, the very one the guard checked), which the scan pins in
-// policy.Env.HomeIdentity so a later swap of home or an ancestor is
-// refused.
-func resolveHome(rt runtimeEnv) (string, bool, homeguard.ID, error) {
-	var none homeguard.ID
-	h := rt.getenv("KIPPLE_HOME")
-	fromEnv := h != ""
-	if !fromEnv {
-		var err error
-		if h, err = rt.userHome(); err != nil {
-			return "", false, none, fail(codeHome, "cannot determine the home folder: %v", err)
-		}
-	}
-	if !filepath.IsAbs(h) {
-		return "", fromEnv, none, fail(codeHome, "home %q is not an absolute path", h)
-	}
-	resolved, err := filepath.EvalSymlinks(h)
-	if err != nil {
-		return "", fromEnv, none, fail(codeHome, "home %q cannot be resolved: %v", h, err)
-	}
-	resolved = filepath.Clean(resolved)
-	final := onDiskCase(resolved)
-	fi, err := os.Lstat(final)
-	if err != nil || !fi.IsDir() {
-		return "", fromEnv, none, fail(codeHome, "home %q is not a directory", h)
-	}
-	if fromEnv {
-		id, err := guardRealHome(rt, h, resolved, final)
-		if err != nil {
-			return "", fromEnv, none, err
-		}
-		return final, fromEnv, id, nil
-	}
-	c, err := rt.fs().Chain(final, true)
-	if err != nil || len(c) == 0 {
-		return "", fromEnv, none, fail(codeHome, "home %q cannot be identified: %v", h, err)
-	}
-	return final, fromEnv, c[0], nil
-}
-
-// guardRealHome refuses a KIPPLE_HOME that is the real home folder, lies
-// inside it, or contains it, and returns the identity of the directory it
-// approved. KIPPLE_HOME exists for fixtures and agents' sandboxes; pointed
-// into the real home (say ~/Documents/OldMac), it would sidestep the
-// denylist, which is relative to home.
-//
-// Identity decides, not spelling: final (the path kipple will use) and
-// resolved (before respelling) must be the same directory, and neither may
-// relate to any real home location by (dev, ino) (see homeguard.Relate).
-// Every check must have seen the same directory, or it is refused as
-// changed mid-check. The case-insensitive string comparison is kept as an
-// extra refusal; it can only refuse more. It fails closed when the real
-// home cannot be determined or any identity lookup fails.
-func guardRealHome(rt runtimeEnv, given, resolved, final string) (homeguard.ID, error) {
-	var pin homeguard.ID
-	reals, err := rt.realHomes()
-	if err != nil || len(reals) == 0 {
-		return pin, fail(codeHome, "KIPPLE_HOME is set but the real home folder cannot be determined to guard against it: %v", err)
-	}
-	fsys := rt.fs()
-	pinned := false
-	for _, r := range reals {
-		for _, p := range []string{final, resolved} {
-			rel, id, err := homeguard.RelateID(fsys, p, r)
-			if err != nil {
-				return pin, fail(codeHome, "KIPPLE_HOME %q cannot be checked against the real home folder, so it is refused: %v", given, err)
-			}
-			if rel != homeguard.Separate {
-				return pin, fail(codeHome, "KIPPLE_HOME %q %s (%s); point it at a separate fixture folder", given, rel, r)
-			}
-			// The respelled path must be the very directory that was
-			// resolved, and nothing may swap it while it is checked.
-			if !pinned {
-				pin, pinned = id, true
-			} else if id != pin {
-				return pin, fail(codeHome, "KIPPLE_HOME %q changed identity while it was checked (or when respelled as %q); refusing", given, final)
-			}
-		}
-		for _, p := range []string{given, resolved, final} {
-			if within(p, r) || within(r, p) {
-				return pin, fail(codeHome, "KIPPLE_HOME %q is the real home folder, inside it, or contains it (%s); point it at a separate fixture folder", given, r)
-			}
-		}
-	}
-	return pin, nil
-}
-
-// within reports whether p is root or below it, comparing the given and the
-// symlink-resolved forms case-insensitively. It is a second, spelling-based
-// refusal; homeguard.Relate is the identity check that decides.
-func within(p, root string) bool {
-	forms := func(x string) []string {
-		out := []string{filepath.Clean(x)}
-		if r, err := filepath.EvalSymlinks(x); err == nil {
-			out = append(out, r)
-		}
-		return out
-	}
-	for _, a := range forms(p) {
-		for _, b := range forms(root) {
-			al, bl := strings.ToLower(a), strings.ToLower(strings.TrimSuffix(b, "/"))
-			if al == bl || bl == "" || strings.HasPrefix(al, bl+"/") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// onDiskCase respells each component of an existing absolute path as it is
-// stored in its parent directory. On a case-insensitive volume /users/me
-// becomes /Users/me. A component with no unique case-insensitive match is
-// kept as given.
-func onDiskCase(p string) string {
-	cur := "/"
-	for _, c := range strings.Split(strings.TrimPrefix(p, "/"), "/") {
-		if c == "" {
-			continue
-		}
-		cur = filepath.Join(cur, storedSpelling(cur, c))
-	}
-	return cur
-}
-
-// storedSpelling returns the name under which dir stores the entry that
-// name opens. A byte-identical entry wins. Otherwise the candidates are
-// entries that fold to the same name (policy.FoldName: APFS case folding,
-// long s, sharp s, ligatures) or, for names with non-ASCII letters, any
-// non-ASCII entry, since NFC and NFD spellings of a name differ in bytes but
-// open the same entry. A candidate counts only if it is the very object name
-// opens (same dev and inode, checked with lstat), so the result is the
-// stored spelling of that object, never a look-alike. Without exactly one
-// such entry the name is kept as given.
-func storedSpelling(dir, name string) string {
-	f, err := os.Open(dir)
-	if err != nil {
-		return name
-	}
-	names, err := f.Readdirnames(-1)
-	_ = f.Close()
-	if err != nil {
-		return name
-	}
-	target, err := os.Lstat(filepath.Join(dir, name))
-	if err != nil {
-		return name
-	}
-	nonASCII := func(s string) bool {
-		for i := 0; i < len(s); i++ {
-			if s[i] >= 0x80 {
-				return true
-			}
-		}
-		return false
-	}
-	match := ""
-	for _, n := range names {
-		if n == name {
-			return name
-		}
-		if policy.FoldName(n) != policy.FoldName(name) && (!nonASCII(name) || !nonASCII(n)) {
-			continue
-		}
-		fi, err := os.Lstat(filepath.Join(dir, n))
-		if err != nil || !os.SameFile(fi, target) {
-			continue
-		}
-		if match != "" {
-			return name // two entries for one object: keep the given spelling
-		}
-		match = n
-	}
-	if match == "" {
-		return name
-	}
-	return match
-}
-
 // runScan scans home at the effective level.
 func (a *app) runScan(h homeEnv) (plan.Plan, error) {
-	return a.runScanAt(h, a.effectiveLevel(h.cfg))
+	return a.runScanAt(h, a.effectiveLevel(h.Config))
 }
 
 // runScanAt scans home at level.
-// scanOptions are the scan options every front end (scan, clean, tui)
-// starts from.
-func scanOptions(h homeEnv, level string) scan.Options {
-	return scan.Options{
-		Env:           policyEnv(h),
-		Rules:         effectiveRules(h.cfg),
-		Level:         level,
-		KippleVersion: version,
-	}
-}
-
 func (a *app) runScanAt(h homeEnv, level string) (plan.Plan, error) {
 	if a.rt.beforeScan != nil {
-		a.rt.beforeScan(h.home)
+		a.rt.beforeScan(h.Path)
 	}
-	opts := scanOptions(h, level)
+	opts := h.ScanOptions(level, version)
 	if a.rt.isTTY(a.stderr) {
 		opts.Progress = func(msg string) { fmt.Fprintf(a.stderr, "\r\033[K%s", output.SafeText(msg)) }
 	}
@@ -665,11 +435,11 @@ func (a *app) rulesCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rs := effectiveRules(h.cfg)
-			doc := plan.RulesDocument{SchemaVersion: plan.SchemaVersion, Home: h.home, Rules: rs}
+			rs := h.Rules()
+			doc := plan.RulesDocument{SchemaVersion: plan.SchemaVersion, Home: h.Path, Rules: rs}
 			return a.emit(doc, func(w io.Writer) error {
-				if h.fromEnv {
-					fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
+				if h.FromEnv {
+					fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.Path))
 				}
 				return output.Rules(w, rs)
 			})
@@ -698,13 +468,13 @@ func (a *app) explainCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rs := effectiveRules(h.cfg)
+			rs := h.Rules()
 			for _, r := range rs {
 				if r.ID == id {
-					doc := explainDocument{SchemaVersion: plan.SchemaVersion, Home: h.home, Rule: r}
+					doc := explainDocument{SchemaVersion: plan.SchemaVersion, Home: h.Path, Rule: r}
 					return a.emit(doc, func(w io.Writer) error {
-						if h.fromEnv {
-							fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
+						if h.FromEnv {
+							fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.Path))
 						}
 						return output.ExplainRule(w, r)
 					})
@@ -724,17 +494,17 @@ func (a *app) explainCommand() *cobra.Command {
 				}
 				for _, r := range rs {
 					if r.ID == it.Rule {
-						doc := explainDocument{SchemaVersion: plan.SchemaVersion, Home: h.home, Rule: r, Item: &it}
+						doc := explainDocument{SchemaVersion: plan.SchemaVersion, Home: h.Path, Rule: r, Item: &it}
 						return a.emit(doc, func(w io.Writer) error {
-							if h.fromEnv {
-								fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.home))
+							if h.FromEnv {
+								fmt.Fprintf(w, "Home: %s\n\n", output.SafeText(h.Path))
 							}
 							return output.ExplainItem(w, it, r)
 						})
 					}
 				}
 			}
-			return fail(codeNotFound, "no item %q in a scan of %s", id, h.home)
+			return fail(codeNotFound, "no item %q in a scan of %s", id, h.Path)
 		},
 	}
 }
@@ -787,9 +557,9 @@ func (a *app) versionCommand() *cobra.Command {
 			// (spec "Test home override"), so a refused one is an error here
 			// as in every other command.
 			if a.rt.getenv("KIPPLE_HOME") != "" {
-				home, _, _, err := resolveHome(a.rt)
+				home, _, _, err := launch.ResolveHome(a.rt.launch())
 				if err != nil {
-					return err
+					return launchErr(err)
 				}
 				doc.Home = home
 			}

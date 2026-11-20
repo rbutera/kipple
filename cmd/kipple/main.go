@@ -3,13 +3,11 @@
 package main
 
 import (
-	"errors"
-	"io"
-	"os"
-	"os/user"
-
+	"github.com/rbutera/kipple/cmd/internal/launch"
 	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/procs"
+	"io"
+	"os"
 )
 
 // Set with -ldflags "-X main.version=... -X main.commit=... -X main.date=..."
@@ -38,22 +36,8 @@ func system() runtimeEnv {
 	}
 }
 
-// realHomes returns every place the real home might be: $HOME and the user
-// database entry, so overriding HOME cannot hide it from the KIPPLE_HOME
-// guard.
-func realHomes() ([]string, error) {
-	var out []string
-	if h, err := os.UserHomeDir(); err == nil && h != "" {
-		out = append(out, h)
-	}
-	if u, err := user.Current(); err == nil && u.HomeDir != "" {
-		out = append(out, u.HomeDir)
-	}
-	if len(out) == 0 {
-		return nil, errors.New("neither $HOME nor the user database names a home folder")
-	}
-	return out, nil
-}
+// realHomes returns every place the real home might be (launch.RealHomes).
+func realHomes() ([]string, error) { return launch.RealHomes() }
 
 // isTerminal reports whether w is a character device (a terminal).
 func isTerminal(w io.Writer) bool {
