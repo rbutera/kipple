@@ -1,13 +1,34 @@
 // Package gitstate classifies a project's git state (design D10) by running
-// git read-only:
+// git read-only, with plumbing commands that never run repository code:
 //
-//	git -c core.fsmonitor= -c core.hooksPath=/dev/null ... -C <dir> status --porcelain=v2 --branch
+//	git rev-parse --is-inside-work-tree           is it a repository
+//	git config --get-regexp ^filter\.             which filter drivers exist
+//	git ls-files -m -d -o --exclude-standard      worktree changes, untracked
+//	git diff-index --cached --quiet HEAD          staged changes (index vs tree)
+//	git symbolic-ref -q --short HEAD              branch, or detached
+//	git rev-parse ... @{upstream}                 upstream configured
+//	git rev-list --count @{upstream}..HEAD        unpushed commits
 //
-// with a 5-second timeout, GIT_OPTIONAL_LOCKS=0 (git never rewrites the
-// index), repo-local hooks and fsmonitor disabled, and every environment
-// variable that could redirect git to another repository or inject config
-// removed. Only StateCleanPushed satisfies a rule's RequiresCleanGit
+// Every command runs with core.fsmonitor and core.hooksPath disabled, and
+// with every filter driver the repository's config defines (clean, smudge
+// and process) set to empty, which git treats as no filter: ls-files may
+// compare file contents when timestamps changed, and must never run a
+// configured filter to do it. No command here produces a diff, so no
+// textconv or external diff driver is ever run.
+//
+// git runs from a fixed PATH (FixedPath, never the caller's), with an
+// environment built from nothing: HOME and XDG_CONFIG_HOME point at an
+// empty temporary folder, GIT_CONFIG_GLOBAL=/dev/null and
+// GIT_CONFIG_NOSYSTEM=1 (so only the repository's own config is read),
+// GIT_OPTIONAL_LOCKS=0 (the index is never rewritten), no prompts, and an
+// optional GIT_CEILING_DIRECTORIES. The whole classification has a 5-second
+// timeout. Only StateCleanPushed satisfies a rule's RequiresCleanGit
 // condition; every other state, including errors and timeouts, blocks.
+//
+// Limits: changes inside a submodule's own working tree are not seen (a
+// submodule whose checked-out commit differs is), and ignoring files
+// through a global excludes file no longer applies, so such files count as
+// untracked (dirty), which errs towards keeping the project.
 package gitstate
 
 import (
@@ -18,6 +39,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,8 +60,13 @@ func States() []string {
 	return []string{StateCleanPushed, StateDirty, StateUnpushed, StateNoUpstream, StateNotARepo, StateUnavailable}
 }
 
-// DefaultTimeout bounds every git invocation.
+// DefaultTimeout bounds one classification (every git command it runs).
 const DefaultTimeout = 5 * time.Second
+
+// FixedPath is where git is looked up and the PATH git runs with. The
+// caller's PATH is never used, so a program named git earlier on it cannot
+// answer for the repository.
+const FixedPath = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
 // Result is a repository's state.
 type Result struct {
@@ -52,106 +79,131 @@ type Result struct {
 	Detail string
 }
 
-// Runner runs git with args in env and returns its stdout and stderr.
+// Runner runs git with args in env and returns its stdout and stderr. A
+// non-zero exit returns an error with an ExitCode method.
 type Runner func(ctx context.Context, git string, env []string, args ...string) (stdout, stderr []byte, err error)
 
-// Inspector runs git. The zero value looks git up on PATH and runs it with
-// DefaultTimeout.
+// Inspector runs git. The zero value finds git on FixedPath and runs it
+// with DefaultTimeout.
 type Inspector struct {
-	// LookPath finds the git binary (exec.LookPath when nil).
+	// LookPath finds the git binary (searching FixedPath when nil).
 	LookPath func(string) (string, error)
 	// Run executes git (os/exec when nil).
 	Run Runner
-	// Timeout bounds each invocation (DefaultTimeout when zero).
+	// Timeout bounds each classification (DefaultTimeout when zero).
 	Timeout time.Duration
 	// Ceiling, when set, is passed as GIT_CEILING_DIRECTORIES so git never
 	// discovers a repository above it (kipple sets it to home's parent).
 	Ceiling string
 }
 
-// baseArgs disable everything in a repository's own config that would run
-// a program during status: fsmonitor and hooks. Untracked files are always
-// listed, whatever status.showUntrackedFiles says, since they count as
-// uncommitted work.
+// baseArgs disable everything in a repository's config that would run a
+// program during these commands, apart from filter drivers, which are
+// disabled by name (filterOverrides).
 var baseArgs = []string{
 	"-c", "core.fsmonitor=",
 	"-c", "core.hooksPath=/dev/null",
 	"-c", "core.untrackedCache=false",
-	"-c", "status.showUntrackedFiles=normal",
 	"--no-pager",
 }
 
-// strippedEnv are variables that would point git at another repository,
-// index or object store, or inject configuration.
-var strippedEnv = []string{
-	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
-	"GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-	"GIT_OPTIONAL_LOCKS", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
-	"GIT_EXTERNAL_DIFF", "GIT_PAGER", "PAGER", "GIT_EDITOR", "GIT_TRACE",
-}
-
-func (in Inspector) env() []string {
-	var out []string
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		drop := strings.HasPrefix(k, "GIT_CONFIG_KEY_") || strings.HasPrefix(k, "GIT_CONFIG_VALUE_") || k == "LC_ALL" || k == "LANG"
-		for _, s := range strippedEnv {
-			drop = drop || k == s
-		}
-		if !drop {
-			out = append(out, kv)
+// lookFixed finds name in FixedPath.
+func lookFixed(name string) (string, error) {
+	for _, dir := range filepath.SplitList(FixedPath) {
+		p := filepath.Join(dir, name)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
+			return p, nil
 		}
 	}
-	out = append(out, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "LANG=C")
-	if in.Ceiling != "" {
-		out = append(out, "GIT_CEILING_DIRECTORIES="+in.Ceiling)
-	}
-	return out
+	return "", fmt.Errorf("%s not found in %s: %w", name, FixedPath, exec.ErrNotFound)
 }
 
-// ErrUnavailable: git is not on PATH or could not run.
+// ErrUnavailable: git is not available or could not run.
 var ErrUnavailable = errors.New("git is not available")
 
 // errNotARepo: git says dir is not inside a repository.
 var errNotARepo = errors.New("not a git repository")
 
-// git runs git -C dir args with the safety flags and timeout.
-func (in Inspector) git(ctx context.Context, dir string, args ...string) ([]byte, error) {
+// gitCall runs git commands for one classification.
+type gitCall struct {
+	in        Inspector
+	ctx       context.Context
+	bin       string
+	env       []string
+	dir       string
+	overrides []string
+}
+
+// exitError is implemented by *exec.ExitError.
+type exitError interface{ ExitCode() int }
+
+// start prepares a classification of dir: finds git, creates the empty
+// HOME, and builds the environment. done removes the HOME.
+func (in Inspector) start(ctx context.Context, dir string) (*gitCall, func(), error) {
 	look := in.LookPath
 	if look == nil {
-		look = exec.LookPath
+		look = lookFixed
 	}
 	bin, err := look("git")
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, func() {}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	timeout := in.Timeout
-	if timeout <= 0 {
-		timeout = DefaultTimeout
+	home, err := os.MkdirTemp("", "kipple-git-home-")
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	run := in.Run
+	env := []string{
+		"PATH=" + FixedPath,
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + home,
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+		"SSH_ASKPASS=",
+		"LC_ALL=C",
+		"LANG=C",
+	}
+	if in.Ceiling != "" {
+		env = append(env, "GIT_CEILING_DIRECTORIES="+in.Ceiling)
+	}
+	return &gitCall{in: in, ctx: ctx, bin: bin, env: env, dir: dir}, func() { _ = os.RemoveAll(home) }, nil
+}
+
+// run runs one git command and returns stdout and the exit code. A timeout,
+// a failure to start, or an unexpected exit code is an error.
+func (g *gitCall) run(okCodes []int, args ...string) ([]byte, int, error) {
+	run := g.in.Run
 	if run == nil {
 		run = execRunner
 	}
-	full := append(append(append([]string(nil), baseArgs...), "-C", dir), args...)
-	out, stderr, err := run(ctx, bin, in.env(), full...)
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("%w: timed out after %s", ErrUnavailable, timeout)
+	full := append(append(append(append([]string(nil), baseArgs...), g.overrides...), "-C", g.dir), args...)
+	out, stderr, err := run(g.ctx, g.bin, g.env, full...)
+	if g.ctx.Err() != nil {
+		return nil, -1, fmt.Errorf("%w: timed out", ErrUnavailable)
 	}
+	code := 0
 	if err != nil {
-		msg := strings.TrimSpace(string(stderr))
-		if strings.Contains(msg, "not a git repository") {
-			return nil, fmt.Errorf("%w: %s", errNotARepo, msg)
+		var ee exitError
+		if !errors.As(err, &ee) {
+			return nil, -1, fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
-		if msg == "" {
-			msg = err.Error()
-		}
-		return nil, fmt.Errorf("%w: %s", ErrUnavailable, msg)
+		code = ee.ExitCode()
 	}
-	return out, nil
+	for _, c := range append([]int{0}, okCodes...) {
+		if c == code {
+			return out, code, nil
+		}
+	}
+	msg := strings.TrimSpace(string(stderr))
+	if strings.Contains(msg, "not a git repository") {
+		return nil, code, fmt.Errorf("%w: %s", errNotARepo, msg)
+	}
+	if msg == "" {
+		msg = fmt.Sprintf("git %s exited %d", args[0], code)
+	}
+	return nil, code, fmt.Errorf("%w: %s", ErrUnavailable, msg)
 }
 
 func execRunner(ctx context.Context, git string, env []string, args ...string) ([]byte, []byte, error) {
@@ -165,70 +217,123 @@ func execRunner(ctx context.Context, git string, env []string, args ...string) (
 	return out.Bytes(), stderr.Bytes(), err
 }
 
-// Inspect classifies the repository containing dir.
-func (in Inspector) Inspect(ctx context.Context, dir string) Result {
-	out, err := in.git(ctx, dir, "status", "--porcelain=v2", "--branch", "--untracked-files=normal", "--ignore-submodules=none")
-	switch {
-	case errors.Is(err, errNotARepo):
-		return Result{State: StateNotARepo, Detail: err.Error()}
-	case err != nil:
-		return Result{State: StateUnavailable, Detail: err.Error()}
+// filterOverrides reads the filter drivers the repository's config defines
+// and returns -c arguments that set each one's clean, smudge and process
+// commands to empty (no filter) and required to false.
+func (g *gitCall) filterOverrides() error {
+	out, _, err := g.run([]int{1}, "config", "--get-regexp", `^filter\.`)
+	if err != nil {
+		return err
 	}
-	return parseStatus(out)
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		key, _, _ := strings.Cut(sc.Text(), " ")
+		rest := strings.TrimPrefix(key, "filter.")
+		i := strings.LastIndex(rest, ".")
+		if i <= 0 {
+			continue
+		}
+		name := rest[:i]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if strings.ContainsAny(name, "=\n\x00") {
+			return fmt.Errorf("%w: the repository defines a filter %q that cannot be disabled safely", ErrUnavailable, name)
+		}
+		for _, k := range []string{"clean", "smudge", "process"} {
+			g.overrides = append(g.overrides, "-c", "filter."+name+"."+k+"=")
+		}
+		g.overrides = append(g.overrides, "-c", "filter."+name+".required=false")
+	}
+	return sc.Err()
 }
 
-// parseStatus classifies porcelain v2 output with branch headers.
-func parseStatus(out []byte) Result {
-	var r Result
-	var head, upstream string
-	haveAB := false
-	dirty := 0
-	sc := bufio.NewScanner(bytes.NewReader(out))
-	sc.Buffer(make([]byte, 64*1024), 16<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		if line == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, "# ") {
-			dirty++
-			continue
-		}
-		f := strings.Fields(line[2:])
-		if len(f) < 2 {
-			continue
-		}
-		switch f[0] {
-		case "branch.head":
-			head = f[1]
-		case "branch.upstream":
-			upstream = f[1]
-		case "branch.ab":
-			if n, err := strconv.Atoi(strings.TrimPrefix(f[1], "+")); err == nil {
-				r.Ahead, haveAB = n, true
-			}
-		}
+// Inspect classifies the repository containing dir.
+func (in Inspector) Inspect(ctx context.Context, dir string) Result {
+	timeout := in.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
 	}
-	if head != "(detached)" {
-		r.Branch = head
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	g, done, err := in.start(ctx, dir)
+	defer done()
+	if err != nil {
+		return failed(err)
 	}
-	switch {
-	case sc.Err() != nil:
-		r.State, r.Detail = StateUnavailable, "git status output could not be read: "+sc.Err().Error()
-	case dirty > 0:
-		r.State, r.Detail = StateDirty, fmt.Sprintf("%d uncommitted or untracked paths", dirty)
-	case head == "(detached)":
-		r.State, r.Detail = StateNoUpstream, "HEAD is detached"
-	case upstream == "":
-		r.State, r.Detail = StateNoUpstream, "branch has no upstream"
-	case !haveAB:
-		r.State, r.Detail = StateNoUpstream, "upstream "+upstream+" is gone"
-	case r.Ahead > 0:
+	out, _, err := g.run(nil, "rev-parse", "--is-inside-work-tree")
+	if err != nil {
+		return failed(err)
+	}
+	if strings.TrimSpace(string(out)) != "true" {
+		return Result{State: StateNotARepo, Detail: "not inside a working tree"}
+	}
+	if err := g.filterOverrides(); err != nil {
+		return failed(err)
+	}
+	out, _, err = g.run(nil, "ls-files", "-z", "-m", "-d", "-o", "--exclude-standard", "--directory", "--no-empty-directory")
+	if err != nil {
+		return failed(err)
+	}
+	if n := bytes.Count(out, []byte{0}); n > 0 {
+		return Result{State: StateDirty, Detail: fmt.Sprintf("%d modified, deleted or untracked paths", n)}
+	}
+	if _, code, err := g.run([]int{1}, "rev-parse", "--verify", "-q", "HEAD"); err != nil {
+		return failed(err)
+	} else if code == 1 {
+		staged, _, err := g.run(nil, "ls-files", "-z")
+		if err != nil {
+			return failed(err)
+		}
+		if len(staged) > 0 {
+			return Result{State: StateDirty, Detail: "files staged before the first commit"}
+		}
+		return Result{State: StateNoUpstream, Detail: "no commits yet"}
+	}
+	if _, code, err := g.run([]int{1}, "diff-index", "--cached", "--quiet", "HEAD", "--"); err != nil {
+		return failed(err)
+	} else if code == 1 {
+		return Result{State: StateDirty, Detail: "staged changes not committed"}
+	}
+	out, code, err := g.run([]int{1}, "symbolic-ref", "-q", "--short", "HEAD")
+	if err != nil {
+		return failed(err)
+	}
+	if code == 1 {
+		return Result{State: StateNoUpstream, Detail: "HEAD is detached"}
+	}
+	r := Result{Branch: strings.TrimSpace(string(out))}
+	out, code, err = g.run([]int{128}, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	if err != nil {
+		return failed(err)
+	}
+	if code != 0 {
+		r.State, r.Detail = StateNoUpstream, "branch "+r.Branch+" has no upstream, or its upstream is gone"
+		return r
+	}
+	upstream := strings.TrimSpace(string(out))
+	out, _, err = g.run(nil, "rev-list", "--count", "@{upstream}..HEAD")
+	if err != nil {
+		return failed(err)
+	}
+	if r.Ahead, err = strconv.Atoi(strings.TrimSpace(string(out))); err != nil {
+		return Result{State: StateUnavailable, Detail: "git rev-list printed " + strconv.Quote(string(out))}
+	}
+	if r.Ahead > 0 {
 		r.State, r.Detail = StateUnpushed, fmt.Sprintf("%d commits not pushed to %s", r.Ahead, upstream)
-	default:
-		r.State = StateCleanPushed
+		return r
 	}
+	r.State = StateCleanPushed
 	return r
+}
+
+func failed(err error) Result {
+	if errors.Is(err, errNotARepo) {
+		return Result{State: StateNotARepo, Detail: err.Error()}
+	}
+	return Result{State: StateUnavailable, Detail: err.Error()}
 }
 
 // Worktree is one entry of git worktree list --porcelain.
@@ -244,7 +349,18 @@ type Worktree struct {
 
 // Worktrees lists the worktrees of the repository containing dir.
 func (in Inspector) Worktrees(ctx context.Context, dir string) ([]Worktree, error) {
-	out, err := in.git(ctx, dir, "worktree", "list", "--porcelain")
+	timeout := in.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	g, done, err := in.start(ctx, dir)
+	defer done()
+	if err != nil {
+		return nil, err
+	}
+	out, _, err := g.run(nil, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}

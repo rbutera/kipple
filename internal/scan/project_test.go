@@ -1,10 +1,14 @@
 package scan
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"slices"
 	"testing"
+	"time"
 
+	"github.com/rbutera/kipple/internal/gitstate"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/rules"
@@ -111,12 +115,15 @@ func TestProjectArtifacts(t *testing.T) {
 	})
 }
 
-// Spec scenario "No git": with git missing from PATH every project item is
-// git_unavailable and unselected.
+// Spec scenario "No git": with no git binary (kipple looks only on
+// gitstate.FixedPath) every project item is git_unavailable and unselected.
 func TestNoGit(t *testing.T) {
 	home := projectHome(t)
-	t.Setenv("PATH", t.TempDir())
-	p := runScan(t, home, rules.LevelReview)
+	noGit := gitstate.Inspector{LookPath: func(string) (string, error) { return "", exec.ErrNotFound }}
+	p, err := Run(context.Background(), Options{Env: policy.Env{Home: home}, Level: rules.LevelReview, Now: func() time.Time { return now }, Git: noGit})
+	if err != nil {
+		t.Fatal(err)
+	}
 	n := 0
 	for _, it := range p.Items {
 		if it.Tier != string(rules.TierReview) || it.Git == nil {

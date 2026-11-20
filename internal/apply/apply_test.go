@@ -558,3 +558,28 @@ func TestHardlinkedBytesAreNotReclaimed(t *testing.T) {
 		t.Fatalf("moved %+v", m)
 	}
 }
+
+// Red-team finding: a filter driver configured in the project's repository
+// never runs during scan or apply.
+func TestGitFiltersNeverRunDuringScanOrApply(t *testing.T) {
+	repo := gitProject("dev/app")
+	repo.Commits[0].Files = append(repo.Commits[0].Files, testutil.File{Path: ".gitattributes", Content: "* filter=canary\n"})
+	f := newFx(t, testutil.Spec{Repos: []testutil.Repo{repo}, Files: []testutil.File{{Path: "dev/app/node_modules/x/i.js", Content: "x"}}})
+	canary := filepath.Join(filepath.Dir(f.home), "canary")
+	app := f.abs("dev/app")
+	testutil.Git(t, app, "config", "filter.canary.clean", "touch "+canary+"; cat")
+	testutil.Git(t, app, "config", "filter.canary.process", "touch "+canary)
+	_ = os.Chtimes(f.abs("dev/app/.git/config"), old, old) // keep the project idle
+	p := f.scan(rules.LevelReview)
+	nm := itemByRel(t, p, "dev/app/node_modules")
+	if !nm.Selected {
+		t.Fatalf("fixture: %+v", nm)
+	}
+	res := f.run(f.opts(p))
+	if _, ok := movedFor(res, nm.Path); !ok {
+		t.Fatalf("not moved: %+v", res.Skipped)
+	}
+	if _, err := os.Stat(canary); err == nil {
+		t.Fatal("a git filter ran during scan or apply")
+	}
+}
