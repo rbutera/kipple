@@ -301,25 +301,25 @@ permanent delete. Colours follow the kipple palette; `NO_COLOR` turns them
 off, and it works in 80 columns.
 
 ```text
- kipple  0.1.0  /Users/you                                                                          level safe
-Found 9 items · 11.3 MB                                                                    Selected 5 · 7.0 MB
-╭─────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
-│ App caches safe                                  2 · 3.8 MB ││ App caches safe                      3.1 MB │
+ kipple  0.1.0  ~                                                                                   level safe
+Found 9 items · 11.3 MB                                               Selected 5 · 7.0 MB ━━━━━━━━━━━━━───────
+╭─ Items ─────────────────────────────────────────────────────╮╭─ Detail ────────────────────────────────────╮
+│ App caches  safe  ────────────────────────────── 2 · 3.8 MB ││ App caches  safe                     3.1 MB │
 │ ▌ ● ~/Library/Caches/com.spotify.client            3.1 MB   ││ ~/Library/Caches/com.spotify.client         │
 │   ● ~/Library/Caches/com.example.editor          614.4 kB   ││ Status     Selected: goes to the Trash when │
-│ Xcode DerivedData safe                           1 · 2.1 MB ││            you apply.                       │
+│ Xcode DerivedData  safe  ─────────────────────── 1 · 2.1 MB ││            you apply.                       │
 │   ● …ary/Developer/Xcode/DerivedData/MyApp-bxkq    2.1 MB   ││ What       Files that apps keep in your     │
-│ npm cache safe                                   1 · 1.0 MB ││            Caches folder to start and load  │
+│ npm cache  safe  ─────────────────────────────── 1 · 1.0 MB ││            Caches folder to start and load  │
 │   ● ~/.npm/_cacache/content-v2                     1.0 MB   ││            faster, which Apple requires     │
-│ App logs safe                                   1 · 94.2 kB ││            apps to rebuild when missing.    │
+│ App logs  safe  ─────────────────────────────── 1 · 94.2 kB ││            apps to rebuild when missing.    │
 │   ● ~/Library/Logs/DiagnosticReports              94.2 kB   ││ If removed Apps may start a little slower   │
-│ Go module cache review                         1 · 409.6 kB ││            the first time while they        │
+│ Go module cache  review  ───────────────────── 1 · 409.6 kB ││            the first time while they        │
 │   ○ ~/go/pkg/mod/github.com                      409.6 kB   ││            rebuild or re-download what they │
-│ Old installers in Downloads manual               1 · 1.0 MB ││            need, and no documents or        │
+│ Old installers in Downloads ⟨manual⟩ ─────────── 1 · 1.0 MB ││            need, and no documents or        │
 │   ○ ~/Downloads/Installer.dmg                      1.0 MB   ││            settings are lost.               │
-│ Xcode Archives manual                          1 · 716.8 kB ││ Contents   1 file, newest 20 Nov 2026       │
+│ Xcode Archives ⟨manual⟩ ────────────────────── 1 · 716.8 kB ││ Contents   1 file, newest 20 Nov 2026       │
 │   ○ …ibrary/Developer/Xcode/Archives/2026-03-01  716.8 kB   ││ ID         ppdu7ck4jyec                     │
-│ Ollama models info                               1 · 2.1 MB ││                                             │
+│ Ollama models  info  ─────────────────────────── 1 · 2.1 MB ││                                             │
 ╰─────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
 
 ↑↓ move   tab next rule   space select   a apply   q quit

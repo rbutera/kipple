@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -43,11 +44,12 @@ and kipple clean --apply --json. NO_COLOR turns colours off.`,
 				return err
 			}
 			cfg := tui.Config{
-				Ctx:     a.ctx,
-				Scan:    scanOptions(h, a.effectiveLevel(h.cfg)),
-				Apply:   a.applyOptions(h, store),
-				Color:   a.rt.getenv("NO_COLOR") == "" && a.rt.getenv("TERM") != "dumb",
-				Version: version,
+				Ctx:       a.ctx,
+				Scan:      scanOptions(h, a.effectiveLevel(h.cfg)),
+				Apply:     a.applyOptions(h, store),
+				Color:     a.rt.getenv("NO_COLOR") == "" && a.rt.getenv("TERM") != "dumb",
+				Version:   version,
+				HomeLabel: homeLabel(h.home, a.rt.getenv("KIPPLE_HOME") != ""),
 			}
 			runTUI := a.rt.tui
 			if runTUI == nil {
@@ -75,4 +77,17 @@ and kipple clean --apply --json. NO_COLOR turns colours off.`,
 			return output.CleanResult(a.stdout, out.Result)
 		},
 	}
+}
+
+// homeLabel is how the TUI header names the home folder: "~" for the real
+// home, and for a KIPPLE_HOME its last two folders, marked as such.
+func homeLabel(home string, override bool) string {
+	if !override {
+		return "~"
+	}
+	parts := strings.Split(strings.Trim(home, "/"), "/")
+	if len(parts) > 2 {
+		return "KIPPLE_HOME …/" + strings.Join(parts[len(parts)-2:], "/")
+	}
+	return "KIPPLE_HOME " + home
 }

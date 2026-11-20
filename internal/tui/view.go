@@ -73,7 +73,11 @@ func (m Model) header() string {
 		right = m.th.muted.Render("level ") + m.th.text.Render(m.plan.Level)
 	}
 	room := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
-	home := m.th.muted.Render(m.trunc(output.SafeText(m.cfg.Scan.Env.Home), room))
+	label := m.cfg.HomeLabel
+	if label == "" {
+		label = m.cfg.Scan.Env.Home
+	}
+	home := m.th.muted.Render(m.truncLeft(output.SafeText(label), room))
 	line1 := spread(left+"  "+home, right, m.width)
 
 	var line2 string
@@ -84,7 +88,8 @@ func (m Model) header() string {
 		}
 		n, b := m.selectedTotal()
 		found := m.th.muted.Render(fmt.Sprintf("Found %s · %s", items(len(m.plan.Items)), output.Bytes(listed)))
-		sel := m.th.muted.Render("Selected ") + m.th.amber.Render(fmt.Sprintf("%d · %s", n, output.Bytes(b)))
+		sel := m.th.muted.Render("Selected ") + m.th.amber.Render(fmt.Sprintf("%d · %s", n, output.Bytes(b))) +
+			" " + m.th.bar(b, listed, barWidth(m.width))
 		if m.state == stateDone {
 			sel = ""
 		}
@@ -152,12 +157,26 @@ func (m Model) reviewBody() string {
 		return m.center(msg)
 	}
 	wide, lw, lh, dw, dh := m.layout()
-	list := m.th.pane.Width(lw - 2).Height(lh - 2).Render(m.listView(lw-4, lh-2))
-	detail := m.th.pane.Width(dw - 2).Height(dh - 2).Render(m.detailView(dw-4, dh-2))
+	list := m.pane("Items", lw, lh, m.listView(lw-4, lh-2))
+	detail := m.pane("Detail", dw, dh, m.detailView(dw-4, dh-2))
 	if wide {
 		return lipgloss.JoinHorizontal(lipgloss.Top, list, detail)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, list, detail)
+}
+
+// pane draws content in a bordered box of outer size w×h with title set in
+// its top border.
+func (m Model) pane(title string, w, h int, content string) string {
+	return m.th.paneTop(title, w) + "\n" + m.th.pane.Width(w-2).Height(h-2).Render(content)
+}
+
+// barWidth is the header bar's width for a terminal w columns wide.
+func barWidth(w int) int {
+	if w >= 110 {
+		return 20
+	}
+	return 10
 }
 
 // listView renders the visible rows at inner width w.
@@ -174,12 +193,18 @@ func (m Model) listView(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
+// groupLine is a rule's heading: title, tier badge, a faint rule that
+// separates the groups, and the rule's item count and size.
 func (m Model) groupLine(g group, w int) string {
 	right := m.th.muted.Render(fmt.Sprintf("%d · %s", len(g.items), output.Bytes(g.bytes)))
 	badge := m.th.tierBadge(g.tier)
-	room := w - lipgloss.Width(right) - lipgloss.Width(badge) - 3
+	room := w - lipgloss.Width(right) - lipgloss.Width(badge) - 5
 	left := m.th.title.Render(m.trunc(output.SafeText(g.title), room)) + " " + badge
-	return spread(left, right, w)
+	fill := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	if fill < 1 {
+		return spread(left, right, w)
+	}
+	return left + " " + m.th.border.Faint(m.th.color).Render(strings.Repeat("─", fill)) + " " + right
 }
 
 // itemLine renders one item: pointer, mark, path, size, at-risk marker.
@@ -196,7 +221,7 @@ func (m Model) itemLine(it plan.Item, w int, cur bool) string {
 	}
 	pointer := " "
 	if cur {
-		pointer = th.pointer
+		pointer = th.cursorMark
 	}
 	selectable := it.Tier != string(rules.TierInfo) && len(blockers(it.Reasons)) == 0
 	mark, markSt, pathSt := th.markOff, th.muted, th.text
@@ -220,7 +245,7 @@ func (m Model) itemLine(it plan.Item, w int, cur bool) string {
 		gap = 0
 	}
 	sp := style(th.text)
-	return style(th.amber).Render(pointer) + sp.Render(" ") +
+	return style(th.pointer).Render(pointer) + sp.Render(" ") +
 		style(markSt).Render(mark) + sp.Render(" ") +
 		style(pathSt).Render(path) + sp.Render(strings.Repeat(" ", gap+1)) +
 		style(th.muted).Render(size) + sp.Render(" ") + style(th.amber).Render(risk)
@@ -333,6 +358,9 @@ func (m Model) doneBody() string {
 	th := m.th
 	r := m.outcome.Result
 	w := m.width - 4
+	if w > 76 {
+		w = 76 // the receipt card's width; the moved list lines up with it
+	}
 	var bytes int64
 	for _, mv := range r.Moved {
 		bytes += mv.Bytes
@@ -367,7 +395,7 @@ func (m Model) doneBody() string {
 		out = append(out, th.muted.Render(fmt.Sprintf("  and %d more", extra)))
 	}
 	if len(r.Skipped) > 0 {
-		out = append(out, "", th.amber.Render(fmt.Sprintf("Skipped %d", len(r.Skipped))))
+		out = append(out, "", th.title.Render(fmt.Sprintf("Skipped %d", len(r.Skipped))))
 		for i, s := range r.Skipped {
 			if i == 5 {
 				out = append(out, th.muted.Render(fmt.Sprintf("  and %d more", len(r.Skipped)-5)))
@@ -381,29 +409,54 @@ func (m Model) doneBody() string {
 		}
 	}
 	if len(r.Displaced) > 0 {
-		out = append(out, "", th.amber.Render(fmt.Sprintf("Displaced %d", len(r.Displaced))))
+		out = append(out, "", th.title.Render(fmt.Sprintf("Displaced %d", len(r.Displaced))))
 		out = append(out, wrapLines(th.muted, "Another object was at an item's name when the system's Trash call ran and went to the Trash instead. kipple restore puts it back.", w)...)
 	}
-	out = append(out, "")
-	if r.ReceiptID != "" {
-		out = append(out, th.label.Render(fmt.Sprintf("%-*s", labelW, "Receipt"))+th.text.Render(output.SafeText(r.ReceiptID)))
-		if len(r.Moved) > 0 || len(r.Displaced) > 0 {
-			out = append(out, th.label.Render(fmt.Sprintf("%-*s", labelW, "Undo"))+th.text.Render("kipple restore "+output.SafeText(r.ReceiptID)+" --apply"))
-		}
-	}
-	if how := moverNote(r); how != "" {
-		for i, l := range wrapLines(th.muted, how, w-labelW) {
-			lbl := strings.Repeat(" ", labelW)
-			if i == 0 {
-				lbl = th.label.Render(fmt.Sprintf("%-*s", labelW, "How"))
-			}
-			out = append(out, lbl+l)
-		}
+	if card := m.receiptCard(r, bytes, w); card != "" {
+		out = append(out, "", card)
 	}
 	for _, warn := range r.Warnings {
 		out = append(out, wrapLines(th.hintWarn, "Warning: "+output.SafeText(warn), w)...)
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(out, "\n"))
+}
+
+// receiptCard is the done view's summary box: the receipt, what moved
+// and was skipped, how the items moved, and the command that undoes it.
+func (m Model) receiptCard(r plan.Result, bytes int64, w int) string {
+	if r.ReceiptID == "" {
+		return ""
+	}
+	th := m.th
+	cw := w
+	if cw > 76 {
+		cw = 76
+	}
+	inner := cw - 4
+	row := func(label, value string, st lipgloss.Style) []string {
+		var lines []string
+		for i, l := range wrapLines(st, value, inner-labelW) {
+			lbl := strings.Repeat(" ", labelW)
+			if i == 0 {
+				lbl = th.label.Render(fmt.Sprintf("%-*s", labelW, label))
+			}
+			lines = append(lines, lbl+l)
+		}
+		return lines
+	}
+	var lines []string
+	lines = append(lines, row("Receipt", output.SafeText(r.ReceiptID), th.text)...)
+	lines = append(lines, row("Moved", items(len(r.Moved))+" · "+output.Bytes(bytes), th.text)...)
+	if len(r.Skipped) > 0 || len(r.Displaced) > 0 {
+		lines = append(lines, row("Skipped", fmt.Sprintf("%d, displaced %d", len(r.Skipped), len(r.Displaced)), th.text)...)
+	}
+	if how := moverNote(r); how != "" {
+		lines = append(lines, row("How", how, th.muted)...)
+	}
+	if len(r.Moved) > 0 || len(r.Displaced) > 0 {
+		lines = append(lines, row("Undo", "kipple restore "+output.SafeText(r.ReceiptID)+" --apply", th.key)...)
+	}
+	return m.pane("Receipt", cw, len(lines)+2, strings.Join(lines, "\n"))
 }
 
 // moverNote says how the items reached the Trash, from the receipt's
@@ -430,9 +483,9 @@ func (m Model) errorBody() string {
 	w := m.width - 4
 	var out []string
 	if m.outcome.Applied {
-		out = append(out, th.amber.Render("kipple stopped while moving items."))
+		out = append(out, th.title.Render("kipple stopped while moving items."))
 	} else {
-		out = append(out, th.amber.Render("kipple could not finish the scan."))
+		out = append(out, th.title.Render("kipple could not finish the scan."))
 	}
 	out = append(out, "")
 	if errors.Is(err, apply.ErrTrashAccess) {

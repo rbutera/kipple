@@ -490,9 +490,61 @@ func TestNoColorTheme(t *testing.T) {
 	if brand.amber.GetForeground() != colAmber || brand.text.GetForeground() != colInk {
 		t.Error("brand theme does not use the palette")
 	}
-	for name, st := range map[string]lipgloss.Style{"title": brand.title, "text": brand.text, "muted": brand.muted, "pill": brand.pill, "label": brand.label} {
-		if st.GetForeground() == colAmber {
+	// Should-fix 7: amber is for selected and at-risk items only; the
+	// cursor, the spinner, warnings, borders and headings use other tokens.
+	for name, st := range map[string]lipgloss.Style{
+		"title": brand.title, "text": brand.text, "muted": brand.muted, "pill": brand.pill, "label": brand.label,
+		"cursor": brand.cursor, "pointer": brand.pointer, "spinner": brand.spinner, "hint": brand.hintWarn,
+		"border": brand.border, "pane title": brand.paneTitle, "key": brand.key,
+	} {
+		if st.GetForeground() == colAmber || st.GetBackground() == colAmber {
 			t.Errorf("amber used for %s", name)
+		}
+	}
+	if brand.modal.GetBorderTopForeground() == colAmber || brand.pane.GetBorderLeftForeground() == colAmber {
+		t.Error("amber used for a border")
+	}
+	for tier, st := range brand.badge {
+		if st.GetForeground() == colAmber || st.GetBackground() == colAmber {
+			t.Errorf("amber used for the %s badge", tier)
+		}
+	}
+	m := New(Config{Color: true, Renderer: r})
+	if m.spin.Style.GetForeground() == colAmber {
+		t.Error("the spinner is amber")
+	}
+}
+
+// TUI polish (wave 4 review): titled panes, the selection bar, the home
+// label, ruled group headings, and the receipt card, in both themes.
+func TestTUIPolish(t *testing.T) {
+	for _, color := range []bool{false, true} {
+		f := newFx(t, color)
+		f.cfg.HomeLabel = "KIPPLE_HOME …/fixture/home"
+		m := start(t, f, 80, 24)
+		view := m.View()
+		for _, want := range []string{"╭─ Items ", "╭─ Detail ", "KIPPLE_HOME …/fixture/home", "──── 1 · 65.5 kB"} {
+			if !strings.Contains(view, want) {
+				t.Errorf("color=%v: review view lacks %q:\n%s", color, want, view)
+			}
+		}
+		bar := "[========--]"
+		if color {
+			bar = "━━━━━━━━──"
+		}
+		if !strings.Contains(view, "Selected 2 · 69.6 kB "+bar) {
+			t.Errorf("color=%v: no selection bar %q:\n%s", color, bar, view)
+		}
+		badge := map[bool]string{false: "(review)", true: " review "}[color]
+		if !strings.Contains(view, "Go module cache "+badge) && !strings.Contains(view, "Go module cache  review ") {
+			t.Errorf("color=%v: no review badge:\n%s", color, view)
+		}
+		m = press(m, "a", "y")
+		done := m.View()
+		for _, want := range []string{"╭─ Receipt ", "Moved      2 items · 69.6 kB", "Undo       kipple restore " + m.Outcome().Result.ReceiptID + " --apply"} {
+			if !strings.Contains(done, want) {
+				t.Errorf("color=%v: done view lacks %q:\n%s", color, want, done)
+			}
 		}
 	}
 }

@@ -40,6 +40,9 @@ type Config struct {
 	Color bool
 	// Version is shown in the header.
 	Version string
+	// HomeLabel is how the header names the home folder ("~" for the real
+	// home, a shortened KIPPLE_HOME otherwise); the full path when empty.
+	HomeLabel string
 	// Renderer styles the output (lipgloss's default when nil).
 	Renderer *lipgloss.Renderer
 }
@@ -148,7 +151,7 @@ func New(cfg Config) Model {
 	ctx, cancel := context.WithCancel(cfg.Ctx)
 	th := newTheme(r, cfg.Color)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	sp.Style = th.amber
+	sp.Style = th.spinner
 	rs := cfg.Apply.Rules
 	if rs == nil {
 		rs = cfg.Scan.Rules

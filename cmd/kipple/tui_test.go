@@ -80,6 +80,12 @@ func TestTUILaunch(t *testing.T) {
 	if cfg.Scan.Env.Home != home || cfg.Apply.Env.Home != home || cfg.Apply.Finder != nil || cfg.Color {
 		t.Fatalf("config: scan home %q apply home %q finder set %v color %v", cfg.Scan.Env.Home, cfg.Apply.Env.Home, cfg.Apply.Finder != nil, cfg.Color)
 	}
+	if want := "KIPPLE_HOME …/" + filepath.Base(filepath.Dir(home)) + "/" + filepath.Base(home); cfg.HomeLabel != want {
+		t.Errorf("home label %q, want %q", cfg.HomeLabel, want)
+	}
+	if homeLabel("/Users/you", false) != "~" {
+		t.Error("the real home is not shown as ~")
+	}
 	if cfg.Apply.Permanent || cfg.Apply.DryRun {
 		t.Fatal("the TUI was given permanent or dry-run options")
 	}
