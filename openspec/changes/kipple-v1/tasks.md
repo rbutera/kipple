@@ -24,7 +24,7 @@ Waves for the /wave skill. Each wave ends with `make check` green (lint, vet, ra
 
 ## 3. Wave 3: apply, Trash, receipts, restore, git and process conditions
 
-- [ ] 3.1 Implement `internal/trash`: `Trasher` interface, darwin cgo `NSFileManager trashItemAtURL` implementation returning the destination, `DirTrasher`, non-cgo fallback error; verify `DirTrasher` with fixture tests including name collision, and a darwin-only test that trashes a file created inside a fixture under `KIPPLE_HOME` and finds it at the returned path
+- [x] 3.1 Implement `internal/trash`: `Trasher` interface, darwin cgo `NSFileManager trashItemAtURL` implementation returning the destination, `DirTrasher`, non-cgo fallback error; verify `DirTrasher` with fixture tests including name collision, and a darwin-only test that trashes a file created inside a fixture under `KIPPLE_HOME` and finds it at the returned path
 - [ ] 3.2 Implement `internal/receipt` (write, list newest first, annotate restored, `KIPPLE_STATE_DIR`); verify with fixture tests and a golden receipt JSON that validates against `kipple schema receipt`
 - [ ] 3.3 Implement `internal/gitstate` (`Inspect` with 5 s timeout, states `clean_pushed|dirty|unpushed|no_upstream|not_a_repo|git_unavailable`, worktree listing); verify with fixture repos for every state including a bare upstream for `clean_pushed` and a PATH without git for `git_unavailable`
 - [ ] 3.4 Implement `internal/procs` (`RunningBundleIDs` via `lsappinfo`, `RunningNames` via `pgrep -x`, `ProcessCwds` via `lsof -p -Fn` for known agent names, all with injectable runners); verify with fake runners for found, not found, and command missing (unknown)
