@@ -56,6 +56,24 @@ func realHomeDirs() ([]string, error) {
 	return homes, nil
 }
 
+// RealHomePaths joins each home-relative path onto every location the real
+// home might be ($HOME and the user database entry), for tests that must
+// prove, by stat alone, that a run left those files untouched. It returns
+// nil when the real home cannot be determined.
+func RealHomePaths(rels ...string) []string {
+	homes, err := realHomeDirs()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, h := range homes {
+		for _, r := range rels {
+			out = append(out, filepath.Join(h, filepath.FromSlash(r)))
+		}
+	}
+	return out
+}
+
 // GuardRealHome fails the test unless KIPPLE_HOME and KIPPLE_STATE_DIR are set
 // to locations that are neither the real home folder, inside it, nor an
 // ancestor of it (such as / or /Users).

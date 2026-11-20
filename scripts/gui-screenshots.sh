@@ -33,12 +33,25 @@ real="$(cd ~ && pwd -P)"
 case "$home/" in "$real"/*) echo "refusing: $home is inside the real home folder" >&2; exit 1 ;; esac
 case "$real/" in "$home"/*) echo "refusing: $home contains the real home folder" >&2; exit 1 ;; esac
 
-GOTOOLCHAIN=local go run ./tools/mkfixture -gui "$home"
+# Fyne writes a font cache and preferences under $HOME: give it a temp one.
+# Go's own caches and settings keep their real locations.
+GOCACHE="$(go env GOCACHE)"
+GOMODCACHE="$(go env GOMODCACHE)"
+GOPATH="$(go env GOPATH)"
+GOENV="$(go env GOENV)"
+export GOCACHE GOMODCACHE GOPATH GOENV
+# go by its real path: a version-manager shim may need the real HOME.
+gobin="$(go env GOROOT)/bin/go"
+export HOME="$work/fakehome"
+export XDG_CACHE_HOME="$HOME/.cache" XDG_CONFIG_HOME="$HOME/.config"
+mkdir -p "$HOME"
+
+GOTOOLCHAIN=local "$gobin" run ./tools/mkfixture -gui "$home"
 
 export KIPPLE_HOME="$home"
 export KIPPLE_STATE_DIR="$work/state"
 export KIPPLE_SCREENSHOT_HOME="$home"
 export KIPPLE_SCREENSHOTS="$out"
-GOTOOLCHAIN=local go test -tags gui -count=1 -run '^TestScreenshots$' ./cmd/kipple-gui
+GOTOOLCHAIN=local "$gobin" test -tags gui -count=1 -run '^TestScreenshots$' ./cmd/kipple-gui
 
 ls -1 "$out"/gui-*.png

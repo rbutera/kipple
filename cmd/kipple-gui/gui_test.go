@@ -22,7 +22,12 @@ import (
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
-func TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }
+// TestMain redirects HOME before any Fyne call (home_test.go), then runs
+// the tests under the usual fixture guard.
+func TestMain(m *testing.M) {
+	check := redirectHome()
+	os.Exit(check(testutil.GuardedMain(m)))
+}
 
 var old = time.Now().Add(-200 * 24 * time.Hour)
 
@@ -393,5 +398,28 @@ func TestOpenChecksPaths(t *testing.T) {
 	u.openTrash()
 	if len(opened) != 2 || !strings.Contains(u.m.Status(), "it is not a folder") {
 		t.Fatalf("opened %v status %q", opened, u.m.Status())
+	}
+}
+
+// The real-home watch notices a file that changes or appears.
+func TestRealHomeWatch(t *testing.T) {
+	testutil.GuardRealHome(t)
+	if os.Getenv("HOME") == "" || len(realHomeFiles()) == 0 {
+		t.Fatal("no HOME during the GUI tests")
+	}
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	if err := os.WriteFile(a, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := stamps([]string{a, b})
+	if err := os.Chtimes(a, time.Now().Add(time.Hour), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := changed([]string{a, b}, before, stamps([]string{a, b})); len(got) != 2 {
+		t.Fatalf("changed %v", got)
 	}
 }

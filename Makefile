@@ -29,8 +29,16 @@ fmt-check:
 	echo "gofmt: clean"
 
 # The GUI's widget tests run on Fyne's test driver (software, no window).
+# Fyne writes a font cache and preferences under $$HOME, so the run gets a
+# temp HOME (TestMain redirects it too, and fails if the real files change);
+# Go's own build cache, module cache and settings keep their real locations,
+# and go runs by its real path (a version-manager shim may need the real HOME).
 test-gui:
-	$(GO) test -race -tags gui ./cmd/kipple-gui/...
+	@tmp="$$(mktemp -d "$${TMPDIR:-/tmp}/kipple-gui-home.XXXXXX")"; \
+	gobin="$$($(GO) env GOROOT)/bin/go"; \
+	GOCACHE="$$($(GO) env GOCACHE)" GOMODCACHE="$$($(GO) env GOMODCACHE)" GOPATH="$$($(GO) env GOPATH)" GOENV="$$($(GO) env GOENV)" \
+	HOME="$$tmp" XDG_CACHE_HOME="$$tmp/.cache" XDG_CONFIG_HOME="$$tmp/.config" \
+	"$$gobin" test -race -tags gui ./cmd/kipple-gui/...; status=$$?; command rm -rf "$$tmp"; exit $$status
 
 # golangci-lint is mandatory in CI. Locally it is skipped with a message if absent.
 lint:
