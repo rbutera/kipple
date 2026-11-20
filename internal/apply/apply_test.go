@@ -583,3 +583,84 @@ func TestGitFiltersNeverRunDuringScanOrApply(t *testing.T) {
 		t.Fatal("a git filter ran during scan or apply")
 	}
 }
+
+// permanentFx is a safe cache item with two subfolders, for --permanent.
+func permanentFx(t *testing.T) (*fx, Options, string) {
+	f := newFx(t, testutil.Spec{
+		Files: []testutil.File{
+			{Path: "Library/Caches/com.example.a/aaa/blob", Size: 4096, MTime: old},
+			{Path: "Library/Caches/com.example.a/zzz/data", Size: 4096, MTime: old},
+		},
+		Dirs: []testutil.Dir{
+			{Path: "Library/Caches/com.example.a/aaa", MTime: old},
+			{Path: "Library/Caches/com.example.a/zzz", MTime: old},
+			{Path: "Library/Caches/com.example.a", MTime: old},
+		},
+	})
+	o := f.opts(f.scan(""))
+	o.Permanent = true
+	return f, o, f.abs("Library/Caches/com.example.a")
+}
+
+// Red-team finding: a protected file planted after the move-time measure
+// is never deleted by --permanent.
+func TestPermanentStopsAtProtectedEntry(t *testing.T) {
+	t.Run("planted before the delete starts: nothing is deleted", func(t *testing.T) {
+		f, o, item := permanentFx(t)
+		o.beforeMove = func(plan.Item) {
+			if err := os.WriteFile(item+"/zzz/.env", []byte("SECRET=1"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := f.run(o)
+		s, ok := skipFor(res, item)
+		if !ok || s.Reason != plan.ReasonContainsProtected || s.Partial || ExitCode(res) != ExitPartial {
+			t.Fatalf("skipped %+v", res.Skipped)
+		}
+		if !exists(item+"/zzz/.env") || !exists(item+"/aaa/blob") {
+			t.Fatal("something was deleted")
+		}
+	})
+	t.Run("planted while deleting: stops, reports partial", func(t *testing.T) {
+		f, o, item := permanentFx(t)
+		afterPrecheck = func() {
+			if err := os.WriteFile(item+"/zzz/.env", []byte("SECRET=1"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		defer func() { afterPrecheck = nil }()
+		res := f.run(o)
+		s, ok := skipFor(res, item)
+		if !ok || s.Reason != plan.ReasonContainsProtected || !s.Partial || s.RemovedCount < 2 || s.RemovedBytes == 0 || ExitCode(res) != ExitPartial {
+			t.Fatalf("skipped %+v", res.Skipped)
+		}
+		if b, err := os.ReadFile(item + "/zzz/.env"); err != nil || string(b) != "SECRET=1" {
+			t.Fatal("the protected file was deleted")
+		}
+		if exists(item + "/aaa") {
+			t.Fatal("test bug: nothing was deleted before the protected file")
+		}
+		e, err := f.store.Load(res.ReceiptID)
+		if err != nil || len(e.Receipt.Skipped) != 1 || !e.Receipt.Skipped[0].Partial || e.Receipt.Skipped[0].RemovedCount != s.RemovedCount {
+			t.Fatalf("receipt %+v %v", e.Receipt.Skipped, err)
+		}
+	})
+}
+
+// Standards finding: a permanent delete that fails partway is marked
+// partial with what it removed, in the result and the receipt.
+func TestPermanentFailingPartwayIsPartial(t *testing.T) {
+	f, o, item := permanentFx(t)
+	if err := os.Chmod(item+"/zzz", 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(item+"/zzz", 0o755) })
+	res := f.run(o)
+	s, ok := skipFor(res, item)
+	if !ok || s.Reason != plan.SkipPermissionDenied || !s.Partial || s.RemovedCount == 0 {
+		t.Fatalf("skipped %+v moved %+v", res.Skipped, res.Moved)
+	}
+	if _, ok := movedFor(res, item); ok {
+		t.Fatal("a partial delete was reported as moved")
+	}
+}

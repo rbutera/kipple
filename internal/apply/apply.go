@@ -397,8 +397,18 @@ func (a *applier) one(t target) {
 	moved := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, Bytes: rc.Measure.AllocatedBytes, ReclaimableBytes: rc.Measure.ReclaimableBytes, Dev: dev, Ino: ino}
 	var err error
 	if a.o.Permanent {
-		err = removeItem(f, dev, ino)
+		g := a.sess.Guard(r, it.Path)
+		var rm removal
+		rm, err = removeItem(f, dev, ino, g.CheckMode)
 		moved.Permanent = true
+		if err != nil && rm.count > 0 {
+			a.res.Skipped = append(a.res.Skipped, plan.SkippedItem{
+				ID: it.ID, Rule: it.Rule, Path: it.Path, Reason: classify(err),
+				Detail:  "partly deleted before it stopped: " + err.Error(),
+				Partial: true, RemovedCount: rm.count, RemovedBytes: rm.bytes,
+			})
+			return
+		}
 	} else {
 		moved.TrashPath, err = a.trashItem(f, dev, ino, dir)
 	}

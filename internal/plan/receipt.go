@@ -121,6 +121,12 @@ type SkippedItem struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
 	Detail string `json:"detail,omitempty"`
+	// Partial is set when part of the item was already removed before the
+	// run stopped on it (a --permanent delete that met something protected
+	// or failed partway). RemovedCount and RemovedBytes say how much.
+	Partial      bool  `json:"partial,omitempty"`
+	RemovedCount int64 `json:"removed_count,omitempty" jsonschema:"description=Entries (files, links and folders) already deleted when a partial delete stopped."`
+	RemovedBytes int64 `json:"removed_bytes,omitempty" jsonschema:"description=Allocated bytes already deleted when a partial delete stopped."`
 }
 
 // RestoredItem is an item kipple restore moved back (or, in a dry run,

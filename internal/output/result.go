@@ -117,6 +117,9 @@ func writeSkipped(b *strings.Builder, skipped []plan.SkippedItem, title string) 
 		if s.Detail != "" {
 			fmt.Fprintf(b, "      %s\n", s.Detail)
 		}
+		if s.Partial {
+			fmt.Fprintf(b, "      partly deleted already: %d entries, %s; the rest is still there\n", s.RemovedCount, Bytes(s.RemovedBytes))
+		}
 	}
 }
 

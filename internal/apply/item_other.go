@@ -14,8 +14,15 @@ import (
 func openItem(*policy.Fresh, uint64, uint64) (*os.File, error) { return nil, trash.ErrUnsupported }
 func withOwnerWrite(*os.File, func() error) error              { return trash.ErrUnsupported }
 func isPermission(error) bool                                  { return false }
-func removeItem(*policy.Fresh, uint64, uint64) error           { return trash.ErrUnsupported }
-func classify(error) string                                    { return plan.SkipMoveFailed }
+
+type protectFunc func(rel, name string, dev, ino uint64, mode fs.FileMode) (string, bool)
+
+type removal struct{ count, bytes int64 }
+
+func removeItem(*policy.Fresh, uint64, uint64, protectFunc) (removal, error) {
+	return removal{}, trash.ErrUnsupported
+}
+func classify(error) string { return plan.SkipMoveFailed }
 func openHomeTrash(*policy.Session, string) (*trash.DirTrasher, error) {
 	return nil, trash.ErrUnsupported
 }

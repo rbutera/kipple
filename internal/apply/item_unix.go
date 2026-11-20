@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sort"
 
 	"golang.org/x/sys/unix"
 
@@ -80,21 +81,54 @@ func withOwnerWrite(dir *os.File, fn func() error) error {
 
 func isPermission(err error) bool { return errors.Is(err, fs.ErrPermission) }
 
-// removeItem deletes the approved item for --permanent, from its verified
-// parent descriptor, never following a symlink and stopping at a device
-// change.
-func removeItem(f *policy.Fresh, dev, ino uint64) error {
-	var st unix.Stat_t
-	if err := fstatat(f.ParentFd, f.Name, &st); err != nil {
-		return err
-	}
-	if uint64(st.Dev) != dev || uint64(st.Ino) != ino {
-		return trash.ErrItemChanged
-	}
-	return removeTree(f.ParentFd, f.Name, dev, 0)
+// protectFunc reports whether an entry inside an item is protected
+// (policy.Guard.CheckMode) and why.
+type protectFunc func(rel, name string, dev, ino uint64, mode fs.FileMode) (string, bool)
+
+// removal counts what a permanent delete removed.
+type removal struct{ count, bytes int64 }
+
+// errProtected: a permanent delete met a protected entry and stopped.
+type errProtected struct{ rel, reason string }
+
+func (e *errProtected) Error() string {
+	return "found " + e.rel + " (" + e.reason + ") inside the item; stopped"
 }
 
-func removeTree(dirfd int, name string, dev uint64, depth int) error {
+// afterPrecheck, in tests, runs between the check-only pass and the
+// deleting pass of a permanent delete.
+var afterPrecheck func()
+
+// removeItem deletes the approved item for --permanent, from its verified
+// parent descriptor. It never follows a symlink, stops at a device change,
+// and checks every entry against protect: first in a pass that deletes
+// nothing, then again as it deletes, stopping at the first protected entry.
+// It returns what was removed, also on error.
+func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc) (removal, error) {
+	var rm removal
+	var st unix.Stat_t
+	if err := fstatat(f.ParentFd, f.Name, &st); err != nil {
+		return rm, err
+	}
+	if uint64(st.Dev) != dev || uint64(st.Ino) != ino {
+		return rm, trash.ErrItemChanged
+	}
+	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+		if err := walkTree(f.ParentFd, f.Name, "", dev, protect, nil, 0); err != nil {
+			return rm, err
+		}
+		if afterPrecheck != nil {
+			afterPrecheck()
+		}
+	}
+	err := walkTree(f.ParentFd, f.Name, "", dev, protect, &rm, 0)
+	return rm, err
+}
+
+// walkTree checks (rm nil) or deletes (rm set) the entry name in dirfd and,
+// for a directory, everything below it in name order. rel is the entry's
+// item-relative path ("" for the item itself).
+func walkTree(dirfd int, name, rel string, dev uint64, protect protectFunc, rm *removal, depth int) error {
 	if depth > maxRemoveDepth {
 		return fmt.Errorf("deeper than %d levels; stopped", maxRemoveDepth)
 	}
@@ -108,8 +142,21 @@ func removeTree(dirfd int, name string, dev uint64, depth int) error {
 	if uint64(st.Dev) != dev {
 		return errCrossDevice
 	}
+	if rel != "" && protect != nil {
+		if reason, hit := protect(rel, name, uint64(st.Dev), uint64(st.Ino), policy.StatMode(uint32(st.Mode))); hit {
+			return &errProtected{rel: rel, reason: reason}
+		}
+	}
 	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
-		return unix.Unlinkat(dirfd, name, 0)
+		if rm == nil {
+			return nil
+		}
+		if err := unix.Unlinkat(dirfd, name, 0); err != nil {
+			return err
+		}
+		rm.count++
+		rm.bytes += st.Blocks * 512
+		return nil
 	}
 	fd, err := openDirAt(dirfd, name)
 	if err != nil {
@@ -121,18 +168,28 @@ func removeTree(dirfd int, name string, dev uint64, depth int) error {
 		return trash.ErrItemChanged
 	}
 	names, err := readNames(fd)
+	sort.Strings(names)
 	if err == nil {
 		for _, n := range names {
-			if err = removeTree(fd, n, dev, depth+1); err != nil {
+			child := n
+			if rel != "" {
+				child = rel + "/" + n
+			}
+			if err = walkTree(fd, n, child, dev, protect, rm, depth+1); err != nil {
 				break
 			}
 		}
 	}
 	_ = unix.Close(fd)
-	if err != nil {
+	if err != nil || rm == nil {
 		return err
 	}
-	return unix.Unlinkat(dirfd, name, unix.AT_REMOVEDIR)
+	if err := unix.Unlinkat(dirfd, name, unix.AT_REMOVEDIR); err != nil {
+		return err
+	}
+	rm.count++
+	rm.bytes += st.Blocks * 512
+	return nil
 }
 
 // readNames lists the directory open at fd through a fresh descriptor.
@@ -159,7 +216,11 @@ func readNames(fd int) ([]string, error) {
 // classify maps a move error to a skip reason.
 func classify(err error) string {
 	switch {
-	case errors.Is(err, trash.ErrDifferentDevice), errors.Is(err, unix.EXDEV), errors.Is(err, errCrossDevice):
+	case errors.As(err, new(*errProtected)):
+		return plan.ReasonContainsProtected
+	case errors.Is(err, errCrossDevice):
+		return plan.ReasonContainsMount
+	case errors.Is(err, trash.ErrDifferentDevice), errors.Is(err, unix.EXDEV):
 		return plan.SkipDifferentDevice
 	case errors.Is(err, trash.ErrTrashChanged):
 		return plan.SkipTrashChanged
