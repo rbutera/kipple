@@ -221,8 +221,8 @@ func TestStoredNameMismatch(t *testing.T) {
 	orig := hasStored
 	t.Cleanup(func() { hasStored = orig })
 	hasStored = func(string, string) (bool, error) { return false, fs.ErrPermission }
-	if got := Authorize(Env{Home: home}, caches, home+"/Library/Caches/sample"); got.Reason != ReasonMissing {
-		t.Fatalf("unlistable parent: want %q, got %+v", ReasonMissing, got)
+	if got := Authorize(Env{Home: home}, caches, home+"/Library/Caches/sample"); got.Reason != ReasonPermissionDenied {
+		t.Fatalf("unlistable parent: want %q, got %+v", ReasonPermissionDenied, got)
 	}
 }
 

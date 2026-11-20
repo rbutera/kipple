@@ -199,7 +199,7 @@ func TestSessionOpen(t *testing.T) {
 	if _, err := s.Open(home + "/Library/Caches/none"); !errors.As(err, &re) || re.Reason != ReasonMissing || !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing: %v", err)
 	}
-	if _, err := s.Open(home + "/Library/Caches/locked"); !errors.As(err, &re) || re.Reason != ReasonMissing || errors.Is(err, fs.ErrNotExist) {
+	if _, err := s.Open(home + "/Library/Caches/locked"); !errors.As(err, &re) || re.Reason != ReasonPermissionDenied || errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("unreadable: %v", err)
 	}
 	if _, err := s.Open("/etc"); !errors.As(err, &re) || re.Reason != ReasonOutsideHome {

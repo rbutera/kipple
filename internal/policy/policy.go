@@ -47,7 +47,8 @@
 //     opens a case, Unicode-fold or normalisation variant of a name as the
 //     stored entry; this refuses every such spelling, so the lexical checks
 //     above always see the name as it exists on disk. A parent that cannot
-//     be listed refuses with ReasonMissing.
+//     be listed, like any component the system will not let kipple inspect,
+//     refuses with ReasonPermissionDenied.
 //
 // Checks 8 to 10 run component by component from home down, in that order
 // for each component (the identity check reports the more specific reason
@@ -92,7 +93,21 @@ const (
 	// ReasonDestinationExists: something already exists where a restore
 	// would put an item back (Session.AuthorizeDestination).
 	ReasonDestinationExists = "destination_exists"
+	// ReasonPermissionDenied: a component could not be inspected because
+	// the system refused access (EACCES or EPERM, for example a folder with
+	// mode 000 or one protected by privacy settings).
+	ReasonPermissionDenied = "permission_denied"
 )
+
+// missingOr returns ReasonPermissionDenied when err is a permission error
+// and ReasonMissing otherwise (not found, not a directory, or another
+// failure: nothing can be verified either way).
+func missingOr(err error) string {
+	if errors.Is(err, fs.ErrPermission) {
+		return ReasonPermissionDenied
+	}
+	return ReasonMissing
+}
 
 // Reasons returns every refusal reason Authorize can produce.
 func Reasons() []string {
@@ -114,6 +129,7 @@ func Reasons() []string {
 		ReasonHomeIdentityMismatch,
 		ReasonParentChanged,
 		ReasonDestinationExists,
+		ReasonPermissionDenied,
 	}
 }
 
@@ -589,9 +605,9 @@ func checkFilesystem(home string, comps []string, want itemType, ids *protectedI
 		cur = cur + "/" + c
 		fi, err := lstat(cur)
 		if err != nil {
-			// Not found, not a directory, or not inspectable (permission
-			// denied): all refused as missing, since nothing can be verified.
-			return refuse(ReasonMissing)
+			// Not found or not a directory: missing. Not inspectable:
+			// permission_denied. Nothing can be verified either way.
+			return refuse(missingOr(err))
 		}
 		if fi.Mode()&fs.ModeSymlink != 0 {
 			return refuse(ReasonSymlinkInPath)
@@ -609,7 +625,7 @@ func checkFilesystem(home string, comps []string, want itemType, ids *protectedI
 		}
 		stored, err := hasStored(parent, c)
 		if err != nil {
-			return refuse(ReasonMissing)
+			return refuse(missingOr(err))
 		}
 		if !stored {
 			return refuse(ReasonNameMismatch)

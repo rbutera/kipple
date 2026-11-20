@@ -698,3 +698,21 @@ func TestCheckOrder(t *testing.T) {
 		t.Fatalf("order %v, want git, procs, move", events)
 	}
 }
+
+// Should-fix 5 (O1): an item whose parent becomes unreadable is skipped
+// with permission_denied, not refused:missing; the run continues.
+func TestUnreadableParentIsPermissionDenied(t *testing.T) {
+	f := newFx(t, threeSafe())
+	p := f.scan("")
+	if err := os.Chmod(f.abs("Library/Logs"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.abs("Library/Logs"), 0o755) })
+	res := f.run(f.opts(p))
+	if s, ok := skipFor(res, f.abs("Library/Logs/app")); !ok || s.Reason != plan.SkipPermissionDenied {
+		t.Fatalf("skipped %+v", res.Skipped)
+	}
+	if len(res.Moved) != 2 || ExitCode(res) != ExitPartial {
+		t.Fatalf("%+v", res)
+	}
+}

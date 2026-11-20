@@ -373,7 +373,7 @@ func (s *Session) walk(comps []string, want itemType, ids *protectedIDs, openFin
 		cur = cur + "/" + c
 		var st unix.Stat_t
 		if err := fstatat(w.parent, c, &st); err != nil {
-			return stop(ReasonMissing, err)
+			return stop(missingOr(err), err)
 		}
 		fi := statInfo{name: c, st: st}
 		if fi.Mode()&fs.ModeSymlink != 0 {
@@ -394,7 +394,7 @@ func (s *Session) walk(comps []string, want itemType, ids *protectedIDs, openFin
 		}
 		stored, err := s.stored(w.parent, c, cache)
 		if err != nil {
-			return stop(ReasonMissing, err)
+			return stop(missingOr(err), err)
 		}
 		if !stored {
 			return stop(ReasonNameMismatch, nil)
@@ -437,7 +437,7 @@ func openVerified(dirfd int, name string, want fileID) (int, string, error) {
 		if errors.Is(err, unix.ELOOP) {
 			return -1, ReasonSymlinkInPath, err
 		}
-		return -1, ReasonMissing, err
+		return -1, missingOr(err), err
 	}
 	var st unix.Stat_t
 	if err := fstat(fd, &st); err != nil || (fileID{dev: uint64(st.Dev), ino: st.Ino}) != want {

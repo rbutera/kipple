@@ -456,6 +456,10 @@ func (a *applier) one(t target) {
 	it, r := t.item, t.rule
 	f, d := a.sess.AuthorizeFresh(r, it.Path)
 	if !d.Allowed {
+		if d.Reason == policy.ReasonPermissionDenied {
+			a.skip(it, plan.SkipPermissionDenied, "the system refused access to the item or a folder above it")
+			return
+		}
 		a.skip(it, plan.Refused(d.Reason), "refused by the safety policy immediately before the move")
 		return
 	}
