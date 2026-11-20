@@ -497,3 +497,64 @@ func TestPreview(t *testing.T) {
 		t.Fatalf("totals %+v warnings %v", out.Totals, out.Warnings)
 	}
 }
+
+// Items that became partial or gained protected contents after the scan
+// are skipped; the re-measure at move time sees them.
+func TestRemeasuredAtMoveTime(t *testing.T) {
+	f := newFx(t, testutil.Spec{Files: []testutil.File{
+		{Path: "Library/Caches/com.example.a/blob", Size: 10, MTime: old},
+		{Path: "Library/Caches/com.example.b/blob", Size: 10, MTime: old},
+		{Path: "Library/Caches/com.example.c/sub/blob", Size: 10, MTime: old},
+	}})
+	p := f.scan("")
+	if err := os.WriteFile(f.abs("Library/Caches/com.example.b/.env"), []byte("SECRET=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f.abs("Library/Caches/com.example.c/sub"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.abs("Library/Caches/com.example.c/sub"), 0o755) })
+	res := f.run(f.opts(p))
+	if _, ok := movedFor(res, f.abs("Library/Caches/com.example.a")); !ok {
+		t.Fatalf("control item not moved: %+v", res.Skipped)
+	}
+	want := map[string]string{"Library/Caches/com.example.b": plan.ReasonContainsProtected, "Library/Caches/com.example.c": plan.ReasonScanPartial}
+	for rel, reason := range want {
+		if s, ok := skipFor(res, f.abs(rel)); !ok || s.Reason != reason || !exists(f.abs(rel)) {
+			t.Errorf("%s: %+v, want %s", rel, s, reason)
+		}
+	}
+}
+
+// The system refusing a move (EACCES, as for a folder in a read-only
+// parent) is a skip with permission_denied, never an elevation.
+func TestPermissionDenied(t *testing.T) {
+	f := newFx(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Logs/app/log.txt", Size: 10, MTime: old}}})
+	p := f.scan("")
+	if err := os.Chmod(f.abs("Library/Logs"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.abs("Library/Logs"), 0o755) })
+	res := f.run(f.opts(p))
+	if s, ok := skipFor(res, f.abs("Library/Logs/app")); !ok || s.Reason != plan.SkipPermissionDenied || ExitCode(res) != ExitPartial {
+		t.Fatalf("skipped %+v", res.Skipped)
+	}
+	if fi, _ := os.Stat(f.abs("Library/Logs")); fi.Mode().Perm() != 0o555 {
+		t.Fatal("kipple changed the parent's permissions")
+	}
+}
+
+// Moving one link of a hard-linked file frees nothing: the receipt counts
+// it in bytes but not in reclaimable_bytes.
+func TestHardlinkedBytesAreNotReclaimed(t *testing.T) {
+	f := newFx(t, testutil.Spec{
+		Files:     []testutil.File{{Path: "Library/Caches/com.example.a/own", Size: 8192, MTime: old}, {Path: "elsewhere/shared", Size: 65536, MTime: old}},
+		Hardlinks: []testutil.Hardlink{{Path: "Library/Caches/com.example.a/shared", Target: "elsewhere/shared"}},
+		Dirs:      []testutil.Dir{{Path: "Library/Caches/com.example.a", MTime: old}},
+	})
+	res := f.run(f.opts(f.scan("")))
+	m, ok := movedFor(res, f.abs("Library/Caches/com.example.a"))
+	if !ok || m.ReclaimableBytes >= m.Bytes || m.Bytes-m.ReclaimableBytes < 65536 {
+		t.Fatalf("moved %+v", m)
+	}
+}

@@ -394,7 +394,7 @@ func (a *applier) one(t target) {
 		return
 	}
 	a.progress("moving " + it.Path)
-	moved := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, Bytes: rc.Measure.AllocatedBytes, Dev: dev, Ino: ino}
+	moved := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, Bytes: rc.Measure.AllocatedBytes, ReclaimableBytes: rc.Measure.ReclaimableBytes, Dev: dev, Ino: ino}
 	var err error
 	if a.o.Permanent {
 		err = removeItem(f, dev, ino)

@@ -101,6 +101,9 @@ type MovedItem struct {
 	Path      string `json:"path" jsonschema:"description=The original absolute path."`
 	TrashPath string `json:"trash_path" jsonschema:"description=Where the item is in the Trash; empty when deleted permanently."`
 	Bytes     int64  `json:"bytes" jsonschema:"description=Allocated bytes measured immediately before the move."`
+	// ReclaimableBytes excludes files with other hard links, which moving
+	// this item does not free.
+	ReclaimableBytes int64 `json:"reclaimable_bytes" jsonschema:"description=Allocated bytes excluding files with other hard links: what emptying the Trash frees."`
 	// Dev and Ino identify the moved object; a rename keeps them, so
 	// restore checks the Trash entry is the same object.
 	Dev        uint64     `json:"dev"`

@@ -16,6 +16,7 @@
       "path": "/fx/home/Library/Caches/a",
       "trash_path": "/fx/home/.Trash/a",
       "bytes": 4096,
+      "reclaimable_bytes": 0,
       "dev": 1,
       "ino": 2,
       "moved_at": "2026-11-20T09:30:00Z"
@@ -26,6 +27,7 @@
       "path": "/fx/home/Library/Logs/b",
       "trash_path": "/fx/home/.Trash/b",
       "bytes": 8192,
+      "reclaimable_bytes": 0,
       "dev": 1,
       "ino": 3,
       "moved_at": "2026-11-20T09:30:00Z",

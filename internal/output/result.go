@@ -15,10 +15,11 @@ const DryRunLine = "This was a dry run: nothing was moved. Add --apply to move t
 // CleanResult writes what kipple clean --apply did.
 func CleanResult(w io.Writer, r plan.Result) error {
 	b := &strings.Builder{}
-	var bytes int64
+	var bytes, reclaim int64
 	deleted := 0
 	for _, m := range r.Moved {
 		bytes += m.Bytes
+		reclaim += m.ReclaimableBytes
 		if m.Permanent {
 			deleted++
 		}
@@ -27,9 +28,9 @@ func CleanResult(w io.Writer, r plan.Result) error {
 	case len(r.Moved) == 0 && len(r.Skipped) == 0:
 		b.WriteString("Nothing was selected, so nothing was moved.\n")
 	case deleted == len(r.Moved) && deleted > 0:
-		fmt.Fprintf(b, "Deleted %s permanently (%s).\n", count(len(r.Moved), "item"), Bytes(bytes))
+		fmt.Fprintf(b, "Deleted %s permanently (%s, %s freed).\n", count(len(r.Moved), "item"), Bytes(bytes), Bytes(reclaim))
 	default:
-		fmt.Fprintf(b, "Moved %s to the Trash (%s).\n", count(len(r.Moved), "item"), Bytes(bytes))
+		fmt.Fprintf(b, "Moved %s to the Trash (%s; emptying the Trash frees %s).\n", count(len(r.Moved), "item"), Bytes(bytes), Bytes(reclaim))
 	}
 	for _, m := range r.Moved {
 		if m.Permanent {
