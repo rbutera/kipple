@@ -1,0 +1,64 @@
+name: Path escaped the allowlist
+description: kipple listed, moved or restored a path its safety policy should have refused. Treated as a security bug.
+title: "[escape] "
+labels: ["security", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is treated as a security bug.** If the path could cause data loss for other people and is not already public, please do not file it here: report it privately through the repository's **Security** tab (**Report a vulnerability**), as [SECURITY.md](../blob/main/SECURITY.md) describes. Use this form for cases that are harmless or already public.
+
+        Please reproduce with a fixture home (`KIPPLE_HOME` and `KIPPLE_STATE_DIR` pointing at a scratch folder), not your real home.
+  - type: input
+    id: version
+    attributes:
+      label: kipple version
+      description: Output of `kipple version --json`.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: macOS 26.1, MacBook Air M3
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule ID and path
+      description: The rule that offered the path, and the path relative to home (redact names if you like).
+      placeholder: caches.user, Library/Caches/...
+    validations:
+      required: true
+  - type: dropdown
+    id: what
+    attributes:
+      label: What kipple did with it
+      options:
+        - Listed it as movable (scan or clean dry run)
+        - Moved it to the Trash
+        - Restored something to it
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it should have been refused
+      description: Which policy check should have caught it (denylist entry, symbolic link, outside home, another disk, protected contents, ...)?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce on a fixture
+      description: Shell commands that build the fixture and run kipple, with `KIPPLE_HOME` set.
+      render: sh
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: kipple output
+      description: The `--json` output of the command (plan or result), and the receipt file if one was written.
+      render: json

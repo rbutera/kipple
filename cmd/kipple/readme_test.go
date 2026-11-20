@@ -8,7 +8,7 @@ import (
 
 // Spec scenario "Files present" (distribution).
 func TestFilesPresent(t *testing.T) {
-	for _, f := range []string{"LICENSE", "README.md", "SECURITY.md", "llms.txt"} {
+	for _, f := range []string{"LICENSE", "README.md", "SECURITY.md", "llms.txt", "CONTRIBUTING.md"} {
 		if fi, err := os.Stat("../../" + f); err != nil || fi.Size() == 0 {
 			t.Errorf("%s missing or empty: %v", f, err)
 		}
@@ -110,4 +110,41 @@ func TestReadmeVerifyCommand(t *testing.T) {
 	// v0.1.0 has no permanent delete, and the README says so in the safety
 	// section and the flag table.
 	mustContain(t, "README.md", readme, "There is no permanent delete in\n  v0.1.0", "| `--permanent` | clean | **Refused in v0.1.0**")
+}
+
+// Task 4.4: CONTRIBUTING.md states the fixture-only rule and the add-a-rule
+// steps, and every test and command those steps name exists; the issue
+// templates and the PR template are in place, and the PR template asks
+// whether any test touches the real home.
+func TestContributing(t *testing.T) {
+	c := readRepoFile(t, "CONTRIBUTING.md")
+	mustContain(t, "CONTRIBUTING.md", c,
+		"## The one rule: fixtures only", "testutil.NewHome", "testutil.GuardedMain",
+		"## Adding a rule", "What", "IfRemoved", "rules.Validate", "TestCatalogueCount",
+		"TestAddARuleSteps", "go test ./internal/rules -run TestGoldenRulesJSON -update",
+		"command make check", "## Review process",
+	)
+	sources := map[string][]string{
+		"internal/rules/rules_test.go":  {"func TestCatalogueCount(", "func TestGoldenRulesJSON(", `flag.Bool("update"`},
+		"internal/scan/addrule_test.go": {"func TestAddARuleSteps("},
+		"internal/rules/validate.go":    {"func Validate("},
+		"internal/testutil/guard.go":    {"func GuardedMain("},
+		"internal/testutil/home.go":     {"func NewHome("},
+		"Makefile":                      {"\ncheck:", "agent-flow-check:", "release-snapshot:"},
+		"internal/rules/catalogue.go":   {"var children = Match{Kind: MatchChildren}"},
+	}
+	for file, wants := range sources {
+		text := readRepoFile(t, file)
+		for _, w := range wants {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s lacks %q, which CONTRIBUTING.md relies on", file, w)
+			}
+		}
+	}
+	escape := readRepoFile(t, ".github/ISSUE_TEMPLATE/path-escaped-allowlist.yml")
+	mustContain(t, "path-escaped-allowlist.yml", escape, "name: Path escaped the allowlist", "security bug", "Report a vulnerability", "KIPPLE_HOME")
+	rule := readRepoFile(t, ".github/ISSUE_TEMPLATE/new-rule.yml")
+	mustContain(t, "new-rule.yml", rule, "name: New rule", "What it is", "What happens if it is removed")
+	pr := readRepoFile(t, ".github/pull_request_template.md")
+	mustContain(t, "pull_request_template.md", pr, "Does any test touch the real home?")
 }

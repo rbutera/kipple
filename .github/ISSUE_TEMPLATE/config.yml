@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/rbutera/kipple/security/advisories/new
+    about: A path that escapes the allowlist and could cause data loss. Please report it privately.
