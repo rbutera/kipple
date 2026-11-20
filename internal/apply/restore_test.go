@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -459,6 +461,96 @@ func TestTrashSymlinkIsRefused(t *testing.T) {
 	for _, it := range p.Items {
 		if !exists(it.Path) {
 			t.Fatalf("%s moved", it.Path)
+		}
+	}
+}
+
+// A pending item whose move never happened is reported as still at its
+// path, and nothing moves.
+func TestPendingItemThatNeverMoved(t *testing.T) {
+	f := newFx(t, threeSafe())
+	p := f.scan("")
+	it := itemByRel(t, p, "Library/Logs/app")
+	fi, err := os.Lstat(it.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := plan.Receipt{CreatedAt: now, Home: f.home, Level: "safe", Mover: plan.MoverRename, TrashDir: f.abs(".Trash"),
+		Pending: []plan.MovedItem{{ID: it.ID, Rule: it.Rule, Path: it.Path, Dev: it.Dev, Ino: it.Ino, Size: fi.Size(), Mtime: fi.ModTime().UTC(), Mover: plan.MoverRename}}}
+	path, err := f.store.Create(&rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := f.restore(receipt.Entry{Path: path, Receipt: rc}, true)
+	if len(res.Restored) != 0 || len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipNotFound || !strings.Contains(res.Skipped[0].Detail, "still at its original path") {
+		t.Fatalf("%+v", res)
+	}
+	if !exists(it.Path) {
+		t.Fatal("the item moved")
+	}
+}
+
+// A dry run of a pending item finds it in the Trash and reports it,
+// moving nothing.
+func TestPendingItemDryRun(t *testing.T) {
+	f := newFx(t, threeSafe())
+	o := f.opts(f.scan(""))
+	o.saveReceipt = failOn(f, 2)
+	res, _ := Run(context.Background(), o)
+	e, err := f.store.Load(res.ReceiptID)
+	if err != nil || len(e.Receipt.Pending) != 1 {
+		t.Fatalf("%+v %v", e.Receipt, err)
+	}
+	dry := f.restore(e, false)
+	if !dry.DryRun || len(dry.Restored) != 1 || exists(e.Receipt.Pending[0].Path) {
+		t.Fatalf("%+v", dry)
+	}
+}
+
+// The staged restore of a read-only folder (Go's module cache) works: it
+// gets owner write only for the rename to the destination.
+func TestRestoreReadOnlyFolder(t *testing.T) {
+	f := newFx(t, testutil.Spec{
+		Files: []testutil.File{{Path: "go/pkg/mod/github.com/x/y.go", Size: 10, MTime: old, Mode: 0o444}},
+		Dirs:  []testutil.Dir{{Path: "go/pkg/mod/github.com", MTime: old}, {Path: "go/pkg/mod/github.com/x", MTime: old}},
+	})
+	t.Cleanup(func() {
+		_ = filepath.Walk(f.home, func(p string, _ os.FileInfo, _ error) error { return os.Chmod(p, 0o755) })
+	})
+	for _, d := range []string{"go/pkg/mod/github.com/x", "go/pkg/mod/github.com"} {
+		if err := os.Chmod(f.abs(d), 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := f.run(f.opts(f.scan(rules.LevelReview)))
+	if len(res.Moved) != 1 {
+		t.Fatalf("%+v", res)
+	}
+	e, err := f.store.Load(res.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := f.restore(e, true)
+	if len(rr.Restored) != 1 {
+		t.Fatalf("%+v", rr)
+	}
+	fi, err := os.Lstat(f.abs("go/pkg/mod/github.com"))
+	if err != nil || fi.Mode().Perm() != 0o555 {
+		t.Fatalf("mode after restore %v %v", fi.Mode(), err)
+	}
+}
+
+// A successful restore leaves no staging names behind in
+// the Trash.
+func TestRestoreLeavesNoStagingNames(t *testing.T) {
+	f, e, _ := cleaned(t)
+	if rr := f.restore(e, true); len(rr.Restored) != 3 {
+		t.Fatalf("%+v", rr)
+	}
+	entries, _ := os.ReadDir(f.abs(".Trash"))
+	for _, de := range entries {
+		if strings.HasPrefix(de.Name(), ".kipple-") {
+			t.Fatalf("staging name left behind: %s", de.Name())
 		}
 	}
 }

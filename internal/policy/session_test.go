@@ -545,3 +545,18 @@ func TestGuardWorktreePointer(t *testing.T) {
 		})
 	}
 }
+
+// Should-fix 5: permission errors are permission_denied; everything else
+// that cannot be verified is missing.
+func TestMissingOrPermissionDenied(t *testing.T) {
+	for err, want := range map[error]string{
+		unix.EACCES:  ReasonPermissionDenied,
+		unix.EPERM:   ReasonPermissionDenied,
+		unix.ENOENT:  ReasonMissing,
+		unix.ENOTDIR: ReasonMissing,
+	} {
+		if got := missingOr(err); got != want {
+			t.Errorf("missingOr(%v) = %q, want %q", err, got, want)
+		}
+	}
+}
