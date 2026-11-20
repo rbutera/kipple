@@ -28,10 +28,11 @@ func sample(home string, created time.Time) plan.Receipt {
 		Home:          home,
 		Level:         "safe",
 		TrashDir:      home + "/.Trash",
+		Mover:         plan.MoverRename,
 		PlanGenerated: created.Add(-time.Minute),
 		Moved: []plan.MovedItem{
-			{ID: "aaaaaaaaaaaa", Rule: "caches.user", Path: home + "/Library/Caches/a", TrashPath: home + "/.Trash/a", Bytes: 4096, Dev: 1, Ino: 2, MovedAt: created},
-			{ID: "bbbbbbbbbbbb", Rule: "logs.user", Path: home + "/Library/Logs/b", TrashPath: home + "/.Trash/b", Bytes: 8192, Dev: 1, Ino: 3, MovedAt: created},
+			{ID: "aaaaaaaaaaaa", Rule: "caches.user", Path: home + "/Library/Caches/a", TrashPath: home + "/.Trash/a", Bytes: 4096, Dev: 1, Ino: 2, Size: 96, Mtime: created.Add(-time.Hour), Mover: plan.MoverRename, MovedAt: created},
+			{ID: "bbbbbbbbbbbb", Rule: "logs.user", Path: home + "/Library/Logs/b", TrashPath: home + "/.Trash/b", Bytes: 8192, Dev: 1, Ino: 3, Size: 4, Mtime: created.Add(-time.Hour), Mover: plan.MoverRename, MovedAt: created},
 		},
 		Skipped: []plan.SkippedItem{
 			{ID: "cccccccccccc", Rule: "caches.user", Path: home + "/Library/Caches/c", Reason: plan.ReasonOwnerRunning},
