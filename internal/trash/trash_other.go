@@ -30,3 +30,8 @@ func (d *DirTrasher) Verify() error { return ErrUnsupported }
 
 // Trash always fails here.
 func (d *DirTrasher) Trash(int, string) (string, error) { return "", ErrUnsupported }
+
+// TrashExpect always fails here.
+func (d *DirTrasher) TrashExpect(int, string, uint64, uint64) (string, error) {
+	return "", ErrUnsupported
+}

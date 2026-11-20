@@ -5,6 +5,7 @@ package policy
 import (
 	"errors"
 	"io/fs"
+	"os"
 )
 
 // Session on non-unix platforms delegates to the stateless Authorize, which
@@ -61,3 +62,16 @@ func (s *Session) Open(path string) (Entry, error) {
 
 // Guard returns nil: Open always fails here, so nothing is measured.
 func (s *Session) Guard(Rule, string) *Guard { return nil }
+
+// VerifyParent refuses everything on non-unix platforms.
+func (s *Session) VerifyParent(*Fresh, string) Decision { return refuse(ReasonParentChanged) }
+
+// AuthorizeDestination delegates to Authorize, which refuses every path here.
+func (s *Session) AuthorizeDestination(rule Rule, path string, _ fs.FileMode) (*Fresh, Decision) {
+	return nil, Authorize(s.env, rule, path)
+}
+
+// OpenUnderHome is unsupported on non-unix platforms.
+func (s *Session) OpenUnderHome(rel string) (*os.File, error) {
+	return nil, &RefusedError{Path: rel, Reason: ReasonDifferentDevice, Err: errors.New("unsupported platform")}
+}

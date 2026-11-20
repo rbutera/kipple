@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -177,5 +178,23 @@ func TestMoveNoReplace(t *testing.T) {
 	}
 	if err := MoveNoReplace(src, "..", dst, "x"); !errors.Is(err, ErrInvalidName) {
 		t.Fatalf("err = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestTrashExpect(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "c/a/f", Content: "x"}, {Path: "c/b/f", Content: "y"}}})
+	tr := trashDir(t, home)
+	fa, _ := os.Lstat(testutil.Abs(home, "c/a"))
+	fb, _ := os.Lstat(testutil.Abs(home, "c/b"))
+	sa, sb := fa.Sys().(*syscall.Stat_t), fb.Sys().(*syscall.Stat_t)
+	parent := parentFd(t, testutil.Abs(home, "c"))
+	if _, err := tr.TrashExpect(parent, "a", uint64(sb.Dev), uint64(sb.Ino)); !errors.Is(err, ErrItemChanged) {
+		t.Fatalf("err = %v, want ErrItemChanged", err)
+	}
+	if _, err := os.Lstat(testutil.Abs(home, "c/a")); err != nil {
+		t.Fatal("moved despite the identity mismatch")
+	}
+	if _, err := tr.TrashExpect(parent, "a", uint64(sa.Dev), uint64(sa.Ino)); err != nil {
+		t.Fatal(err)
 	}
 }

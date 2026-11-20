@@ -85,6 +85,13 @@ const (
 	// that Env.Home names now is a different one (an ancestor was swapped
 	// for a symlink, or home itself was replaced, after cmd/ approved it).
 	ReasonHomeIdentityMismatch = "home_identity_mismatch"
+	// ReasonParentChanged: immediately before a move, the verified parent
+	// directory descriptor no longer resolves to the planned parent path
+	// (Session.VerifyParent).
+	ReasonParentChanged = "parent_changed"
+	// ReasonDestinationExists: something already exists where a restore
+	// would put an item back (Session.AuthorizeDestination).
+	ReasonDestinationExists = "destination_exists"
 )
 
 // Reasons returns every refusal reason Authorize can produce.
@@ -105,6 +112,8 @@ func Reasons() []string {
 		ReasonNameMismatch,
 		ReasonInvalidEnv,
 		ReasonHomeIdentityMismatch,
+		ReasonParentChanged,
+		ReasonDestinationExists,
 	}
 }
 
@@ -340,6 +349,30 @@ func isProtected(protect []string, path string) bool {
 		n := min(len(psegs), len(qsegs))
 		match := true
 		for i := 0; i < n && match; i++ {
+			q, s := foldName(qsegs[i]), foldName(psegs[i])
+			match = q == s || globOverlap(q, s)
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// isInsideProtected: path equals or descends from a protected path (not an
+// ancestor of one), compared like isProtected.
+func isInsideProtected(protect []string, path string) bool {
+	psegs := strings.Split(path[1:], "/")
+	for _, abs := range protect {
+		if abs == "/" {
+			return true
+		}
+		qsegs := strings.Split(abs[1:], "/")
+		if len(qsegs) > len(psegs) {
+			continue
+		}
+		match := true
+		for i := 0; i < len(qsegs) && match; i++ {
 			q, s := foldName(qsegs[i]), foldName(psegs[i])
 			match = q == s || globOverlap(q, s)
 		}

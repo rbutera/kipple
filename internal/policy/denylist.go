@@ -176,3 +176,24 @@ func isDenylisted(comps []string) bool {
 	}
 	return false
 }
+
+// isInsideDenied: comps equal or descend from a denied prefix, or a
+// component matches a denied component. Unlike isDenylisted it does not
+// refuse an ancestor of a denied location, so it suits a directory that
+// is the parent of an item rather than an item.
+func isInsideDenied(comps []string) bool {
+	for _, c := range comps {
+		for _, pat := range denyComponents {
+			if segmentsMatch([]string{pat}, []string{c}, true) {
+				return true
+			}
+		}
+	}
+	for _, entry := range denyPrefixes {
+		esegs := strings.Split(entry, "/")
+		if len(comps) >= len(esegs) && segmentsMatch(esegs, comps[:len(esegs)], true) {
+			return true
+		}
+	}
+	return false
+}

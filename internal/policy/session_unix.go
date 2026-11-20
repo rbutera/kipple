@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -604,4 +605,178 @@ func StatMode(m uint32) fs.FileMode {
 		mode |= fs.ModeSticky
 	}
 	return mode
+}
+
+// objectsOnly returns ids without the ancestor set, for checking a
+// directory that is a parent of an item rather than an item: a parent may
+// legitimately contain a protected object elsewhere in it.
+func (ids *protectedIDs) objectsOnly() *protectedIDs {
+	return &protectedIDs{objects: ids.objects, ancestors: map[fileID]string{}, stats: ids.stats}
+}
+
+// VerifyParent re-checks, immediately before a move, that f.ParentFd (from
+// AuthorizeFresh or AuthorizeDestination) is still the directory at
+// wantParent: fcntl(F_GETPATH) on the descriptor must return exactly
+// wantParent, that path must pass the lexical checks (below home, not
+// denylisted, not user-protected), and a fresh walk from home to it must
+// reach the very object the descriptor holds, with no symlink, device change
+// or name alias on the way. A directory renamed, moved or swapped after it
+// was opened is refused with ReasonParentChanged.
+func (s *Session) VerifyParent(f *Fresh, wantParent string) Decision {
+	if f == nil || f.ParentFd < 0 {
+		return refuse(ReasonInvalidEnv)
+	}
+	home := s.env.Home
+	if !isCanonicalAbs(wantParent) || (wantParent != home && !strings.HasPrefix(wantParent, home+"/")) {
+		return refuse(ReasonOutsideHome)
+	}
+	got, err := DescriptorPath(f.ParentFd)
+	if err != nil || got != wantParent {
+		return refuse(ReasonParentChanged)
+	}
+	var comps []string
+	if got != home {
+		comps = strings.Split(got[len(home)+1:], "/")
+		if isInsideDenied(comps) {
+			return refuse(ReasonDenylisted)
+		}
+		if isInsideProtected(s.env.Protect, got) {
+			return refuse(ReasonUserProtected)
+		}
+	}
+	s.life.RLock()
+	defer s.life.RUnlock()
+	if s.closed {
+		return refuse(ReasonInvalidEnv)
+	}
+	if s.homeFail != "" {
+		return refuse(s.homeFail)
+	}
+	if d := s.checkHomeStillPinned(); !d.Allowed {
+		return d
+	}
+	var st unix.Stat_t
+	if err := fstat(f.ParentFd, &st); err != nil {
+		return refuse(ReasonParentChanged)
+	}
+	want := fileID{dev: uint64(st.Dev), ino: st.Ino} //nolint:unconvert // field widths differ by platform
+	if len(comps) == 0 {
+		if want != s.homeID {
+			return refuse(ReasonParentChanged)
+		}
+		return Decision{Allowed: true}
+	}
+	w := s.walk(comps, directory, collectIDs(home, s.env.Protect).objectsOnly(), false, false)
+	defer w.close(s.homeFd)
+	if !w.d.Allowed {
+		if w.d.Reason == ReasonNotRuleItem {
+			return refuse(ReasonParentChanged)
+		}
+		return w.d
+	}
+	if id, ok := identityOf(w.final); !ok || id != want {
+		return refuse(ReasonParentChanged)
+	}
+	return Decision{Allowed: true}
+}
+
+// AuthorizeDestination decides whether rule may put an object of type kind
+// back at path (kipple restore). It applies the lexical checks Authorize
+// applies (home, denylist, user protections, rule roots and item shape),
+// then walks from home to path's parent with the same descriptor-relative
+// checks (no symlink, same device, stored names, protected identities
+// collected now), requires a project marker beside a project artifact, and
+// requires path itself to be vacant (ReasonDestinationExists otherwise; a
+// case or Unicode variant of the name counts as existing). kind must match
+// the rule's item type (ReasonNotRuleItem otherwise).
+//
+// When allowed, Fresh holds the verified parent descriptor and the name to
+// create; Fresh.Info is nil. The caller must Close it.
+func (s *Session) AuthorizeDestination(rule Rule, path string, kind fs.FileMode) (*Fresh, Decision) {
+	lx := lexical(s.env, rule, path)
+	if lx.done {
+		return nil, lx.d
+	}
+	if (lx.want == regularFile && !kind.IsRegular()) || (lx.want == directory && !kind.IsDir()) {
+		return nil, refuse(ReasonNotRuleItem)
+	}
+	s.life.RLock()
+	defer s.life.RUnlock()
+	if s.closed {
+		return nil, refuse(ReasonInvalidEnv)
+	}
+	if s.homeFail != "" {
+		return nil, refuse(s.homeFail)
+	}
+	if d := s.checkHomeStillPinned(); !d.Allowed {
+		return nil, d
+	}
+	name := lx.comps[len(lx.comps)-1]
+	parent := s.homeFd
+	if len(lx.comps) > 1 {
+		w := s.walk(lx.comps[:len(lx.comps)-1], directory, collectIDs(s.env.Home, s.env.Protect).objectsOnly(), true, false)
+		if !w.d.Allowed {
+			w.close(s.homeFd)
+			if w.d.Reason == ReasonNotRuleItem {
+				return nil, refuse(ReasonMissing)
+			}
+			return nil, w.d
+		}
+		parent = w.finalFd
+		w.finalFd = -1
+		w.close(s.homeFd)
+	} else {
+		fd, err := unix.Dup(parent)
+		if err != nil {
+			return nil, refuse(ReasonMissing)
+		}
+		unix.CloseOnExec(fd)
+		parent = fd
+	}
+	fail := func(reason string) (*Fresh, Decision) {
+		_ = unix.Close(parent)
+		return nil, refuse(reason)
+	}
+	var st unix.Stat_t
+	switch err := fstatat(parent, name, &st); {
+	case err == nil:
+		return fail(ReasonDestinationExists)
+	case !errors.Is(err, unix.ENOENT):
+		return fail(ReasonMissing)
+	}
+	if lx.want == directory {
+		if d := s.checkMarkers(parent, rule.RuleMatchMarkers(), false); !d.Allowed {
+			return fail(d.Reason)
+		}
+	}
+	return &Fresh{ParentFd: parent, Name: name}, Decision{Allowed: true}
+}
+
+// OpenUnderHome opens rel, a clean relative path, for reading relative to
+// the session's home descriptor, so the file is read from the pinned home
+// directory and not from whatever the home path names now. The final
+// component is never followed if it is a symlink, and a FIFO does not block
+// the open; the caller checks the file type.
+func (s *Session) OpenUnderHome(rel string) (*os.File, error) {
+	if rel == "" || strings.HasPrefix(rel, "/") || filepath.Clean(rel) != rel || rel == ".." || strings.HasPrefix(rel, "../") {
+		return nil, &RefusedError{Path: rel, Reason: ReasonNotAbsolute}
+	}
+	s.life.RLock()
+	defer s.life.RUnlock()
+	if s.closed {
+		return nil, &RefusedError{Path: rel, Reason: ReasonInvalidEnv}
+	}
+	if s.homeFail != "" {
+		return nil, &RefusedError{Path: rel, Reason: s.homeFail}
+	}
+	for {
+		fd, err := unix.Openat(s.homeFd, rel, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return nil, &fs.PathError{Op: "open", Path: s.env.Home + "/" + rel, Err: err}
+		}
+		return os.NewFile(uintptr(fd), s.env.Home+"/"+rel), nil
+	}
 }

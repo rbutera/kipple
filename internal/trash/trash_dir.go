@@ -122,6 +122,17 @@ func (d *DirTrasher) verify() error {
 
 // Trash implements Trasher.
 func (d *DirTrasher) Trash(parentFd int, name string) (string, error) {
+	return d.trash(parentFd, name, nil)
+}
+
+// TrashExpect is Trash for an item whose identity the caller approved: it
+// refuses with ErrItemChanged, moving nothing, unless the entry is the
+// object (dev, ino), and checks again after the move.
+func (d *DirTrasher) TrashExpect(parentFd int, name string, dev, ino uint64) (string, error) {
+	return d.trash(parentFd, name, &[2]uint64{dev, ino})
+}
+
+func (d *DirTrasher) trash(parentFd int, name string, want *[2]uint64) (string, error) {
 	if !validName(name) {
 		return "", ErrInvalidName
 	}
@@ -136,6 +147,9 @@ func (d *DirTrasher) Trash(parentFd int, name string) (string, error) {
 	}
 	if err := fstatat(parentFd, name, &ist); err != nil {
 		return "", fmt.Errorf("trash: %s: %w", name, err)
+	}
+	if want != nil && (uint64(ist.Dev) != want[0] || uint64(ist.Ino) != want[1]) {
+		return "", ErrItemChanged
 	}
 	if uint64(pst.Dev) != d.dev || uint64(ist.Dev) != d.dev {
 		return "", ErrDifferentDevice
