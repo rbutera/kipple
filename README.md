@@ -335,6 +335,10 @@ item, moves only what you confirm, and only to the Trash, with a receipt.
 
 ![The kipple app reviewing a scan of a test folder: safe caches pre-selected in amber, sizes on the right, and the highlighted item explained beside the list.](docs/images/gui-review-light.png)
 
+It follows your Mac's appearance; the same review in dark:
+
+![The same review in the dark appearance.](docs/images/gui-review-dark.png)
+
 - **Nothing happens on launch.** Press Scan (or Return). Scanning only reads.
   macOS may ask once whether kipple may look in Downloads; it only reads
   there, and installers move only if you pick them.

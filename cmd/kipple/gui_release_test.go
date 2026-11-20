@@ -40,10 +40,14 @@ func TestGUIRelease(t *testing.T) {
 		"](docs/images/gui-review-light.png)", "not yet usable with VoiceOver")
 }
 
-// Task 5.4: the README's screenshot is committed.
+// Task 5.4: the brief's screenshots are committed, and the README shows
+// the light and dark review.
 func TestGUIScreenshotCommitted(t *testing.T) {
-	fi, err := os.Stat("../../docs/images/gui-review-light.png")
-	if err != nil || fi.Size() < 10<<10 {
-		t.Fatalf("docs/images/gui-review-light.png: %v", err)
+	for _, name := range []string{"gui-review-light", "gui-review-dark", "gui-confirm-light", "gui-done-light"} {
+		fi, err := os.Stat("../../docs/images/" + name + ".png")
+		if err != nil || fi.Size() < 10<<10 {
+			t.Errorf("docs/images/%s.png: %v", name, err)
+		}
 	}
+	mustContain(t, "README.md", readRepoFile(t, "README.md"), "](docs/images/gui-review-dark.png)")
 }
