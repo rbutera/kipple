@@ -23,6 +23,7 @@ import (
 	"github.com/rbutera/kipple/internal/procs"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/scan"
+	"github.com/rbutera/kipple/internal/trash"
 	"github.com/rbutera/kipple/internal/tui"
 )
 
@@ -768,6 +769,9 @@ type versionDocument struct {
 	Commit        string `json:"commit"`
 	Date          string `json:"date,omitempty"`
 	SchemaVersion int    `json:"schema_version"`
+	// TrashFallback is set when the build has Apple's Trash API fallback
+	// (cgo on macOS), used when ~/.Trash cannot be opened.
+	TrashFallback bool   `json:"trash_fallback"`
 	Home          string `json:"home,omitempty"`
 }
 
@@ -777,7 +781,7 @@ func (a *app) versionCommand() *cobra.Command {
 		Short: "Print the version, commit and document schema version",
 		Args:  noArgs,
 		RunE: func(*cobra.Command, []string) error {
-			doc := versionDocument{Version: version, Commit: commit, Date: date, SchemaVersion: plan.SchemaVersion}
+			doc := versionDocument{Version: version, Commit: commit, Date: date, SchemaVersion: plan.SchemaVersion, TrashFallback: trash.FinderAvailable}
 			// version needs no home, so without KIPPLE_HOME it prints none.
 			// With KIPPLE_HOME set every output names the effective home
 			// (spec "Test home override"), so a refused one is an error here
@@ -794,7 +798,11 @@ func (a *app) versionCommand() *cobra.Command {
 				if doc.Date != "" {
 					built = ", built " + doc.Date
 				}
-				_, err := fmt.Fprintf(w, "kipple %s (commit %s%s, schema_version %d)\n", doc.Version, doc.Commit, built, doc.SchemaVersion)
+				fallback := "built in"
+				if !doc.TrashFallback {
+					fallback = "not built in (built without cgo): without Full Disk Access, clean --apply stops with trash_access"
+				}
+				_, err := fmt.Fprintf(w, "kipple %s (commit %s%s, schema_version %d)\nTrash fallback (Apple's Trash API): %s\n", doc.Version, doc.Commit, built, doc.SchemaVersion, fallback)
 				if err == nil && doc.Home != "" {
 					_, err = fmt.Fprintf(w, "home %s\n", output.SafeText(doc.Home))
 				}

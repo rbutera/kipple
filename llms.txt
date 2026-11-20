@@ -5,13 +5,14 @@
 ## CLI contract
 
 - Every command accepts --json. With --json, stdout is exactly one JSON document; progress, warnings and errors go to stderr. Errors are also printed on stdout as {"error":{"code":"...","message":"..."}}.
-- Exit codes: 0 success, 1 error, 2 usage error, 3 nothing to do, 4 partial (some items skipped or failed; each skip has a machine-readable reason).
+- Exit codes: 0 success, 1 error, 2 usage error, 3 nothing to do, 4 partial (some items skipped or failed; each skip has a machine-readable reason). 3 comes only from clean --apply with nothing selected and from restore with nothing to put back; scan and clean dry runs exit 0.
 - No command prompts when --json is set or stdout is not a terminal. --apply is the consent.
 - Flow: `kipple scan --json > plan.json` (inspect items: id, rule, tier, path, allocated_bytes, selected, reasons) -> `kipple explain <id> --json` -> `kipple clean --json --only <id,...>` (dry run) -> `kipple clean --apply --json --only <id,...>` (result has receipt_id) -> `kipple history --json` -> `kipple restore <receipt_id> --json`, then `--apply` to undo.
 - Item IDs are 12 characters, derived from rule ID and home-relative path; stable across runs.
 - --only selects review and manual items (naming one is consent to its tier); info items are never moved. Anything else blocking an item (too_recent, git_dirty, contains_protected, owner_running, ...) still skips it.
 - `kipple clean --plan plan.json --apply --json` treats a saved plan as untrusted candidates and re-checks them against a fresh scan.
 - `kipple schema plan|receipt|rules|result` prints the JSON Schema, generated from the encoding types. schema_version is 1 and stays 1 within a kipple major version.
+- `kipple version --json` has `trash_fallback`: whether Apple's Trash API fallback (cgo) is built in.
 - `kipple tui` is interactive only (needs a terminal; with --json it is a usage error).
 - KIPPLE_HOME and KIPPLE_STATE_DIR point kipple at a fixture home and receipts folder for tests; kipple refuses a KIPPLE_HOME that is, contains or is inside the real home.
 

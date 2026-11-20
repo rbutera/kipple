@@ -151,8 +151,13 @@ to run as root.
 go install github.com/rbutera/kipple/cmd/kipple@latest
 ```
 
-This needs Go 1.23 or later and the Xcode command line tools (the Trash
-fallback uses cgo). A `go install` build reports its version as `dev`.
+This needs Go 1.23 or later. Install the Xcode command line tools first
+(`xcode-select --install`): the fallback to Apple's Trash API is C code, and
+without a C compiler Go quietly builds kipple without it. Such a build can
+still move items into `~/.Trash` when your terminal has Full Disk Access,
+but without it `clean --apply` stops with `trash_access`. Check with
+`kipple version`, which prints whether the fallback is built in. A
+`go install` build reports its version as `dev`.
 
 ### Homebrew
 
@@ -281,7 +286,9 @@ Restored 2 items (moved 2, pending 0, displaced 0), skipped 0:
 ```
 
 `kipple restore <item-id>` restores one item from the newest receipt that
-moved it.
+moved it, and `--only <id,...>` limits a receipt to some of its items. A
+dry run always ends with the command that repeats the same request with
+`--apply`, so it never suggests restoring more than you asked for.
 
 ### Interactive review
 
@@ -392,7 +399,7 @@ candidates and re-checks everything against a fresh scan.
 | 0 | Success. |
 | 1 | Error. With `--json`, stdout is `{"error":{"code":"...","message":"..."}}`. |
 | 2 | Usage error: unknown command, flag or argument (including `--permanent` in v0.1.0). |
-| 3 | Nothing to do: nothing was selected. |
+| 3 | Nothing to do: `clean --apply` had nothing selected, or `restore` (with or without `--apply`) found nothing in the receipt to put back. `scan` and a `clean` dry run exit 0 even when nothing is selected. |
 | 4 | Partial: some items were skipped or failed; each skip has a machine-readable `reason`. |
 
 ### Schemas

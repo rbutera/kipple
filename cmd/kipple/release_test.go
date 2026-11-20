@@ -6,6 +6,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/testutil"
+	"github.com/rbutera/kipple/internal/trash"
 )
 
 func readRepoFile(t *testing.T, rel string) string {
@@ -131,5 +135,59 @@ func TestTaggedBuild(t *testing.T) {
 	}
 	if doc.Version != "0.1.0" || doc.Commit != commit || doc.Date != date {
 		t.Fatalf("%+v", doc)
+	}
+}
+
+// Should-fix 9: kipple version says whether Apple's Trash API fallback is
+// built in (it needs cgo, so a go install without the Xcode command line
+// tools leaves it out).
+func TestVersionReportsTrashFallback(t *testing.T) {
+	code, out, _ := cli(t, "version")
+	want := "Trash fallback (Apple's Trash API): built in"
+	if !trash.FinderAvailable {
+		want = "Trash fallback (Apple's Trash API): not built in"
+	}
+	if code != exitOK || !strings.Contains(out, want) {
+		t.Fatalf("exit %d: %q", code, out)
+	}
+	_, out, _ = cli(t, "version", "--json")
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil || doc["trash_fallback"] != trash.FinderAvailable {
+		t.Fatalf("%v %v", doc, err)
+	}
+}
+
+// Should-fix 9: exit code 3 (nothing to do) comes from clean --apply with
+// nothing selected and from restore (dry run or not) with nothing in the
+// receipt to put back; a clean dry run exits 0. The README says exactly
+// this.
+func TestNothingToDoExitCode(t *testing.T) {
+	testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".Trash", Mode: 0o700}}})
+	if code, _, _ := cli(t, "clean"); code != exitOK {
+		t.Fatalf("clean dry run on an empty home: exit %d", code)
+	}
+	if code, _, _ := cli(t, "clean", "--apply"); code != exitNothing {
+		t.Fatalf("clean --apply on an empty home: exit %d", code)
+	}
+	cleanFixture(t)
+	_, out, _ := cli(t, "scan", "--json")
+	var p plan.Plan
+	exactlyOneJSON(t, out, &p)
+	var info string
+	for _, it := range p.Items {
+		if it.Tier == "info" {
+			info = it.ID
+		}
+	}
+	code, out, _ := cli(t, "clean", "--apply", "--json", "--only", info)
+	var res plan.Result
+	exactlyOneJSON(t, out, &res)
+	if code != exitPartial || res.ReceiptID == "" {
+		t.Fatalf("clean of an info item: exit %d %+v", code, res)
+	}
+	for _, args := range [][]string{{"restore", res.ReceiptID}, {"restore", res.ReceiptID, "--apply"}} {
+		if code, _, _ := cli(t, args...); code != exitNothing {
+			t.Errorf("%v with nothing to put back: exit %d", args, code)
+		}
 	}
 }

@@ -82,6 +82,10 @@ import (
 	"github.com/rbutera/kipple/internal/policy"
 )
 
+// FinderAvailable reports whether this build has the NSFileManager
+// fallback (macOS with cgo). kipple version prints it.
+const FinderAvailable = true
+
 // FinderTrasher moves items with NSFileManager trashItemAtURL, which picks
 // the Trash for the item's volume (~/.Trash, or <volume>/.Trashes/<uid>),
 // resolves name collisions, and returns where the item landed. It works

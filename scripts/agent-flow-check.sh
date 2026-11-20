@@ -42,11 +42,24 @@ step() {
 	else
 		echo "ok    exit $got  $line"
 	fi
-	# Every command here uses --json: stdout must be exactly one JSON document
-	# unless it was redirected to a file.
+	# Every kipple command here uses --json: its stdout (or the file it is
+	# redirected to) must be non-empty and hold exactly one JSON document.
 	case "$line" in kipple* | *" kipple "*) ;; *) return 0 ;; esac
-	if [ -s "$work/stdout" ] && ! jq -e . "$work/stdout" >/dev/null 2>&1; then
-		echo "FAIL  stdout is not one JSON document:  $line"
+	local out="$work/stdout" docs
+	case "$line" in *" > "*) out="${line##* > }" ;; esac
+	if [ ! -s "$out" ]; then
+		echo "FAIL  stdout is empty:  $line"
+		failures=$((failures + 1))
+		return 0
+	fi
+	if ! jq -c . "$out" >"$work/docs" 2>/dev/null; then
+		echo "FAIL  stdout is not JSON:  $line"
+		failures=$((failures + 1))
+		return 0
+	fi
+	docs=$(wc -l <"$work/docs" | tr -d ' ')
+	if [ "$docs" -ne 1 ]; then
+		echo "FAIL  stdout holds $docs JSON documents, want exactly 1:  $line"
 		failures=$((failures + 1))
 	fi
 }
