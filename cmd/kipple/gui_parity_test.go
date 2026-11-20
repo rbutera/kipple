@@ -97,7 +97,7 @@ func TestGUILaunchRefusals(t *testing.T) {
 		}
 		t.Setenv("KIPPLE_HOME", odd)
 		m := guiModel(t, testEnv(t))
-		if l := m.Config().HomeLabel; strings.ContainsAny(l, "\x1b\a") && strings.ContainsRune(l, 0x1b) || strings.ContainsRune(l, 0x07) {
+		if l := m.Config().HomeLabel; strings.ContainsRune(l, 0x1b) || strings.ContainsRune(l, 0x07) || !strings.Contains(l, `\x1b`) {
 			t.Fatalf("label %q", l)
 		}
 	})
