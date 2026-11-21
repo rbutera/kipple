@@ -15,10 +15,15 @@ kipple schema receipt   # for apply receipts (wave 3)
 kipple schema result    # for kipple clean --apply --json (wave 3)
 ```
 
-Every document carries `schema_version`. Adding a field is compatible;
-renaming or removing a field, or changing what one means, bumps the version.
-Unknown fields are rejected by the schema (`additionalProperties: false`), so
-a consumer can rely on the field list below being complete.
+Every document carries `schema_version`. Adding a field, a new enum value
+(such as the receipt mover `freedesktop`) or a new error code (such as
+`unsupported_platform` or `mounts_unavailable`) is compatible and keeps the
+version; renaming or removing a field, or changing what a field, value or
+code means, bumps it. A consumer should therefore tolerate enum values and
+error codes it does not know. `kipple schema <document>` always describes
+the running binary's output, new enum values included. Unknown fields are
+rejected by the schema (`additionalProperties: false`), so a consumer can
+rely on the field list of a given binary's schema being complete.
 
 ## Top level
 
@@ -215,5 +220,53 @@ A plan for a small fixture home at level `safe`:
     }
   ],
   "warnings": []
+}
+```
+
+## Receipts on Linux
+
+On Linux, `kipple clean --apply` moves items into the freedesktop.org home
+Trash and its receipt records `mover: "freedesktop"`, with `trash_dir` the
+Trash's `files` folder. Each moved item also has an `info/<name>.trashinfo`
+file, named after its `trash_path`, that file managers use to restore it;
+`info_ino` records that file's inode, and `kipple restore` removes it only
+if it is still that file and still describes the item's original path.
+`info_ino` is an optional field, added within `schema_version` 1. A receipt
+written on Linux validates against `kipple schema receipt` from the same
+binary:
+
+```json receipt
+{
+  "schema_version": 1,
+  "id": "20261121T103000Z-k2p7qa",
+  "kipple_version": "0.3.0",
+  "created_at": "2026-11-21T10:30:00Z",
+  "complete": true,
+  "home": "/home/ada",
+  "level": "safe",
+  "permanent": false,
+  "trash_dir": "/home/ada/.local/share/Trash/files",
+  "mover": "freedesktop",
+  "plan_generated_at": "2026-11-21T10:29:40Z",
+  "moved": [
+    {
+      "id": "b2p5penllvv2",
+      "rule": "pip.cache",
+      "path": "/home/ada/.cache/pip/http",
+      "trash_path": "/home/ada/.local/share/Trash/files/http",
+      "bytes": 1048576,
+      "reclaimable_bytes": 1048576,
+      "dev": 66306,
+      "ino": 1311522,
+      "size": 4096,
+      "mtime": "2026-10-02T08:14:00Z",
+      "mover": "freedesktop",
+      "moved_at": "2026-11-21T10:30:01Z",
+      "info_ino": 1311700
+    }
+  ],
+  "skipped": [],
+  "displaced": [],
+  "pending": []
 }
 ```

@@ -154,7 +154,8 @@ inside it is changed.
 ## Receipts and restore
 
 Every `--apply` run writes a receipt, a JSON file in
-`~/Library/Application Support/kipple/receipts` (or `$KIPPLE_STATE_DIR/receipts`).
+`~/Library/Application Support/kipple/receipts` on macOS,
+`~/.local/state/kipple/receipts` on Linux (or `$KIPPLE_STATE_DIR/receipts`).
 It is written before the first move and saved again after every item, so
 even an interrupted run leaves a record. It is a write-ahead record:
 immediately before each move the item is saved as `pending`, and if that
@@ -315,12 +316,137 @@ can be moved; it is also `manual`, so it moves only when you name it. A
   bind mount): an item that is or contains one is never moved, and a Trash
   folder that is one is refused. (The v0.3.0 development snapshots before
   this check could move a bind mount that lived on home's device.)
+- User extended attributes are required to move anything (see "On Linux,
+  The Trash"): tmpfs before Linux 6.6 and some FUSE file systems lack them,
+  so their items are skipped.
+- overlayfs: a folder that comes from a lower layer cannot be renamed
+  (`EXDEV`) unless `redirect_dir` is on, and is skipped with
+  `different_device`, never copied. Containers whose home is a volume are
+  unaffected.
+- btrfs: a subvolume under home has its own device number, so its items are
+  `different_device` (kipple has one Trash per home; the per-device
+  `.Trash-<uid>` folders are not used). With reflinked files or snapshots,
+  the sizes shown are an upper bound of what emptying the Trash frees, and
+  with compression they are the compressed size.
+- kipple sees only the processes in its own PID namespace (and none of
+  another user's, or any hidden by `hidepid`): an agent running on the host
+  in a project bind-mounted into a container is invisible to kipple in the
+  container. The idle and git conditions still apply.
+- Names of 246 to 255 bytes cannot get a `.trashinfo` file (its name would
+  pass 255 bytes): such an item stays, with a detail saying the name is too
+  long for the Trash.
+- Without `/proc`, kipple cannot confirm an item's folder just before the
+  move, so nothing moves (the detail says `/proc` is not available).
 
 ## On Linux
 
 kipple runs on Linux with the same model: one gate, dry run by default, the
 Trash only, receipts and restore, no symlink followed, home only, never root.
 What differs is described here.
+
+### The Trash
+
+On Linux the Trash is the freedesktop.org home Trash,
+`~/.local/share/Trash`, with the items in `files/` and one
+`info/<name>.trashinfo` file per item recording its original path and
+when it was trashed, so GNOME Files, Dolphin and other file managers show
+the item with its original location and can restore it. kipple uses this
+default location and does not follow `XDG_DATA_HOME` (see below); with
+`KIPPLE_HOME` it is the fixture's own `.local/share/Trash`.
+
+For each item kipple first reserves `info/<name>.trashinfo` (created
+exclusively, so it can never overwrite one), writes the original path
+(percent-encoded, so any byte in a name survives) and the time, syncs it,
+and only then renames the item into `files/<name>` with a rename that
+never replaces anything (`renameat2` with `RENAME_NOREPLACE`), from the
+folder descriptor the policy verified. A name already taken gets a
+Finder-style name (`http 2`, `report 2.pdf`). If the move does not happen,
+kipple removes the info file it wrote, and only that one (checked by
+inode); it never removes an info file it did not write. An item on another
+device than the Trash is skipped (`different_device`), never copied.
+
+Before moving anything kipple checks the Trash: `Trash`, `files` and `info`
+must be real folders (no symlink anywhere on the way, no mount point), on
+home's device, owned by you, usable by you and not writable by group or
+others; otherwise the run stops with `trash_access` and nothing moves. If
+`.local`, `.local/share`, `Trash`, `files` or `info` is missing, kipple
+creates it with mode 0700, as GNOME does, but only in a `clean --apply` run
+that has something to move. A dry run, a scan and the GUI's checks never
+create anything.
+
+Every item kipple moves first gets the extended attribute
+`user.com.rbutera.kipple` (the receipt, the item and the home), which
+`kipple restore` requires. A file system without user extended attributes
+(tmpfs before Linux 6.6, some FUSE file systems) cannot carry it: the item
+is skipped with `move_failed` and stays where it is, because an untagged
+Trash entry could not be restored by kipple. Device nodes, FIFOs and
+sockets are refused without being opened.
+
+### Putting things back
+
+`kipple restore <receipt> --apply` works as on macOS (staging inside
+`files/`, never replacing anything) and then removes the item's
+`.trashinfo` file, after the move, and only if it is the file kipple wrote
+(its inode is in the receipt) and still names the item's original path;
+otherwise it leaves the file and says so. You can also use Restore in your
+file manager's Trash: it renames the item back and removes the info file,
+and the item keeps kipple's tag, so a later `kipple restore` reports it as
+`already_restored` instead of moving anything. If you empty the Trash in
+the file manager, restore reports `trash_item_missing`.
+
+### Mount points
+
+A mount point is a boundary even when it shares its device with home, as a
+bind mount does. kipple asks the kernel whether each folder it passes is a
+mount root (`statx` `STATX_ATTR_MOUNT_ROOT`, Linux 5.8 and later), or,
+where the kernel does not say, compares every folder with the mount points
+under home listed in `/proc/self/mountinfo`. A candidate that is a mount
+point, or lies below one, is refused with `different_device`; an item that
+contains one is `contains_mount` and never moves; a Trash folder that is a
+mount point is `trash_access`. If neither source can answer, scan marks
+every item `contains_mount` and `clean --apply` stops with
+`mounts_unavailable` before moving anything. With `KIPPLE_HOME`, the check
+that the folder is not your real home also looks through bind mounts
+listed in `/proc/self/mountinfo`, and refuses if that table cannot be read.
+
+### Your folders
+
+On Linux the folders named in `~/.config/user-dirs.dirs` (for example a
+localised `~/Dokumente` or `~/Bilder`) are protected like the built-in
+Documents, Pictures and the rest (reason `user_protected`). The Downloads
+folder is the exception, since `downloads.installers` offers old
+installers there. A value that is your home folder itself or outside it is
+ignored with a warning, a malformed file gives a warning, and the
+built-in protections always stay; the file can only add protections. If a
+protected folder covers a rule's folder, the plan says that rule's items
+are never offered.
+
+### XDG variables
+
+kipple uses the XDG default locations (`~/.cache`, `~/.local/share`,
+`~/.config`, `~/.local/state`) and does not follow `XDG_CACHE_HOME`,
+`XDG_DATA_HOME`, `XDG_CONFIG_HOME` or `XDG_STATE_HOME`. When one is set to
+another place, scan and clean warn: kipple scans only the default location
+and never looks outside your home folder, and with `XDG_DATA_HOME` your
+desktop's Trash may be elsewhere, so put kipple's items back with `kipple
+restore`. With `KIPPLE_HOME` set the variables are ignored entirely.
+
+### What kipple writes on Linux
+
+Receipts go to `~/.local/state/kipple/receipts` (`KIPPLE_STATE_DIR`
+overrides it), and `clean --apply` writes into the Trash as described
+above, creating its folders 0700 when they are missing. Nothing else is
+written; config stays at `~/.config/kipple/config.toml`. The GUI is not
+available on Linux in v0.3.0 (use `kipple tui`).
+
+### Running agents and apps
+
+On Linux kipple reads `/proc` for your own processes only: a process
+counts as running when its name (`comm`) or the base name of its first
+command-line argument matches, which covers names longer than the kernel's
+15 characters and Node programs such as the npm `claude` command. If
+`/proc` cannot be read, review and manual items whose owner check applies
+are skipped (`tool_running`, `owner_running`).
 
 ### The ~/.cache rule (`xdg.cache`)
 

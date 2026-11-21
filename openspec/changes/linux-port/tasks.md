@@ -75,7 +75,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
 
   As uid 1000 it runs `kipple scan --json` and then `kipple clean --apply --json --only <all of them>`. Verify "Real mounts checked": `.cache/foo` and `.cache/baz` are skipped with `contains_mount`, `.cache/bar` and the overlay item are not moved (`different_device`), only the control item reaches the fixture Trash, nothing is copied, and the fixture's sha256 tree is otherwise unchanged.
 - [x] 2.8 The TUI done view and the CLI human output name the Linux Trash ("your Trash (~/.local/share/Trash), visible in your file manager") and the restore paths. Verify with TUI model and CLI golden tests per platform against fixtures.
-- [ ] 2.9 Documentation for waves 1 and 2:
+- [x] 2.9 Documentation for waves 1 and 2:
   - docs/safety.md gets "On Linux" subsections: Trash location and `.trashinfo`, file-manager restore, the user tag, folders created 0700, mount boundaries, user-dirs protections, the XDG policy, and known limits (NFS and FUSE, user xattrs, overlayfs, btrfs subvolumes and reflinks, PID namespaces).
   - docs/plan-schema.md documents `mover: freedesktop` and the compatibility rule for enum values and error codes.
 

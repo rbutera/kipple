@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"regexp"
@@ -12,6 +13,44 @@ import (
 	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/rules"
 )
+
+// Spec scenario "Documented compatibility rule" (cli-agent-interface):
+// docs/plan-schema.md states that new fields, enum values and error codes
+// are compatible and that renames, removals and changes of meaning bump
+// schema_version; its Linux receipt example validates against kipple
+// schema receipt, with mover freedesktop.
+func TestDocumentedCompatibilityRule(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/plan-schema.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(string(doc)), " ")
+	for _, want := range []string{"Adding a field, a new enum value", "a new error code", "is compatible and keeps the version", "renaming or removing a field, or changing what a field, value or code means, bumps it", "`freedesktop`", "`unsupported_platform`", "`mounts_unavailable`"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("docs/plan-schema.md lacks %q", want)
+		}
+	}
+	blocks := regexp.MustCompile("(?s)```json receipt\n(.*?)```").FindAllSubmatch(doc, -1)
+	if len(blocks) != 1 {
+		t.Fatalf("want one Linux receipt example, found %d", len(blocks))
+	}
+	_, schema, _ := cli(t, "schema", "receipt")
+	if err := plantest.ValidateWith([]byte(schema), "receipt", blocks[0][1]); err != nil {
+		t.Fatalf("the Linux receipt example does not validate against kipple schema receipt: %v", err)
+	}
+	if !strings.Contains(string(blocks[0][1]), `"mover": "freedesktop"`) {
+		t.Fatal("the example's mover is not freedesktop")
+	}
+	var rc plan.Receipt
+	if err := json.Unmarshal(blocks[0][1], &rc); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range rc.Moved {
+		if want := plan.ID(m.Rule, strings.TrimPrefix(m.Path, rc.Home+"/")); m.ID != want {
+			t.Errorf("example item %s has ID %s, want %s", m.Path, m.ID, want)
+		}
+	}
+}
 
 // Task 2.6: the example in docs/plan-schema.md validates against the schema
 // that kipple schema plan prints, and the doc documents every item reason.
