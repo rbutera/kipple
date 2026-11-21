@@ -155,18 +155,32 @@ func Resolve(rt Runtime) (Home, error) {
 	return h, nil
 }
 
-// StateDirWarning returns a warning when an explicit KIPPLE_STATE_DIR is,
-// after resolving symlinks in its nearest existing folder, inside a
-// denylisted folder of home (~/.ssh, ~/.gnupg, a keyring): kipple
-// otherwise never writes there. The setting is still honoured.
+// StateDirWarning returns a warning when an explicit KIPPLE_STATE_DIR is
+// a denylisted folder of home (~/.ssh, ~/.gnupg, a keyring) or inside one:
+// kipple otherwise never writes there. It compares paths, after resolving
+// symlinks in the nearest existing folder, and then identities, so the
+// same folder reached another way (a bind mount of ~/.ssh elsewhere on
+// Linux, or a mount of a folder inside it) is caught too; that second
+// check is best effort, and a lookup that fails gives no warning. kipple's
+// own default (~/.local/state/kipple, under the protected ~/.local/state)
+// is not warned about. The setting is always honoured.
 func StateDirWarning(dir, home string) string {
+	return stateDirWarning(homeguard.System(), dir, home)
+}
+
+// ownStateRel is kipple's default Linux state folder, home-relative.
+const ownStateRel = ".local/state/kipple"
+
+func stateDirWarning(fsys homeguard.FS, dir, home string) string {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return ""
 	}
-	p, rest := filepath.Clean(dir), ""
+	// existing is the nearest existing folder, resolved; rest is the part
+	// of the path that does not exist yet.
+	p, rest, existing := filepath.Clean(dir), "", ""
 	for {
 		if r, err := filepath.EvalSymlinks(p); err == nil {
-			p = filepath.Join(r, rest)
+			existing, p = r, filepath.Join(r, rest)
 			break
 		}
 		parent := filepath.Dir(p)
@@ -176,14 +190,42 @@ func StateDirWarning(dir, home string) string {
 		rest = filepath.Join(filepath.Base(p), rest)
 		p = parent
 	}
-	if !strings.HasPrefix(p, home+"/") {
-		return ""
+	warn := func(folder string) string {
+		return fmt.Sprintf("KIPPLE_STATE_DIR is %s, inside the protected folder ~/%s; kipple writes its receipts there only because KIPPLE_STATE_DIR says so", dir, folder)
 	}
-	rel := strings.TrimPrefix(p, home+"/")
-	if !policy.IsDenylisted(rel) {
-		return ""
+	own := func(rel string) bool { return rel == ownStateRel || strings.HasPrefix(rel, ownStateRel+"/") }
+	if strings.HasPrefix(p, home+"/") {
+		rel := strings.TrimPrefix(p, home+"/")
+		if own(rel) {
+			return ""
+		}
+		if d := policy.DenylistedFolder(rel); d != "" {
+			return warn(d)
+		}
 	}
-	return fmt.Sprintf("KIPPLE_STATE_DIR is %s, inside a protected folder (~/%s); kipple writes its receipts there only because KIPPLE_STATE_DIR says so", dir, rel)
+	// By identity: the nearest existing folder of the state path against
+	// every existing protected folder.
+	if ownDir, err := filepath.EvalSymlinks(filepath.Join(home, ownStateRel)); err == nil {
+		if r, err := homeguard.Relate(fsys, existing, ownDir); err == nil && (r == homeguard.Same || r == homeguard.Inside) {
+			return ""
+		}
+	}
+	for _, entry := range policy.Denylist() {
+		if strings.HasPrefix(entry, "**/") || strings.ContainsAny(entry, "*?[") {
+			continue // patterns name no single folder
+		}
+		d, err := filepath.EvalSymlinks(filepath.Join(home, filepath.FromSlash(entry)))
+		if err != nil {
+			continue
+		}
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			continue
+		}
+		if r, err := homeguard.Relate(fsys, existing, d); err == nil && (r == homeguard.Same || r == homeguard.Inside) {
+			return fmt.Sprintf("KIPPLE_STATE_DIR is %s, which is the protected folder ~/%s or inside it, reached another way (a link or a mount); kipple writes its receipts there only because KIPPLE_STATE_DIR says so", dir, entry)
+		}
+	}
+	return ""
 }
 
 // xdgVars are the XDG base directory variables kipple does not follow,

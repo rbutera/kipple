@@ -199,6 +199,25 @@ func IsDenylisted(rel string) bool {
 	return isDenylisted(strings.Split(rel, "/"))
 }
 
+// DenylistedFolder returns the shortest leading part of the home-relative
+// slash path rel that is itself denylisted (equal to a denied prefix or
+// matching a denied component), such as ".ssh" for ".ssh/sub/x", or ""
+// when rel is not at or under one. Unlike IsDenylisted it ignores
+// ancestors of denied locations (".local" is not a protected folder).
+func DenylistedFolder(rel string) string {
+	rel = strings.Trim(rel, "/")
+	if rel == "" {
+		return ""
+	}
+	comps := strings.Split(rel, "/")
+	for i := 1; i <= len(comps); i++ {
+		if isInsideDenied(comps[:i]) {
+			return strings.Join(comps[:i], "/")
+		}
+	}
+	return ""
+}
+
 // isDenylisted: comps (home-relative components) equal, descend from, or
 // contain a denied prefix, or any component matches a denied component.
 func isDenylisted(comps []string) bool {

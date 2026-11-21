@@ -301,6 +301,35 @@ race_unreadable_check() {
 }
 race_unreadable_check
 
+# 4c. Wave 2 confirmation G3: KIPPLE_STATE_DIR on a bind mount of ~/.ssh
+#     (or of a folder inside it) mounted outside home is still warned about
+#     (the warning compares identities, not only paths); a separate folder
+#     is not. scan writes no receipt.
+statedir_check() {
+	local r=/tmp/sd d w
+	many_fixture "$r" 1
+	mkdir -p "$r/home/.ssh/sub" /tmp/sdbind /tmp/sdsub /tmp/sdplain
+	chown -R 1000:1000 "$r/home/.ssh" /tmp/sdbind /tmp/sdsub /tmp/sdplain
+	mount --bind "$r/home/.ssh" /tmp/sdbind
+	mount --bind "$r/home/.ssh/sub" /tmp/sdsub
+	for d in /tmp/sdbind /tmp/sdbind/kipple /tmp/sdsub/kipple; do
+		w="$(user_in "$r" env KIPPLE_STATE_DIR="$d" "$K" scan --json 2>/dev/null | jq -r '[.warnings[]? | select(contains("KIPPLE_STATE_DIR"))] | length')"
+		if [ "$w" = 1 ]; then
+			ok "KIPPLE_STATE_DIR=$d on a bind of ~/.ssh is warned about"
+		else
+			fail "KIPPLE_STATE_DIR=$d on a bind of ~/.ssh: $w warnings"
+		fi
+	done
+	w="$(user_in "$r" env KIPPLE_STATE_DIR=/tmp/sdplain/kipple "$K" scan --json 2>/dev/null | jq -r '[.warnings[]? | select(contains("KIPPLE_STATE_DIR"))] | length')"
+	if [ "$w" = 0 ]; then
+		ok "KIPPLE_STATE_DIR on a separate folder is not warned about"
+	else
+		fail "KIPPLE_STATE_DIR on a separate folder: $w warnings"
+	fi
+	umount /tmp/sdsub /tmp/sdbind
+}
+statedir_check
+
 # 5. Wave 2 red-team R3: with statx denied (kernels before 5.8), kipple
 #    falls back to /proc/self/mountinfo. A bind present at scan is
 #    contains_mount, and binds made while clean --apply runs must be seen

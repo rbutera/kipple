@@ -340,3 +340,47 @@ func TestStateDirInsideAProtectedFolderWarns(t *testing.T) {
 		}
 	}
 }
+
+// Wave 2 confirmation G3: the warning names the protected folder itself,
+// stays quiet for kipple's own default state folder, and also catches the
+// protected folder reached another way: here a bind of ~/.ssh mounted
+// elsewhere, modelled by the alias list a mount table would give (the
+// real mount is checked in scripts/linux-mount-check.sh).
+func TestStateDirWarningByIdentity(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".ssh/sub"}, {Path: ".local/state/kipple"}, {Path: ".local/state/nvim"}}})
+	if w := StateDirWarning(home+"/.ssh/sub/x", home); !strings.Contains(w, "the protected folder ~/.ssh;") {
+		t.Fatalf("warning %q does not name ~/.ssh", w)
+	}
+	for _, own := range []string{home + "/.local/state/kipple", home + "/.local/state/kipple/new"} {
+		if w := StateDirWarning(own, home); w != "" {
+			t.Fatalf("kipple's own state folder %s: %q", own, w)
+		}
+	}
+	if w := StateDirWarning(home+"/.local/state/nvim/k", home); !strings.Contains(w, "~/.local/state") {
+		t.Fatalf("another program's state folder: %q", w)
+	}
+	bind := filepath.Join(filepath.Dir(home), "sb")
+	other := filepath.Join(filepath.Dir(home), "other")
+	for _, d := range []string{bind, other} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bind, _ = filepath.EvalSymlinks(bind)
+	ssh, _ := filepath.EvalSymlinks(home + "/.ssh")
+	fsys := homeguard.System()
+	fsys.Aliases = func(real string) (homeguard.Aliases, error) {
+		if real == ssh {
+			return homeguard.Aliases{Real: []string{bind}}, nil
+		}
+		return homeguard.Aliases{}, nil
+	}
+	for _, dir := range []string{bind, bind + "/kipple"} {
+		if w := stateDirWarning(fsys, dir, home); !strings.Contains(w, "the protected folder ~/.ssh or inside it, reached another way") {
+			t.Fatalf("%s (a bind of ~/.ssh): %q", dir, w)
+		}
+	}
+	if w := stateDirWarning(fsys, other+"/kipple", home); w != "" {
+		t.Fatalf("a separate folder: %q", w)
+	}
+}

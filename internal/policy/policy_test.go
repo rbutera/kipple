@@ -547,3 +547,23 @@ func TestLinuxDenylist(t *testing.T) {
 		})
 	}
 }
+
+// DenylistedFolder names the protected folder a path is at or under, not
+// the path itself and not an ancestor of a protected folder.
+func TestDenylistedFolder(t *testing.T) {
+	for rel, want := range map[string]string{
+		".ssh":                    ".ssh",
+		".ssh/sub/x":              ".ssh",
+		"/.gnupg/k/":              ".gnupg",
+		".local/share/keyrings/x": ".local/share/keyrings",
+		".local":                  "",
+		".local/share":            "",
+		"notes/a":                 "",
+		"src/app/.git/objects":    "src/app/.git",
+		"":                        "",
+	} {
+		if got := DenylistedFolder(rel); got != want {
+			t.Errorf("DenylistedFolder(%q) = %q, want %q", rel, got, want)
+		}
+	}
+}
