@@ -76,7 +76,10 @@ func (c *conditions) evaluate(r rules.Rule, itemPath string, res sizes.Result, p
 		v.reasons = append(v.reasons, plan.ReasonScanPartial)
 	}
 	if len(res.Mounts) > 0 {
-		v.reasons = append(v.reasons, plan.ReasonContainsMount)
+		// Named first: the mount is why the walk stopped there (and why
+		// age or idleness could not be proven), and the reason apply
+		// reports when it skips the item.
+		v.reasons = append([]string{plan.ReasonContainsMount}, v.reasons...)
 	}
 	if res.ProtectedCount > 0 && r.Tier != rules.TierInfo {
 		v.reasons = append(v.reasons, plan.ReasonContainsProtected)

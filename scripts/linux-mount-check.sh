@@ -133,16 +133,9 @@ code=$?
 set -e
 moved="$(jq -r '[.moved[].path] | join(",")' "$work/res.json")"
 if [ "$moved" = "$fx/.cache/plain" ]; then ok "clean --apply moved only the control item (exit $code)"; else fail "clean --apply moved [$moved] (exit $code): $(cat "$work/res.err")"; fi
-# A same-device bind mount is contains_mount alone. A mount of another
-# file system (the tmpfs) also stops the walk there, so the item's age
-# cannot be proven and too_recent is named first; contains_mount is among
-# the reasons in the detail.
 for it in .cache/foo .cache/baz; do
-	r="$(jq -r --arg p "$fx/$it" '[.skipped[] | select(.path == $p) | "\(.reason): \(.detail)"][0] // empty' "$work/res.json")"
-	case "$r" in
-	contains_mount:* | *contains_mount*) ok "clean: $it skipped ($r)" ;;
-	*) fail "clean: $it skipped with [$r], want contains_mount" ;;
-	esac
+	r="$(jq -r --arg p "$fx/$it" '[.skipped[] | select(.path == $p) | .reason][0] // empty' "$work/res.json")"
+	if [ "$r" = contains_mount ]; then ok "clean: $it skipped with contains_mount"; else fail "clean: $it skipped with [$r], want contains_mount"; fi
 done
 r="$(jq -r --arg p "$fx/.cache/foo" '[.skipped[] | select(.path == $p) | .reason][0] // empty' "$work/res.json")"
 if [ "$r" = contains_mount ]; then ok "clean: the bind-mount holder's reason is contains_mount"; else fail "clean: .cache/foo reason [$r]"; fi

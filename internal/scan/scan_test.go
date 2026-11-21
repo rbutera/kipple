@@ -511,7 +511,7 @@ func TestMountInsideItem(t *testing.T) {
 		return r, err
 	}
 	it := byRel(t, runScan(t, home, ""), home)["Library/Caches/com.example.app"]
-	if it.Selected || !slices.Equal(it.Reasons, []string{plan.ReasonScanPartial, plan.ReasonContainsMount}) {
+	if it.Selected || !slices.Equal(it.Reasons, []string{plan.ReasonContainsMount, plan.ReasonScanPartial}) {
 		t.Fatalf("item with a mount inside: selected=%v reasons=%v", it.Selected, it.Reasons)
 	}
 }
@@ -542,7 +542,7 @@ func TestInterruptedWalksFailConditions(t *testing.T) {
 	}
 	items := byRel(t, runScan(t, home, rules.LevelReview), home)
 	logs := items["Library/Logs/app"]
-	if logs.Selected || !slices.Equal(logs.Reasons, []string{plan.ReasonScanPartial, plan.ReasonContainsMount}) {
+	if logs.Selected || !slices.Equal(logs.Reasons, []string{plan.ReasonContainsMount, plan.ReasonScanPartial}) {
 		t.Errorf("mount in a logs item: selected=%v reasons=%v", logs.Selected, logs.Reasons)
 	}
 	proj := items["dev/lockedsrc/node_modules"]
@@ -551,7 +551,7 @@ func TestInterruptedWalksFailConditions(t *testing.T) {
 	}
 	// An old item under a 7-day minimum age, interrupted by a mount.
 	aged := items[".claude/debug/mountedold"]
-	if aged.Selected || !slices.Equal(aged.Reasons, []string{plan.ReasonTooRecent, plan.ReasonScanPartial, plan.ReasonContainsMount}) {
+	if aged.Selected || !slices.Equal(aged.Reasons, []string{plan.ReasonContainsMount, plan.ReasonTooRecent, plan.ReasonScanPartial}) {
 		t.Errorf("mount-interrupted walk satisfied min age: selected=%v reasons=%v", aged.Selected, aged.Reasons)
 	}
 }
