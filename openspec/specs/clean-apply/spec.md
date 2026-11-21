@@ -14,7 +14,7 @@ Clean turns a plan into moves to the Trash, only with explicit consent, re-check
 - **THEN** nothing under home changes and the output ends with a line stating this was a dry run and `--apply` is required
 
 ### Requirement: Trash is the only default destination
-With `--apply`, every selected item SHALL be moved to the user's Trash. v0.1 SHALL NOT delete permanently: `--permanent` is parsed but refused with a usage error (exit 2) naming docs/safety.md#permanent. (Builds with the `kipple_permanent` tag implement it for `safe` tier items only, skipping other tiers with reason `permanent_not_allowed`; it ships once the staging design in docs/safety.md closes its remaining race.)
+With `--apply`, every selected item SHALL be moved to the user's Trash: `~/.Trash` on macOS, and the freedesktop.org home Trash `~/.local/share/Trash` on Linux. Without `--apply` nothing moves (dry run is the default). An item SHALL never be copied and deleted instead of moved; an item on another device than its Trash is skipped with reason `different_device`. v0.1 SHALL NOT delete permanently: `--permanent` is parsed but refused with a usage error (exit 2) naming docs/safety.md#permanent. (Builds with the `kipple_permanent` tag implement it for `safe` tier items only, skipping other tiers with reason `permanent_not_allowed`; it ships once the staging design in docs/safety.md closes its remaining race.)
 
 #### Scenario: Apply to Trash
 - **WHEN** `kipple clean --apply` runs on a fixture
@@ -23,6 +23,10 @@ With `--apply`, every selected item SHALL be moved to the user's Trash. v0.1 SHA
 #### Scenario: Permanent refused in v0.1
 - **WHEN** `kipple clean --apply --permanent --level review` runs
 - **THEN** it exits 2 with a usage error saying permanent deletion is not available in this release, and nothing under home changes
+
+#### Scenario: Apply to the freedesktop Trash on Linux
+- **WHEN** `kipple clean --apply` runs on Linux against a fixture home
+- **THEN** each moved item is under `$KIPPLE_HOME/.local/share/Trash/files`, and the receipt's `mover` is `freedesktop`
 
 ### Requirement: Re-check before every move
 Immediately before moving each item, apply SHALL re-run authorisation and the rule's conditions (idle project, clean git, owner not running) and SHALL refuse the item if any check fails or the path has changed type or vanished.
@@ -62,3 +66,52 @@ When `--json` is set or stdout is not a TTY, apply SHALL NOT prompt; `--apply` a
 #### Scenario: Piped apply
 - **WHEN** `kipple clean --apply --json | cat` runs
 - **THEN** no prompt is shown and the run proceeds
+
+### Requirement: Freedesktop Trash entries on Linux
+On Linux, apply SHALL follow the freedesktop.org Trash specification 1.0 for the home Trash. For each moved item it SHALL first reserve a name by creating `info/<name>.trashinfo` exclusively, write `[Trash Info]` with `Path` (the absolute original path, percent-encoded) and `DeletionDate` (local time, `YYYY-MM-DDThh:mm:ss`), and only then rename the item to `files/<name>` without replacing anything. Name collisions SHALL be resolved with Finder-style names (`name 2`, `report 2.pdf`). If the move does not happen, apply SHALL remove the info file it wrote. apply SHALL never remove an info file it did not write. Dry run is the default and the Trash the only destination: without `--apply`, nothing, including the Trash folders, is created.
+
+#### Scenario: Trash info written
+- **WHEN** `kipple clean --apply` moves `~/.cache/pip/http` on Linux
+- **THEN** `~/.local/share/Trash/files/http` exists and `~/.local/share/Trash/info/http.trashinfo` holds `Path=<fixture>/.cache/pip/http` and a `DeletionDate` in local time
+
+#### Scenario: Name collision in the Trash
+- **WHEN** `files/http` and `info/http.trashinfo` already exist in the Trash
+- **THEN** the item moves to `files/http 2` with `info/http 2.trashinfo`, and the existing entry is untouched
+
+#### Scenario: Orphan file without info
+- **WHEN** `files/http` exists but `info/http.trashinfo` does not
+- **THEN** the item moves to `files/http 2`, the orphan is untouched, and no `info/http.trashinfo` is left behind
+
+#### Scenario: Unusual bytes in the path
+- **WHEN** the moved item's name contains a space, `%` and a non-UTF-8 byte
+- **THEN** the `Path` line percent-encodes them and decodes back to the original bytes
+
+### Requirement: Trash folders on Linux are created only when needed and checked
+On Linux, if `.local`, `.local/share`, `Trash`, `files` or `info` is missing, apply SHALL create it with mode 0700 from its verified parent, only in an `--apply` run with at least one item to move. Before moving, apply SHALL check that `Trash`, `files` and `info` are real directories (not symlinks), on home's device, owned by the user and not writable by group or others. Otherwise it SHALL stop with error code `trash_access` and move nothing. Dry run is the default, and the Trash is the only destination.
+
+#### Scenario: Missing Trash created on apply
+- **WHEN** the fixture home has no `.local/share/Trash` and `kipple clean --apply` moves one item
+- **THEN** `Trash`, `files` and `info` exist with mode 0700 and hold the item and its info file
+
+#### Scenario: Dry run creates nothing
+- **WHEN** the fixture home has no `.local` folder and `kipple clean` runs without `--apply`
+- **THEN** no folder is created and the fixture checksum is unchanged
+
+#### Scenario: Trash folder is a symlink
+- **WHEN** `~/.local/share/Trash` is a symlink
+- **THEN** `kipple clean --apply` exits 1 with error code `trash_access` and nothing moves
+
+#### Scenario: World-writable Trash
+- **WHEN** `~/.local/share/Trash/files` has mode 0777
+- **THEN** `kipple clean --apply` exits 1 with error code `trash_access` and nothing moves
+
+### Requirement: Restore tag on Linux
+On Linux, apply SHALL tag each item with the user extended attribute `user.com.rbutera.kipple` (receipt, item and home identity) before moving it, as on macOS. If the file system does not support user extended attributes, the item SHALL be skipped with reason `move_failed` and a detail naming the file system, and SHALL NOT move. Device nodes, FIFOs and sockets SHALL be refused without being opened. Dry run is the default, and the Trash is the only destination.
+
+#### Scenario: Read-only package folder tagged
+- **WHEN** a `go.mod-cache` item and its folder are read-only and `kipple clean --apply --level review` runs on Linux
+- **THEN** the item moves to the Trash carrying the tag and its permissions are as they were
+
+#### Scenario: No user extended attributes
+- **WHEN** setting the tag fails because the file system does not support user extended attributes
+- **THEN** the item is skipped with reason `move_failed`, it stays at its original path, and the run exits 4
