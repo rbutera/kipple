@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -87,7 +88,10 @@ func checkMounts(env Env, comps []string) Decision {
 		}
 		mr, err := m.MountRoot(unix.AT_FDCWD, cur, id.dev, id.ino)
 		if err != nil {
-			return refuse(missingOr(err))
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+				return refuse(missingOr(err))
+			}
+			return refuse(ReasonDifferentDevice)
 		}
 		if mr {
 			return refuse(ReasonDifferentDevice)

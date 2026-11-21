@@ -110,3 +110,17 @@ func TestMountsUnavailable(t *testing.T) {
 		t.Fatalf("MountRoot err = %v", err)
 	}
 }
+
+// A failed mount check of one entry refuses it (only a session-wide
+// unavailability lets the walk go on, for scan to mark items).
+func TestFailedMountCheckRefuses(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: ".cache/a/blob", Content: "x"}, {Path: ".cache/b/blob", Content: "x"}}})
+	cache := StaticRule{ID: "xdg.cache", Roots: []string{".cache"}, Kind: MatchChildren}
+	env := Env{Home: home, Mounts: StubMounts{Failing: map[FileIdentity]error{identityAt(t, home+"/.cache/a"): errors.New("statx: I/O error")}}}
+	if got := authorizeBoth(t, env, cache, home+"/.cache/a"); got.Reason != ReasonDifferentDevice {
+		t.Fatalf("want %q, got %+v", ReasonDifferentDevice, got)
+	}
+	if got := authorizeBoth(t, env, cache, home+"/.cache/b"); !got.Allowed {
+		t.Fatalf("an unaffected sibling: %+v", got)
+	}
+}

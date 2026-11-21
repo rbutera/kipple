@@ -88,3 +88,6 @@ func (s *Session) MountsErr() error { return ErrMountsUnavailable }
 func (s *Session) MountRoot(int, string, uint64, uint64) (bool, error) {
 	return false, ErrMountsUnavailable
 }
+
+// RefreshMounts: nothing to refresh here.
+func (s *Session) RefreshMounts() error { return ErrMountsUnavailable }

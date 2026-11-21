@@ -154,6 +154,18 @@ func NewSession(env Env) (*Session, error) {
 // and apply refuses to move anything.
 func (s *Session) MountsErr() error { return s.mounts.Available() }
 
+// RefreshMounts re-reads the mount table when the session's oracle works
+// from a snapshot (/proc/self/mountinfo, kernels without the statx
+// mount-root attribute), so mounts made since are seen; the statx oracle
+// asks the kernel every time and needs nothing. A failure makes mount
+// points unavailable from then on.
+func (s *Session) RefreshMounts() error {
+	if r, ok := s.mounts.(mountRefresher); ok {
+		return r.Refresh()
+	}
+	return nil
+}
+
 // MountRoot reports whether name in the directory open at dirfd (with
 // identity dev, ino) is a mount root, for size walks (sizes.Options).
 func (s *Session) MountRoot(dirfd int, name string, dev, ino uint64) (bool, error) {
@@ -455,10 +467,16 @@ func (s *Session) walk(comps []string, want itemType, ids *protectedIDs, openFin
 		// A mount on home's own device (a bind mount) is a boundary too.
 		// When mounts cannot be determined at all, scan and apply decide
 		// (contains_mount, mounts_unavailable); any other failure refuses.
+		// Only when mount points are unavailable for the whole session does
+		// the walk go on (scan then marks items contains_mount and apply
+		// refuses to run); a failed check of one entry refuses it.
 		if mr, err := s.mounts.MountRoot(w.parent, c, id.dev, id.ino); mr {
 			return stop(ReasonDifferentDevice, nil)
-		} else if err != nil && !errors.Is(err, ErrMountsUnavailable) {
-			return stop(missingOr(err), err)
+		} else if err != nil && s.mounts.Available() == nil {
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+				return stop(missingOr(err), err)
+			}
+			return stop(ReasonDifferentDevice, err)
 		}
 		if ids != nil {
 			if reason, hit := ids.refusal(id, last); hit {

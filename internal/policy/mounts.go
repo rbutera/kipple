@@ -17,6 +17,12 @@ type MountOracle interface {
 	MountRoot(dirfd int, name string, dev, ino uint64) (bool, error)
 }
 
+// mountRefresher is a MountOracle that answers from a snapshot and can
+// re-read it (the /proc/self/mountinfo fallback).
+type mountRefresher interface {
+	Refresh() error
+}
+
 // ErrMountsUnavailable: neither the kernel's mount-root attribute (statx
 // STATX_ATTR_MOUNT_ROOT, Linux 5.8+) nor /proc/self/mountinfo can be read,
 // so mount points cannot be told apart from ordinary folders. Scan marks
@@ -37,6 +43,8 @@ func (u unavailableMounts) MountRoot(int, string, uint64, uint64) (bool, error) 
 type StubMounts struct {
 	Roots map[FileIdentity]bool
 	Err   error
+	// Failing makes the check of these identities fail with the error.
+	Failing map[FileIdentity]error
 }
 
 // Available implements MountOracle.
@@ -46,6 +54,9 @@ func (s StubMounts) Available() error { return s.Err }
 func (s StubMounts) MountRoot(_ int, _ string, dev, ino uint64) (bool, error) {
 	if s.Err != nil {
 		return false, s.Err
+	}
+	if err := s.Failing[FileIdentity{Dev: dev, Ino: ino}]; err != nil {
+		return false, err
 	}
 	return s.Roots[FileIdentity{Dev: dev, Ino: ino}], nil
 }

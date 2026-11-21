@@ -32,11 +32,15 @@ func TestStatxMounts(t *testing.T) {
 	if _, ok := m.(statxMounts); !ok {
 		t.Fatalf("oracle %T, want statxMounts on this kernel", m)
 	}
-	if mr, err := m.MountRoot(unix.AT_FDCWD, "/proc", 0, 0); err != nil || !mr {
+	if mr, err := m.MountRoot(unix.AT_FDCWD, "/proc", 0, 0); err != nil || !mr { // 0, 0: identity not checked
 		t.Fatalf("/proc: %v %v", mr, err)
 	}
 	if mr, err := m.MountRoot(homeFd(t, home), "plain", 0, 0); err != nil || mr {
 		t.Fatalf("plain folder: %v %v", mr, err)
+	}
+	// The kernel must have looked at the object the walk identified.
+	if _, err := m.MountRoot(unix.AT_FDCWD, "/proc", 1, 2); err == nil {
+		t.Fatal("an identity mismatch was not reported")
 	}
 }
 
@@ -71,6 +75,27 @@ func TestMountinfoFallback(t *testing.T) {
 		}
 		if mr, _ := m.MountRoot(-1, "", plain.Dev, plain.Ino); mr {
 			t.Fatal("an ordinary folder is a mount root")
+		}
+	})
+	t.Run("Refresh sees a mount made after the session started", func(t *testing.T) {
+		table1 := "1 0 8:1 / / rw - ext4 /dev/sda1 rw\n"
+		openMountinfo = table(table1)
+		m := systemMounts(home, homeFd(t, home))
+		plain := identityAt(t, home+"/.cache/plain")
+		if mr, _ := m.MountRoot(-1, "", plain.Dev, plain.Ino); mr {
+			t.Fatal("no mount yet")
+		}
+		openMountinfo = table(table1 + "60 1 8:1 /x " + esc + "/.cache/plain rw - ext4 /dev/sda1 rw\n")
+		r, ok := m.(mountRefresher)
+		if !ok || r.Refresh() != nil {
+			t.Fatal("the snapshot oracle cannot refresh")
+		}
+		if mr, _ := m.MountRoot(-1, "", plain.Dev, plain.Ino); !mr {
+			t.Fatal("a mount made later was not seen after Refresh")
+		}
+		openMountinfo = func() (io.ReadCloser, error) { return nil, os.ErrPermission }
+		if r.Refresh() == nil || !errors.Is(m.Available(), ErrMountsUnavailable) {
+			t.Fatal("a failed refresh must make mount points unavailable")
 		}
 	})
 	t.Run("Mount table unavailable", func(t *testing.T) {
