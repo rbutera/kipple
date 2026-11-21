@@ -13,7 +13,7 @@ import (
 const maxDepth = 4096
 
 // System is the real file system.
-func System() FS { return FS{Chain: chain, Stat: stat, MountPoint: mountPoint} }
+func System() FS { return FS{Chain: chain, Stat: stat, MountPoint: mountPoint, Aliases: aliases} }
 
 func open(path string, flags int) (int, error) {
 	for {

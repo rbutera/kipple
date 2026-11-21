@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/rbutera/kipple/internal/gitstate"
+	"github.com/rbutera/kipple/internal/homeguard"
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/testutil"
 )
@@ -147,5 +148,30 @@ func TestInsideRealHome(t *testing.T) {
 	rt.RealHomes = func() ([]string, error) { return nil, errors.New("unknown") }
 	if !InsideRealHome(rt, "/tmp/x") {
 		t.Error("an unknown real home must fail closed")
+	}
+}
+
+// Task 2.2: a KIPPLE_HOME refused by the home guard (here: the mount table
+// cannot be read, so bind-mount aliases of the real home cannot be ruled
+// out) fails with code home before anything in the fixture is read: a
+// broken config file in it is never reached.
+func TestRefusedKippleHomeReadsNothing(t *testing.T) {
+	fixture := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: ".config/kipple/config.toml", Content: "this is [not toml"}}})
+	real := fakeReal(t)
+	rt := runtimeFor(t, real)
+	rt.GuardFS = homeguard.System()
+	rt.GuardFS.Aliases = func(string) (homeguard.Aliases, error) {
+		return homeguard.Aliases{}, errors.New("mountinfo unreadable")
+	}
+	t.Setenv("KIPPLE_HOME", fixture)
+	_, err := Resolve(rt)
+	var le *Error
+	if !errors.As(err, &le) || le.Code != CodeHome {
+		t.Fatalf("err = %v, want code home", err)
+	}
+	// The same fixture with a readable table gets as far as the config.
+	rt.GuardFS.Aliases = func(string) (homeguard.Aliases, error) { return homeguard.Aliases{}, nil }
+	if _, err := Resolve(rt); !errors.As(err, &le) || le.Code != CodeConfig {
+		t.Fatalf("err = %v, want code config once the guard passes", err)
 	}
 }

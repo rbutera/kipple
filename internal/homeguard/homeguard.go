@@ -60,6 +60,21 @@ type FS struct {
 	// (statfs f_mntonname on macOS, such as /System/Volumes/Data), or ""
 	// where the platform has no firmlinks to alias it.
 	MountPoint func(path string) (string, error)
+	// Aliases, on Linux, lists where else the real home is visible through
+	// bind mounts, from /proc/self/mountinfo (design L2 of linux-port). nil
+	// means the platform has none. An error refuses the candidate.
+	Aliases func(real string) (Aliases, error)
+}
+
+// Aliases are the other places a real home is visible (Linux bind mounts).
+type Aliases struct {
+	// Real are paths where the real home itself is visible: a bind mount of
+	// the home or of one of its ancestors makes mountpoint+remainder the
+	// real home again.
+	Real []string
+	// Inside are mount points of folders inside the real home: such a mount
+	// point, and everything below it, is inside the real home.
+	Inside []string
 }
 
 // ErrUnsupported is returned by System on platforms without directory
@@ -98,7 +113,32 @@ func RelateID(fsys FS, candidate, real string) (Relation, ID, error) {
 		return Separate, ID{}, errors.New("homeguard: empty identity chain")
 	}
 	rel, err := relate(fsys, candidate, c, real)
-	return rel, c[0], err
+	if err != nil || rel != Separate || fsys.Aliases == nil {
+		return rel, c[0], err
+	}
+	al, err := fsys.Aliases(real)
+	if err != nil {
+		return Separate, c[0], fmt.Errorf("cannot list where the real home %q is mounted: %w", real, err)
+	}
+	for _, a := range al.Real {
+		r, err := relate(fsys, candidate, c, a)
+		if err != nil {
+			return Separate, c[0], err
+		}
+		if r != Separate {
+			return r, c[0], nil
+		}
+	}
+	for _, mp := range al.Inside {
+		id, ok, err := fsys.Stat(mp)
+		if err != nil {
+			return Separate, c[0], fmt.Errorf("cannot identify %q: %w", mp, err)
+		}
+		if ok && contains(c, id) {
+			return Inside, c[0], nil
+		}
+	}
+	return Separate, c[0], nil
 }
 
 // relate decides the relation given the candidate's identity chain c.

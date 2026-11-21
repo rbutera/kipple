@@ -18,3 +18,6 @@ func mountPoint(path string) (string, error) {
 		return unix.ByteSliceToString(st.Mntonname[:]), nil
 	}
 }
+
+// aliases is nil on macOS: firmlinks are handled through mountPoint.
+var aliases func(string) (Aliases, error)
