@@ -213,7 +213,7 @@ without a C compiler.
 
 ### Homebrew
 
-A tap (`brew install rbutera/tap/kipple`) is planned after v0.1.0.
+A tap (`brew install rbutera/tap/kipple`) is planned; it is not available yet.
 
 ## Usage
 
@@ -624,7 +624,7 @@ compares only the overlap. Facts as of November 2026.
 - **The app with VoiceOver.** The Mac app's controls carry accessibility
   labels; turning on Fyne's macOS accessibility bridge waits until it is
   verified with VoiceOver.
-- **Homebrew tap** after v0.1.0.
+- **Homebrew tap** for macOS.
 - **Notarisation** with a Developer ID, so macOS never asks on first run.
 - **Permanent deletion**, only once its staging design (each entry renamed
   into a private folder and confirmed by descriptor before it is unlinked)

@@ -44,7 +44,7 @@ builds:
 
   # Linux CLI (openspec/changes/linux-port design L13): cross-compiled on
   # the macOS runner with cgo off, so the binaries are static; nothing on
-  # Linux needs cgo. No codesign hook. The GUI is macOS-only in v0.3.x.
+  # Linux needs cgo. No codesign hook. The GUI is macOS-only in v0.3.0.
   - id: kipple-linux
     main: ./cmd/kipple
     binary: kipple
