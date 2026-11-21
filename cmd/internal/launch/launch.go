@@ -162,8 +162,9 @@ func Resolve(rt Runtime) (Home, error) {
 // same folder reached another way (a bind mount of ~/.ssh elsewhere on
 // Linux, or a mount of a folder inside it) is caught too; that second
 // check is best effort, and a lookup that fails gives no warning. kipple's
-// own default (~/.local/state/kipple, under the protected ~/.local/state)
-// is not warned about. The setting is always honoured.
+// own default (~/.local/state/kipple) is exempt from the protection of
+// ~/.local/state, which holds it, and from no other. The setting is always
+// honoured.
 func StateDirWarning(dir, home string) string {
 	return stateDirWarning(homeguard.System(), dir, home)
 }
@@ -194,20 +195,23 @@ func stateDirWarning(fsys homeguard.FS, dir, home string) string {
 		return fmt.Sprintf("KIPPLE_STATE_DIR is %s, inside the protected folder ~/%s; kipple writes its receipts there only because KIPPLE_STATE_DIR says so", dir, folder)
 	}
 	own := func(rel string) bool { return rel == ownStateRel || strings.HasPrefix(rel, ownStateRel+"/") }
+	// kipple's own folder is exempt only from the protection of the folder
+	// that holds it (~/.local/state), never from any other: if the default
+	// folder is itself a link or bind of ~/.ssh, that still warns (red team
+	// H1).
+	ownParent := filepath.Dir(ownStateRel)
 	if strings.HasPrefix(p, home+"/") {
 		rel := strings.TrimPrefix(p, home+"/")
-		if own(rel) {
-			return ""
-		}
-		if d := policy.DenylistedFolder(rel); d != "" {
+		if d := policy.DenylistedFolder(rel); d != "" && (d != ownParent || !own(rel)) {
 			return warn(d)
 		}
 	}
 	// By identity: the nearest existing folder of the state path against
 	// every existing protected folder.
+	isOwn := false
 	if ownDir, err := filepath.EvalSymlinks(filepath.Join(home, ownStateRel)); err == nil {
 		if r, err := homeguard.Relate(fsys, existing, ownDir); err == nil && (r == homeguard.Same || r == homeguard.Inside) {
-			return ""
+			isOwn = true
 		}
 	}
 	for _, entry := range policy.Denylist() {
@@ -219,6 +223,9 @@ func stateDirWarning(fsys homeguard.FS, dir, home string) string {
 			continue
 		}
 		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			continue
+		}
+		if entry == ownParent && isOwn {
 			continue
 		}
 		if r, err := homeguard.Relate(fsys, existing, d); err == nil && (r == homeguard.Same || r == homeguard.Inside) {

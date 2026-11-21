@@ -384,3 +384,33 @@ func TestStateDirWarningByIdentity(t *testing.T) {
 		t.Fatalf("a separate folder: %q", w)
 	}
 }
+
+// Wave 3 red team H1: kipple's own default state folder is exempt only from
+// the protection of ~/.local/state. If that folder is itself a link to
+// ~/.ssh, a state folder on a bind of ~/.ssh still warns, and so does the
+// default folder named directly.
+func TestOwnStateFolderLinkedToAProtectedFolderWarns(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".ssh"}, {Path: ".local/state"}}})
+	if err := os.Symlink("../../.ssh", home+"/.local/state/kipple"); err != nil {
+		t.Fatal(err)
+	}
+	bind := filepath.Join(filepath.Dir(home), "sb4")
+	if err := os.Mkdir(bind, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bind, _ = filepath.EvalSymlinks(bind)
+	ssh, _ := filepath.EvalSymlinks(home + "/.ssh")
+	fsys := homeguard.System()
+	fsys.Aliases = func(real string) (homeguard.Aliases, error) {
+		if real == ssh {
+			return homeguard.Aliases{Real: []string{bind}}, nil
+		}
+		return homeguard.Aliases{}, nil
+	}
+	if w := stateDirWarning(fsys, bind, home); !strings.Contains(w, "~/.ssh") {
+		t.Fatalf("a bind of ~/.ssh while the default state folder links to ~/.ssh: %q", w)
+	}
+	if w := stateDirWarning(fsys, home+"/.local/state/kipple", home); !strings.Contains(w, "~/.ssh") {
+		t.Fatalf("the default state folder linked to ~/.ssh: %q", w)
+	}
+}
