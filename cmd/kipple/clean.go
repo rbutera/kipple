@@ -21,6 +21,9 @@ import (
 )
 
 func (a *app) store(h homeEnv) (receipt.Store, error) {
+	if w := launch.StateDirWarning(a.rt.getenv("KIPPLE_STATE_DIR"), h.Path); w != "" {
+		fmt.Fprintf(a.stderr, "kipple: warning: %s\n", output.SafeText(w))
+	}
 	s, err := launch.Store(a.rt.launch(), h)
 	return s, launchErr(err)
 }

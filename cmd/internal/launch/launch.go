@@ -149,7 +149,41 @@ func Resolve(rt Runtime) (Home, error) {
 			h.Warnings = append(h.Warnings, XDGWarnings(rt.Getenv, home)...)
 		}
 	}
+	if w := StateDirWarning(rt.Getenv("KIPPLE_STATE_DIR"), home); w != "" {
+		h.Warnings = append(h.Warnings, w)
+	}
 	return h, nil
+}
+
+// StateDirWarning returns a warning when an explicit KIPPLE_STATE_DIR is,
+// after resolving symlinks in its nearest existing folder, inside a
+// denylisted folder of home (~/.ssh, ~/.gnupg, a keyring): kipple
+// otherwise never writes there. The setting is still honoured.
+func StateDirWarning(dir, home string) string {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return ""
+	}
+	p, rest := filepath.Clean(dir), ""
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			p = filepath.Join(r, rest)
+			break
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return ""
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
+	}
+	if !strings.HasPrefix(p, home+"/") {
+		return ""
+	}
+	rel := strings.TrimPrefix(p, home+"/")
+	if !policy.IsDenylisted(rel) {
+		return ""
+	}
+	return fmt.Sprintf("KIPPLE_STATE_DIR is %s, inside a protected folder (~/%s); kipple writes its receipts there only because KIPPLE_STATE_DIR says so", dir, rel)
 }
 
 // xdgVars are the XDG base directory variables kipple does not follow,

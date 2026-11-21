@@ -319,3 +319,24 @@ func TestLinuxStateFolderIsVerified(t *testing.T) {
 		}
 	})
 }
+
+// Wave 2 re-attack F4: an explicit KIPPLE_STATE_DIR inside a denylisted
+// folder of home is honoured but warned about.
+func TestStateDirInsideAProtectedFolderWarns(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".ssh"}, {Path: "elsewhere"}}})
+	if w := StateDirWarning(home+"/.ssh/kipple", home); !strings.Contains(w, "protected folder") {
+		t.Fatalf("warning %q", w)
+	}
+	link := filepath.Join(filepath.Dir(home), "sshlink")
+	if err := os.Symlink(home+"/.ssh", link); err != nil {
+		t.Fatal(err)
+	}
+	if w := StateDirWarning(link+"/receipts", home); w == "" {
+		t.Fatal("a state folder reaching .ssh through a symlink is not warned about")
+	}
+	for _, ok := range []string{home + "/elsewhere/state", filepath.Join(filepath.Dir(home), "state"), ""} {
+		if w := StateDirWarning(ok, home); w != "" {
+			t.Fatalf("%q: %q", ok, w)
+		}
+	}
+}
