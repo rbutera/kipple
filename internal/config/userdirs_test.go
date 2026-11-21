@@ -4,8 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
-	"testing"
+		"testing"
 
 	"github.com/rbutera/kipple/internal/testutil"
 )
@@ -25,7 +24,8 @@ func TestParseUserDirs(t *testing.T) {
 		{"Outside home ignored", `XDG_VIDEOS_DIR="/srv/videos"`, nil, 1},
 		{"Escaping home with dot-dot ignored", `XDG_VIDEOS_DIR="$HOME/../other"`, nil, 1},
 		{"Comments and blank lines", "# written by xdg-user-dirs-update\n\nXDG_TEMPLATES_DIR=\"$HOME/Vorlagen\"\n", []string{"/home/me/Vorlagen"}, 0},
-		{"Malformed lines warn, good ones count", "garbage\nXDG_X_DIR=$HOME/unquoted\nXDG_Y_DIR=\"$HOME/a\\\"b\"\nXDG_PUBLICSHARE_DIR=\"$HOME/Öffentlich\"", []string{"/home/me/Öffentlich"}, 3},
+		{"Malformed lines warn, good ones count", "garbage\nXDG_Y_DIR=\"$HOME/a\\\"b\"\nXDG_Z_DIR=\"$HOME/two words\"\nXDG_PUBLICSHARE_DIR=\"$HOME/Öffentlich\"", []string{"/home/me/Öffentlich"}, 3},
+		{"Shell forms the desktop accepts", "XDG_MUSIC_DIR=$HOME/Musik\nexport XDG_VIDEOS_DIR=\"${HOME}/Filme\"\nXDG_TEMPLATES_DIR=${HOME}/Vorlagen", []string{"/home/me/Filme", "/home/me/Musik", "/home/me/Vorlagen"}, 0},
 		{"Relative value", `XDG_DOCUMENTS_DIR="Documents"`, nil, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -49,8 +49,12 @@ func TestLoadUserDirs(t *testing.T) {
 	})
 	open := func(rel string) (*os.File, error) { return openConfig(filepath.Join(home, rel)) }
 	u := LoadUserDirs(home, open)
-	if len(u.Protect) != 0 || len(u.Warnings) != 1 || !strings.Contains(u.Warnings[0], "symbolic link") && !strings.Contains(u.Warnings[0], "symlink") {
-		t.Fatalf("symlinked user-dirs.dirs: %+v", u)
+	if len(u.Warnings) != 0 || u.Protect["XDG_DOCUMENTS_DIR"] != filepath.Join(home, "Docs") {
+		t.Fatalf("a symlinked user-dirs.dirs (stow, yadm) must still protect its folders: %+v", u)
+	}
+	fifo := testutil.NewHome(t, testutil.Spec{Symlinks: []testutil.Symlink{{Path: ".config/user-dirs.dirs", Target: "~/elsewhere"}}, Dirs: []testutil.Dir{{Path: "elsewhere"}}})
+	if u := LoadUserDirs(fifo, func(rel string) (*os.File, error) { return openConfig(filepath.Join(fifo, rel)) }); len(u.Protect) != 0 || len(u.Warnings) != 1 {
+		t.Fatalf("a link to something that is not a regular file: %+v", u)
 	}
 	empty := testutil.NewHome(t, testutil.Spec{})
 	if u := LoadUserDirs(empty, func(rel string) (*os.File, error) { return openConfig(filepath.Join(empty, rel)) }); len(u.Protect) != 0 || len(u.Warnings) != 0 {

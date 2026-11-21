@@ -39,7 +39,14 @@ func (u UserDirs) Paths() []string {
 // missing file has no entries; a symlink, a non-regular file or any read
 // error is a warning, and the built-in protections stay as they are.
 func LoadUserDirs(home string, open func(rel string) (*os.File, error)) UserDirs {
-	data, err := readConfig(filepath.Join(home, UserDirsRelPath), func() (*os.File, error) { return open(UserDirsRelPath) })
+	path := filepath.Join(home, UserDirsRelPath)
+	data, err := readConfig(path, func() (*os.File, error) { return open(UserDirsRelPath) })
+	if err != nil && isSymlinkErr(err) {
+		// Dotfile managers (GNU stow, yadm) link this file. It can only
+		// add protections, so reading it through the link cannot weaken
+		// anything: follow it, and still require a regular file.
+		data, err = readConfig(path, func() (*os.File, error) { return os.Open(path) })
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return UserDirs{}
 	}
@@ -49,9 +56,15 @@ func LoadUserDirs(home string, open func(rel string) (*os.File, error)) UserDirs
 	return ParseUserDirs(home, data)
 }
 
+// isSymlinkErr reports whether err came from refusing a symbolic link.
+func isSymlinkErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "symbolic link")
+}
+
 // ParseUserDirs parses user-dirs.dirs for home: lines
-// XDG_<NAME>_DIR="$HOME/<path>" or XDG_<NAME>_DIR="/absolute/path", blank
-// lines and # comments. Every folder named becomes a protection except
+// XDG_<NAME>_DIR="$HOME/<path>" or XDG_<NAME>_DIR="/absolute/path" (also
+// unquoted, with ${HOME}, or after "export ", as the shell that
+// xdg-user-dir sources it with accepts), blank lines and # comments. Every folder named becomes a protection except
 // XDG_DOWNLOAD_DIR, the root of downloads.installers. A value equal to home
 // or outside home, and any malformed line, are ignored with a warning;
 // every well-formed entry still counts.
@@ -65,16 +78,21 @@ func ParseUserDirs(home string, data []byte) UserDirs {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		line = strings.TrimPrefix(line, "export ")
 		key, val, ok := strings.Cut(line, "=")
 		if !ok || !strings.HasPrefix(key, "XDG_") || !strings.HasSuffix(key, "_DIR") || len(key) <= len("XDG__DIR") {
 			warn("line %d is not XDG_<NAME>_DIR=\"...\"; ignored", i+1)
 			continue
 		}
-		if len(val) < 2 || val[0] != '"' || val[len(val)-1] != '"' || strings.ContainsAny(val[1:len(val)-1], "\"\\`") {
+		v := val
+		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+			v = val[1 : len(val)-1]
+		}
+		if strings.ContainsAny(v, "\"\\`' \t") {
 			warn("%s has a value kipple does not understand (%s); ignored", key, val)
 			continue
 		}
-		v := val[1 : len(val)-1]
+		v = strings.Replace(v, "${HOME}", "$HOME", 1)
 		var p string
 		switch {
 		case v == "$HOME":
