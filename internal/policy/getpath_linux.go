@@ -11,9 +11,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ErrNoDescriptorPath: the kernel did not report a usable path for the
-// descriptor (/proc is not mounted, or the directory was deleted).
-var ErrNoDescriptorPath = errors.New("policy: the descriptor's path could not be read")
+// ErrNoDescriptorPath: /proc/self/fd could not be read (/proc is not
+// mounted or not readable), so no descriptor's path can be confirmed.
+var ErrNoDescriptorPath = errors.New("policy: /proc is not available, so descriptor paths cannot be read")
 
 // procSelfFd is where the kernel exposes this process's descriptors.
 const procSelfFd = "/proc/self/fd/"
@@ -36,11 +36,11 @@ func DescriptorPath(fd int) (string, error) {
 			return "", fmt.Errorf("%w: %v", ErrNoDescriptorPath, err)
 		}
 		if n >= len(buf) {
-			return "", fmt.Errorf("%w: path too long", ErrNoDescriptorPath)
+			return "", errors.New("policy: the descriptor's path is too long")
 		}
 		p := string(buf[:n])
 		if !strings.HasPrefix(p, "/") || strings.HasSuffix(p, " (deleted)") {
-			return "", fmt.Errorf("%w: the kernel reports %q", ErrNoDescriptorPath, p)
+			return "", fmt.Errorf("policy: the descriptor's folder is gone or unreachable (the kernel reports %q)", p)
 		}
 		return p, nil
 	}

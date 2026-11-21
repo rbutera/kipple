@@ -173,8 +173,12 @@ func TestProcLinuxMatching(t *testing.T) {
 			10: {uid: me, comm: "claude", cmdline: "claude\x00", cwd: "/home/me/dev/app (deleted)"},
 		}}}
 		cwds, err := p.ProcessCwds(ctx, []string{"claude"})
-		if err != nil || !slices.Equal(cwds, []string{"/home/me/dev/app"}) {
+		if err != nil || !slices.Equal(cwds, []string{"/home/me/dev/app (deleted)", "/home/me/dev/app"}) {
 			t.Fatalf("cwds %q, %v", cwds, err)
+		}
+		// A real folder named "app (deleted)" is never shortened away.
+		if !Within(cwds[0], "/home/me/dev/app (deleted)") {
+			t.Fatal("the path as read was not kept")
 		}
 	})
 	t.Run("Process vanishing mid-walk", func(t *testing.T) {

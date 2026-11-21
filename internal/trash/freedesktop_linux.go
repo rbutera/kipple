@@ -3,6 +3,8 @@
 package trash
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -293,6 +295,12 @@ func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[
 		default:
 			t.removeOwn(cand, info)
 			if errors.Is(err, ErrNoReplaceUnsupported) {
+				// EINVAL also means other things (moving a folder into
+				// itself); only a no-replace rename that fails on its own
+				// proves the file system lacks it.
+				if t.noReplaceWorks() {
+					return "", 0, fmt.Errorf("trash: move %s: the rename was refused as invalid (%v)", name, unix.EINVAL)
+				}
 				return "", 0, err
 			}
 			return "", 0, fmt.Errorf("trash: move %s: %w", name, err)
@@ -317,6 +325,12 @@ func (t *FreedesktopTrasher) reserve(cand string, content []byte) ([2]uint64, er
 	if err != nil {
 		if errors.Is(err, unix.EEXIST) {
 			return [2]uint64{}, err
+		}
+		if errors.Is(err, unix.ENAMETOOLONG) {
+			// Names of 246 to 255 bytes fit in files/ but not with the
+			// .trashinfo suffix. kipple does not shorten them (a shortened
+			// name would no longer say what the item was): the item stays.
+			return [2]uint64{}, fmt.Errorf("trash: the name is too long for the Trash: %q plus %q is more than 255 bytes, so the item was not moved", cand, infoSuffix)
 		}
 		return [2]uint64{}, fmt.Errorf("trash: reserving %s/%s: %w", t.infoPath, name, err)
 	}
@@ -415,6 +429,28 @@ func (t *FreedesktopTrasher) RemoveInfo(name, original string, ino uint64) (bool
 		return false, fmt.Errorf("%s could not be removed: %v", file, err)
 	}
 	return true, nil
+}
+
+// noReplaceWorks reports whether a no-replace rename works in the Trash's
+// file system (the item's, since they share a device): it creates an empty
+// probe file in info/, renames it there with RENAME_NOREPLACE and removes
+// it. A probe that cannot even be created counts as not working.
+func (t *FreedesktopTrasher) noReplaceWorks() bool {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	a := ".kipple-probe-" + hex.EncodeToString(b[:])
+	fd, err := unix.Openat(t.infoFd, a, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return false
+	}
+	_ = unix.Close(fd)
+	err = MoveNoReplace(t.infoFd, a, t.infoFd, a+"-2")
+	if err == nil {
+		_ = unix.Unlinkat(t.infoFd, a+"-2", 0)
+		return true
+	}
+	_ = unix.Unlinkat(t.infoFd, a, 0)
+	return false
 }
 
 func fsyncFd(fd int) error {

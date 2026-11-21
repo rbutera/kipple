@@ -531,7 +531,7 @@ func (a *applier) one(t target) {
 		if d.Reason != policy.ReasonParentChanged {
 			reason = plan.Refused(d.Reason)
 		}
-		a.skip(it, reason, "the parent folder changed immediately before the move")
+		a.skip(it, reason, parentDetail(f.ParentFd, "the parent folder changed immediately before the move"))
 		return
 	}
 	moved := plan.MovedItem{

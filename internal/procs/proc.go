@@ -61,8 +61,9 @@ func (p Proc) RunningNames(ctx context.Context, names []string) (map[string]bool
 }
 
 // ProcessCwds returns the working directories of this user's processes
-// named one of names. A working directory that was deleted is reported
-// without the kernel's " (deleted)" suffix.
+// named one of names. A path ending in " (deleted)" is reported both as
+// read and without the suffix: the kernel adds it to a removed directory,
+// but a real directory can have that name too.
 func (p Proc) ProcessCwds(ctx context.Context, names []string) ([]string, error) {
 	var cwds []string
 	err := p.each(ctx, func(pid int, comm, argv0 string) error {
@@ -80,7 +81,14 @@ func (p Proc) ProcessCwds(ctx context.Context, names []string) ([]string, error)
 		case err != nil:
 			return fmt.Errorf("%w: the working directory of process %d: %v", ErrUnknown, pid, err)
 		}
-		cwds = append(cwds, strings.TrimSuffix(cwd, " (deleted)"))
+		// The kernel appends " (deleted)" to a removed directory, but a
+		// directory may also really end with that: report the path as read
+		// and, for that suffix, also without it. Matching more only makes
+		// apply skip more.
+		cwds = append(cwds, cwd)
+		if trimmed := strings.TrimSuffix(cwd, " (deleted)"); trimmed != cwd {
+			cwds = append(cwds, trimmed)
+		}
 		return nil
 	})
 	if err != nil {

@@ -405,7 +405,7 @@ func TestApplyThroughDirTrasher(t *testing.T) {
 		t.Fatalf("receipt %+v %v", e.Receipt, err)
 	}
 	view := m.View()
-	for _, s := range []string{"Moved 3 items to the Trash", res.ReceiptID, "kipple restore " + res.ReceiptID + " --apply", "straight into ~/.Trash"} {
+	for _, s := range []string{"Moved 3 items to the Trash", res.ReceiptID, "kipple restore " + res.ReceiptID + " --apply", "straight into " + output.Here.TrashFolder} {
 		if !strings.Contains(view, s) {
 			t.Errorf("done view lacks %q:\n%s", s, view)
 		}

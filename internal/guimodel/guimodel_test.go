@@ -449,7 +449,12 @@ func TestTrashAccessState(t *testing.T) {
 	m.OpenConfirm()
 	_ = m.ApplyNow()
 	p := m.Problem()
-	if p.Kind != ProblemTrashAccess || p.Heading != "kipple can't use your Trash folder, so nothing was moved." || p.Actions[0] != ActionOpenPrivacy {
+	// Open Privacy settings only where Full Disk Access is the cause.
+	want := ActionOpenPrivacy
+	if !fullDiskAccess {
+		want = ActionBack
+	}
+	if p.Kind != ProblemTrashAccess || p.Heading != "kipple can't use your Trash folder, so nothing was moved." || p.Actions[0] != want {
 		t.Fatalf("%+v", p)
 	}
 	m.Back()

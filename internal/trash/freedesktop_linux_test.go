@@ -360,3 +360,40 @@ func entries(t *testing.T, dir string) int {
 	}
 	return len(es)
 }
+
+// An EINVAL from the item's rename alone (moving a folder into itself, for
+// example) is a failed move, not a file system without RENAME_NOREPLACE:
+// a probe rename in the same file system decides.
+func TestRenameErrorIsNotMissingNoReplace(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "c/a", Content: "x"}}})
+	tr := fdTrash(t, home)
+	renameat2 = func(ofd int, from string, nfd int, to string, flags uint) error {
+		if from == "a" {
+			return unix.EINVAL
+		}
+		return realRenameat2(ofd, from, nfd, to, flags)
+	}
+	t.Cleanup(func() { renameat2 = realRenameat2 })
+	_, err := tr.Trash(parentFd(t, testutil.Abs(home, "c")), "a")
+	if err == nil || errors.Is(err, ErrNoReplaceUnsupported) {
+		t.Fatalf("err = %v, want a move failure that is not ErrNoReplaceUnsupported", err)
+	}
+	if n := entries(t, testutil.Abs(home, ".local/share/Trash/info")); n != 0 {
+		t.Fatalf("%d entries left in info (the reservation or the probe)", n)
+	}
+}
+
+// A name of 246 to 255 bytes cannot get an info file: the item stays and
+// the error says the name is too long for the Trash.
+func TestNameTooLongForTheTrash(t *testing.T) {
+	long := strings.Repeat("n", 250)
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "c/" + long, Content: "x"}}})
+	tr := fdTrash(t, home)
+	_, err := tr.Trash(parentFd(t, testutil.Abs(home, "c")), long)
+	if err == nil || !strings.Contains(err.Error(), "too long for the Trash") {
+		t.Fatalf("err = %v", err)
+	}
+	if !exists(testutil.Abs(home, "c/"+long)) || entries(t, testutil.Abs(home, ".local/share/Trash/info")) != 0 {
+		t.Fatal("the item moved or an info file was left")
+	}
+}

@@ -167,7 +167,7 @@ func (m *Model) Done() DoneView {
 	}
 	id := output.SafeText(r.ReceiptID)
 	if len(r.Displaced) > 0 {
-		v.Displaced = "Something else was at an item's name when macOS's Trash command ran, and it went to the Trash instead. kipple skipped the item and listed what moved in the receipt. Put it back with Finder's Put Back or kipple restore " + id + " --apply."
+		v.Displaced = "Something else was at an item's name when macOS's Trash command ran, and it went to the Trash instead. kipple skipped the item and listed what moved in the receipt. Put it back with " + words.Here.OtherRestore + " or kipple restore " + id + " --apply."
 	}
 	for _, w := range r.Warnings {
 		v.Warnings = append(v.Warnings, output.SafeText(w))
@@ -179,7 +179,7 @@ func (m *Model) Done() DoneView {
 			rename = rename || mv.Mover == plan.MoverRename || mv.Mover == plan.MoverFreedesktop
 			freedesktop = freedesktop || mv.Mover == plan.MoverFreedesktop
 		}
-		if freedesktop {
+		if freedesktop || (rename && !fullDiskAccess) {
 			v.ChangedMind = "Put them back here, run " + v.Command + " in a terminal, or use Restore in your file manager's Trash."
 		} else if rename {
 			v.ChangedMind = "Finder's Put Back doesn't know about items kipple moved straight into the Trash folder. Put them back here, run " + v.Command + " in Terminal, or drag them out of the Trash."
@@ -337,7 +337,7 @@ func (m *Model) PutBackDone(res plan.Result, err error) {
 	if err != nil {
 		msg := output.SafeText(err.Error())
 		body := []string{msg}
-		if errors.Is(err, apply.ErrTrashAccess) {
+		if errors.Is(err, apply.ErrTrashAccess) && fullDiskAccess {
 			body = append(body, TrashAccessBody)
 		}
 		m.restoreErr = err

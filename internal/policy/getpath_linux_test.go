@@ -40,8 +40,8 @@ func TestDescriptorPathLinux(t *testing.T) {
 	if err := os.Remove(filepath.Join(home, "gone")); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := DescriptorPath(gone); !errors.Is(err, ErrNoDescriptorPath) {
-		t.Fatalf("deleted directory: DescriptorPath = %q, %v, want ErrNoDescriptorPath", got, err)
+	if got, err := DescriptorPath(gone); err == nil || errors.Is(err, ErrNoDescriptorPath) {
+		t.Fatalf("deleted directory: DescriptorPath = %q, %v, want an error that is not ErrNoDescriptorPath", got, err)
 	}
 	if _, err := DescriptorPath(-1); !errors.Is(err, ErrNoDescriptorPath) {
 		t.Fatalf("bad descriptor: %v", err)

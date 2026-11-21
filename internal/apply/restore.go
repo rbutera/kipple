@@ -322,7 +322,7 @@ func restoreOne(sess *policy.Session, tr *trash.DirTrasher, r rules.Rule, m *pla
 		if d.Reason != policy.ReasonParentChanged {
 			return plan.Refused(d.Reason), "the destination folder changed immediately before the move", false
 		}
-		return plan.SkipParentChanged, "the destination folder changed immediately before the move", false
+		return plan.SkipParentChanged, parentDetail(dst.ParentFd, "the destination folder changed immediately before the move"), false
 	}
 	if err := moveBack(tr.Fd(), name, dst, info, tag); err != nil {
 		var ra *errRestoreArrived
@@ -416,4 +416,14 @@ func stillAt(sess *policy.Session, path string, dev, ino uint64) bool {
 	}
 	d, i, ok := policy.Identity(e.Info)
 	return ok && d == dev && i == ino
+}
+
+// parentDetail explains a VerifyParent refusal: when the parent's path
+// cannot be read at all (no /proc on Linux), it says so instead of
+// claiming the folder changed.
+func parentDetail(parentFd int, changed string) string {
+	if _, err := policy.DescriptorPath(parentFd); errors.Is(err, policy.ErrNoDescriptorPath) {
+		return "/proc is not available, so kipple cannot confirm the parent folder; nothing was moved"
+	}
+	return changed
 }

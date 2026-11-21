@@ -115,7 +115,7 @@ var skipText = map[string][2]string{
 	plan.SkipParentChanged:       {"Its folder moved or was replaced just before the move.", "Scan again."},
 	plan.SkipDifferentDevice:     {"It is on a different disk from the Trash, and kipple never copies.", ""},
 	plan.SkipTrashChanged:        {"The Trash folder was replaced during the run.", "Scan again."},
-	plan.SkipPermissionDenied:    {"macOS refused the move. kipple never asks for more permissions.", ""},
+	plan.SkipPermissionDenied:    {Here.SystemRefused + " kipple never asks for more permissions.", ""},
 	plan.SkipMoveFailed:          {"The move failed.", ""},
 	plan.SkipDestinationExists:   {"Something is already at its original path.", "Move that aside, then put it back."},
 	plan.SkipTrashItemMissing:    {"It is no longer in the Trash.", ""},
@@ -160,7 +160,7 @@ func Mover(m string) string {
 	case plan.MoverNSFileManager:
 		return "Moved with macOS's Trash command (no Full Disk Access)."
 	case plan.MoverFreedesktop:
-		return "Moved into the Trash folder (~/.local/share/Trash), where your file manager can restore it too."
+		return "Moved into the Trash folder (" + PhrasesFor("linux").TrashFolder + "), where your file manager can restore it too."
 	}
 	return ""
 }

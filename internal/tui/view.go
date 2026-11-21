@@ -470,10 +470,10 @@ func moverNote(r plan.Result) string {
 	}
 	var parts []string
 	if movers[plan.MoverRename] {
-		parts = append(parts, "moved straight into ~/.Trash; kipple restore puts items back")
+		parts = append(parts, "moved straight into "+output.Here.TrashFolder+"; kipple restore puts items back")
 	}
 	if movers[plan.MoverFreedesktop] {
-		parts = append(parts, "moved into your Trash (~/.local/share/Trash, visible in your file manager); kipple restore puts items back")
+		parts = append(parts, "moved into "+output.PhrasesFor("linux").YourTrash+"; kipple restore or "+output.PhrasesFor("linux").OtherRestore+" puts items back")
 	}
 	if movers[plan.MoverNSFileManager] {
 		parts = append(parts, "moved with Apple's Trash API (no Full Disk Access); Finder's Put Back and kipple restore both work")

@@ -50,7 +50,7 @@ func CleanResult(w io.Writer, r plan.Result) error {
 	}
 	writeSkipped(b, r.Skipped, "Skipped")
 	if len(r.Displaced) > 0 {
-		fmt.Fprintf(b, "Moved to the Trash instead of the approved item (another object was at the item's name when the system's Trash call ran): %s. kipple restore puts it back at the item's path when that path is free; Finder's Put Back may return it to where it came from.\n", count(len(r.Displaced), "object"))
+		fmt.Fprintf(b, "Moved to the Trash instead of the approved item (another object was at the item's name when the system's Trash call ran): %s. kipple restore puts it back at the item's path when that path is free; %s may return it to where it came from.\n", count(len(r.Displaced), "object"), Here.OtherRestore)
 		for _, d := range r.Displaced {
 			fmt.Fprintf(b, "  %s  taken from %s\n      -> %s\n", SafeText(d.ID), SafeText(d.Path), SafeText(d.TrashPath))
 		}

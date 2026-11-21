@@ -67,3 +67,21 @@ func TestMoverAndPlural(t *testing.T) {
 		}
 	}
 }
+
+// No Finder, macOS or ~/.Trash wording for Linux users.
+func TestPhrasesPerPlatform(t *testing.T) {
+	l, d := PhrasesFor("linux"), PhrasesFor("darwin")
+	for _, s := range []string{l.TrashFolder, l.YourTrash, l.OtherRestore, l.SystemRefused} {
+		for _, bad := range []string{"Finder", "macOS", "~/.Trash", "Put Back"} {
+			if strings.Contains(s, bad) {
+				t.Errorf("Linux phrase %q mentions %q", s, bad)
+			}
+		}
+	}
+	if d.TrashFolder != "~/.Trash" || d.OtherRestore != "Finder's Put Back" || !strings.HasPrefix(d.SystemRefused, "macOS") {
+		t.Errorf("macOS phrases changed: %+v", d)
+	}
+	if !strings.Contains(l.YourTrash, "~/.local/share/Trash") {
+		t.Errorf("Linux Trash %q", l.YourTrash)
+	}
+}

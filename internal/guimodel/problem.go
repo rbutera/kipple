@@ -115,6 +115,16 @@ const TrashAccessBody = "macOS lets only apps with Full Disk Access open it. All
 // card when a receipt was written.
 func applyProblem(err error, res plan.Result, card *ReceiptCard) Problem {
 	switch {
+	case errors.Is(err, apply.ErrTrashAccess) && !fullDiskAccess:
+		// Not a Full Disk Access problem: say what is wrong with the Trash.
+		return Problem{
+			Kind:    ProblemTrashAccess,
+			Heading: "kipple can't use your Trash folder, so nothing was moved.",
+			Body:    []string{output.SafeText(err.Error())},
+			Actions: []Action{ActionBack},
+			Status:  "Nothing was moved.",
+			BackTo:  ScreenReview,
+		}
 	case errors.Is(err, apply.ErrTrashAccess):
 		return Problem{
 			Kind:    ProblemTrashAccess,

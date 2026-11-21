@@ -324,6 +324,24 @@ func TestFreedesktopTag(t *testing.T) {
 			t.Fatalf("skipped %+v", res.Skipped)
 		}
 	})
+	t.Run("Not owned is not blamed on the file system", func(t *testing.T) {
+		f := newFx(t, pipFixture())
+		p := f.scan("")
+		it := itemByRel(t, p, "Library/Caches/pip/http")
+		o := f.opts(p)
+		o.Only = []string{it.ID}
+		fsetxattr = func(int, string, []byte, int) error { return unix.EPERM }
+		t.Cleanup(func() { fsetxattr = unix.Fsetxattr })
+		// Stand in for an item owned by someone else: the owner check sees
+		// another uid only through the hook below.
+		fstatOwner = func(int) int { return os.Geteuid() + 1 }
+		t.Cleanup(func() { fstatOwner = nil })
+		res := f.run(o)
+		s, ok := skipFor(res, it.Path)
+		if !ok || s.Reason != plan.SkipPermissionDenied || strings.Contains(s.Detail, "file system") || !strings.Contains(s.Detail, "owned by another user") {
+			t.Fatalf("skipped %+v", res.Skipped)
+		}
+	})
 	t.Run("A FIFO is refused without being opened", func(t *testing.T) {
 		f := newFx(t, testutil.Spec{Dirs: []testutil.Dir{{Path: "Library/Caches"}}})
 		fifo := f.abs("Library/Caches/pipe")
@@ -531,4 +549,20 @@ func TestTrashFolderModesAreNotChanged(t *testing.T) {
 			}
 		}
 	})
+}
+
+// When the parent's path cannot be read at all (no /proc), the refusal
+// says so instead of claiming the folder changed.
+func TestParentDetailWithoutProc(t *testing.T) {
+	if got := parentDetail(-1, "changed"); !strings.Contains(got, "/proc is not available") {
+		t.Fatalf("detail %q", got)
+	}
+	fd, err := unix.Open(t.TempDir(), unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	if got := parentDetail(fd, "changed"); got != "changed" {
+		t.Fatalf("detail %q", got)
+	}
 }

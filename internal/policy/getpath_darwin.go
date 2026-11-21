@@ -4,11 +4,17 @@ package policy
 
 import (
 	"bytes"
+	"errors"
 	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
+
+// ErrNoDescriptorPath is never returned on macOS, where fcntl(F_GETPATH)
+// needs no file system; it is declared so callers can test for it on every
+// platform.
+var ErrNoDescriptorPath = errors.New("policy: descriptor paths are not available")
 
 // DescriptorPath returns the path the kernel currently associates with the
 // open descriptor fd (fcntl F_GETPATH). Apply uses it immediately before a

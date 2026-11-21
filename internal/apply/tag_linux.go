@@ -39,6 +39,22 @@ func (e *errNoUserXattr) Error() string {
 	return "the file system (" + e.fs + ") does not support user extended attributes, so kipple cannot tag the item for restore and did not move it"
 }
 
+// fstatOwner, in tests, replaces reading the owner of the object open at
+// fd.
+var fstatOwner func(fd int) int
+
+// ownerOf returns the owner of the object open at fd, or -1.
+func ownerOf(fd int) int {
+	if fstatOwner != nil {
+		return fstatOwner(fd)
+	}
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil {
+		return -1
+	}
+	return int(st.Uid)
+}
+
 // taggableMode reports whether an item of this type can carry the tag and
 // may be opened to set it. Linux allows user. attributes only on regular
 // files and directories; device nodes, FIFOs and sockets are refused
@@ -51,6 +67,13 @@ func taggableMode(m fs.FileMode) bool { return m.IsRegular() || m.IsDir() }
 // descriptor (Go's module cache is read-only).
 func setTag(fd int, value []byte) error {
 	err := withWrite(fd, func() error { return fsetxattr(fd, tagName, value, 0) })
+	if errors.Is(err, fs.ErrPermission) {
+		// Not owning the item is a permission problem, not the file
+		// system's: say so (permission_denied).
+		if uid := ownerOf(fd); uid >= 0 && uid != os.Geteuid() {
+			return fmt.Errorf("the item is owned by another user (uid %d), so kipple cannot tag it for restore and did not move it: %w", uid, err)
+		}
+	}
 	if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.EPERM) {
 		return &errNoUserXattr{fs: trash.FileSystemName(fd)}
 	}
