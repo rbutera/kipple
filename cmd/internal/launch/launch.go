@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,6 +64,18 @@ type Runtime struct {
 	// Mounts tells mount roots apart (nil: the platform's own); tests
 	// inject policy.StubMounts.
 	Mounts policy.MountOracle
+	// GOOS is the platform whose data (catalogue, state folder, user
+	// folders) kipple uses; "" means runtime.GOOS. Tests set it to check
+	// another platform's behaviour on any host.
+	GOOS string
+}
+
+// goos is rt.GOOS or the running platform.
+func (rt Runtime) goos() string {
+	if rt.GOOS != "" {
+		return rt.GOOS
+	}
+	return runtime.GOOS
 }
 
 // System is the real process environment.
@@ -109,6 +122,12 @@ type Home struct {
 	Config config.Config
 	// Mounts is Runtime.Mounts, passed to every policy session.
 	Mounts policy.MountOracle
+	// GOOS is the platform whose data is used (Runtime.GOOS).
+	GOOS string
+	// UserDirs are the protections from ~/.config/user-dirs.dirs (Linux).
+	UserDirs config.UserDirs
+	// Warnings are plan warnings found while resolving home (user-dirs).
+	Warnings []string
 }
 
 // Resolve resolves home and loads config.
@@ -121,7 +140,23 @@ func Resolve(rt Runtime) (Home, error) {
 	if err != nil {
 		return Home{}, err
 	}
-	return Home{Path: home, FromEnv: fromEnv, ID: id, Config: cfg, Mounts: rt.Mounts}, nil
+	h := Home{Path: home, FromEnv: fromEnv, ID: id, Config: cfg, Mounts: rt.Mounts, GOOS: rt.goos()}
+	if h.GOOS == "linux" {
+		h.UserDirs = loadUserDirs(home, id)
+		h.Warnings = append(h.Warnings, h.UserDirs.Warnings...)
+	}
+	return h, nil
+}
+
+// loadUserDirs reads ~/.config/user-dirs.dirs relative to the approved
+// home's descriptor; anything wrong with it is a warning in the result.
+func loadUserDirs(home string, id homeguard.ID) config.UserDirs {
+	sess, err := policy.NewSession(policy.Env{Home: home, HomeIdentity: &policy.FileIdentity{Dev: id.Dev, Ino: id.Ino}})
+	defer func() { _ = sess.Close() }()
+	if err != nil {
+		return config.UserDirs{Warnings: []string{"~/" + config.UserDirsRelPath + " was not read: " + err.Error()}}
+	}
+	return config.LoadUserDirs(home, sess.OpenUnderHome)
 }
 
 // LoadConfig reads the config file relative to the approved home's
@@ -144,6 +179,7 @@ func LoadConfig(home string, id homeguard.ID) (config.Config, error) {
 // pinned home identity.
 func (h Home) PolicyEnv() policy.Env {
 	env := h.Config.PolicyEnv(h.Path)
+	env.Protect = append(env.Protect, h.UserDirs.Paths()...)
 	env.HomeIdentity = &policy.FileIdentity{Dev: h.ID.Dev, Ino: h.ID.Ino}
 	env.Mounts = h.Mounts
 	return env
@@ -157,12 +193,42 @@ func (h Home) Rules() []rules.Rule {
 
 // ScanOptions are the scan options every front end starts from.
 func (h Home) ScanOptions(level, version string) scan.Options {
+	rs := h.Rules()
 	return scan.Options{
 		Env:           h.PolicyEnv(),
-		Rules:         h.Rules(),
+		Rules:         rs,
 		Level:         level,
 		KippleVersion: version,
+		Warnings:      append(append([]string(nil), h.Warnings...), userDirsCoverRules(h.Path, h.UserDirs, rs)...),
 	}
+}
+
+// userDirsCoverRules warns when a user folder from user-dirs.dirs covers a
+// rule's root (someone set XDG_PICTURES_DIR=$HOME/.cache): the protection
+// wins, so that rule's items there are never offered.
+func userDirsCoverRules(home string, ud config.UserDirs, rs []rules.Rule) []string {
+	var out []string
+	keys := make([]string, 0, len(ud.Protect))
+	for k := range ud.Protect {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		p := ud.Protect[k]
+		for _, r := range rs {
+			for _, root := range r.Roots {
+				fixed := root
+				if i := strings.IndexAny(root, "*?["); i >= 0 {
+					fixed = strings.TrimSuffix(root[:i], "/")
+				}
+				abs := home + "/" + fixed
+				if abs == p || strings.HasPrefix(abs, p+"/") {
+					out = append(out, fmt.Sprintf("%s in ~/%s protects ~/%s, which holds the folder of rule %s (~/%s): its items are never offered", k, config.UserDirsRelPath, strings.TrimPrefix(p, home+"/"), r.ID, root))
+				}
+			}
+		}
+	}
+	return out
 }
 
 // ApplyOptions are the apply options every apply path (clean, tui, gui)

@@ -64,6 +64,9 @@ type Options struct {
 	// Git classifies repositories for RequiresCleanGit conditions
 	// (gitstate.Inspector with home's parent as ceiling when nil).
 	Git GitInspector
+	// Warnings are added to the plan's warnings first (the front end's
+	// findings about the environment, such as user-dirs.dirs).
+	Warnings []string
 }
 
 // EffectiveRules returns cat with every project artifact rule's roots
@@ -135,6 +138,7 @@ func Run(ctx context.Context, opts Options) (plan.Plan, error) {
 		git = gitstate.Inspector{Ceiling: filepath.Dir(opts.Env.Home)}
 	}
 	s := &scanner{ctx: ctx, opts: opts, rules: rs, sess: sess, home: opts.Env.Home, now: opts.Now(), status: make([]string, len(rs)), roots: make([][]plan.RootIdentity, len(rs))}
+	s.warnings = append(s.warnings, opts.Warnings...)
 	s.cond = &conditions{ctx: ctx, sess: sess, rules: rs, now: s.now, git: git, idle: map[string]bool{}, repos: map[string]gitstate.Result{}}
 	if err := sess.MountsErr(); err != nil {
 		// Fail closed: without mount points nothing can be shown to stay

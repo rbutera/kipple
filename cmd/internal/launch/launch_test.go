@@ -3,10 +3,16 @@ package launch
 import (
 	"context"
 	"errors"
+	"github.com/rbutera/kipple/internal/policy"
+	"github.com/rbutera/kipple/internal/rules"
+	"github.com/rbutera/kipple/internal/scan"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rbutera/kipple/internal/gitstate"
 	"github.com/rbutera/kipple/internal/homeguard"
@@ -174,4 +180,68 @@ func TestRefusedKippleHomeReadsNothing(t *testing.T) {
 	if _, err := Resolve(rt); !errors.As(err, &le) || le.Code != CodeConfig {
 		t.Fatalf("err = %v, want code config once the guard passes", err)
 	}
+}
+
+// specs/safety-policy "XDG user directories are protected on Linux",
+// through launch with GOOS linux (any host): the folders become
+// protections, Downloads stays cleanable, and problems are plan warnings.
+func TestUserDirsOnLinux(t *testing.T) {
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	fixture := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{
+		{Path: ".config/user-dirs.dirs", Content: "XDG_DOCUMENTS_DIR=\"$HOME/Dokumente\"\nXDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\nXDG_DESKTOP_DIR=\"$HOME\"\nXDG_PICTURES_DIR=\"$HOME/.npm\"\n"},
+		{Path: "Dokumente/x/brief.txt", Content: "x"},
+		{Path: "Downloads/old.iso", Size: 1024, MTime: old},
+		{Path: ".npm/_cacache/content/blob", Content: "x", MTime: old},
+	}})
+	rt := runtimeFor(t, fakeReal(t))
+	rt.GOOS = "linux"
+	t.Setenv("KIPPLE_HOME", fixture)
+	h, err := Resolve(rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("Localised Documents folder", func(t *testing.T) {
+		r := policy.StaticRule{ID: "hypothetical", Roots: []string{"Dokumente"}, Kind: policy.MatchChildren}
+		if d := policy.Authorize(h.PolicyEnv(), r, fixture+"/Dokumente/x"); d.Reason != policy.ReasonUserProtected {
+			t.Fatalf("got %+v", d)
+		}
+	})
+	p, err := scan.Run(context.Background(), h.ScanOptions(rules.LevelSafe, "test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("Download dir stays cleanable", func(t *testing.T) {
+		found := false
+		for _, it := range p.Items {
+			found = found || (it.Rule == "downloads.installers" && it.Path == fixture+"/Downloads/old.iso")
+		}
+		if !found {
+			t.Fatalf("no downloads.installers item: %+v", p.Items)
+		}
+	})
+	t.Run("User dir set to home", func(t *testing.T) {
+		if !slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, "XDG_DESKTOP_DIR") }) {
+			t.Fatalf("warnings %q", p.Warnings)
+		}
+	})
+	t.Run("protection covers a rule root warns", func(t *testing.T) {
+		if !slices.ContainsFunc(p.Warnings, func(w string) bool {
+			return strings.Contains(w, "XDG_PICTURES_DIR") && strings.Contains(w, "npm.cache")
+		}) {
+			t.Fatalf("warnings %q", p.Warnings)
+		}
+		for _, it := range p.Items {
+			if it.Rule == "npm.cache" && it.Selected {
+				t.Fatalf("a protected rule root offered %+v", it)
+			}
+		}
+	})
+	t.Run("macOS ignores user-dirs.dirs", func(t *testing.T) {
+		rt := rt
+		rt.GOOS = "darwin"
+		h, err := Resolve(rt)
+		if err != nil || len(h.UserDirs.Protect) != 0 || len(h.Warnings) != 0 {
+			t.Fatalf("%+v %v", h.UserDirs, err)
+		}
+	})
 }

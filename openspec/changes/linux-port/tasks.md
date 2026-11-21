@@ -51,7 +51,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
   Use it in the session walk, `WalkFresh` and the `internal/sizes` walk: `different_device` for candidates and components, `contains_mount` for items. Verify with parser table tests on any host, and fixture tests with an injected mount oracle: "Bind mount inside a cache folder", "Candidate is a bind mount point", "btrfs subvolume under home" (injected device number), and "Mount table unavailable" (scan warns, apply exits 1, fixture checksum unchanged).
 - [x] 2.2 Implement the `homeguard` Linux aliases from `/proc/self/mountinfo` (design L2), failing closed when it cannot be read. Verify with stub-FS tests "KIPPLE_HOME through a bind mount of a folder inside home", "KIPPLE_HOME through a bind mount of the home's parent", "Separate temp folder accepted", a btrfs `root=/@home/me` case, and "mountinfo unreadable refuses". Add `cmd/internal/launch` tests that a refused `KIPPLE_HOME` exits 1 before reading the fixture.
 - [x] 2.3 Add the Linux denylist entries and the `.Trash-*` component pattern to `internal/policy/denylist.go` (design L9), and regenerate the docs/safety.md denylist. Verify with policy table tests for both `Authorize` and `Session`: "Linux keyring refused", "Trash is never a source", "Folding applies on Linux", one case per new entry, and the existing docs diff test.
-- [ ] 2.4 Parse `<home>/.config/user-dirs.dirs` in `internal/config` on Linux and add the results to `Env.Protect`:
+- [x] 2.4 Parse `<home>/.config/user-dirs.dirs` in `internal/config` on Linux and add the results to `Env.Protect`:
   - no symlink following;
   - `$HOME/...` and absolute paths under home are accepted;
   - `XDG_DOWNLOAD_DIR` is excluded;
