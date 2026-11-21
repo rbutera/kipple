@@ -218,6 +218,7 @@ unmount_under() {
 	for m in $(awk '{print $5}' /proc/self/mountinfo | grep "^$1" | sort -r || true); do umount -l "$m"; done
 }
 gcc -O2 -o /tmp/flip test/linux/flip.c
+gcc -O2 -o /tmp/flip2 test/linux/flip2.c
 gcc -O2 -o /tmp/nostatx test/linux/nostatx.c
 user_in() {
 	local root="$1"
@@ -257,6 +258,39 @@ race_check() {
 	unmount_under "$r/home"
 }
 race_check
+
+# 4b. Wave 2 re-attack F1: the bind sits below a folder that is then made
+#     unreadable (mode 000), so a walk that ignored partial results would
+#     call the item clean. No mount may be left under the Trash.
+race_unreadable_check() {
+	local r=/tmp/race2 n=150 i targets="" left
+	many_fixture "$r" "$n"
+	for i in $(seq -w 1 "$n"); do mkdir -p "$r/home/.cache/c$i/d/m"; done
+	chown -R 1000:1000 "$r/home/.cache"
+	find "$r/home/.cache" -exec touch -h -d "$old" {} +
+	user_in "$r" "$K" scan --json >"$r/out/plan.json"
+	for i in $(seq -w 1 "$n"); do targets="$targets $r/home/.cache/c$i"; done
+	rm -f /tmp/flipstop
+	# shellcheck disable=SC2086
+	/tmp/flip2 60 "$r/home/.ssh" $targets 2>"$r/out/flip.err" &
+	local fp=$!
+	sleep 0.3
+	set +e
+	user_in "$r" "$K" clean --apply --json --plan "$r/out/plan.json" >"$r/out/res.json" 2>"$r/out/res.err"
+	set -e
+	touch /tmp/flipstop
+	wait "$fp" || true
+	rm -f /tmp/flipstop
+	left="$(mounts_under "$r/home/.local/share/Trash")"
+	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ]; then
+		ok "binds below folders made unreadable during apply: no mount left in the Trash (moved $(jq '.moved | length' "$r/out/res.json"))"
+	else
+		fail "binds below unreadable folders: $left mounts under the Trash"
+	fi
+	find "$r" -type d -exec chmod u+rwx {} + 2>/dev/null || true
+	unmount_under "$r/home"
+}
+race_unreadable_check
 
 # 5. Wave 2 red-team R3: with statx denied (kernels before 5.8), kipple
 #    falls back to /proc/self/mountinfo. A bind present at scan is
