@@ -80,7 +80,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
   - docs/plan-schema.md documents `mover: freedesktop` and the compatibility rule for enum values and error codes.
 
   Verify: the denylist diff test passes, and a test validates the doc's Linux receipt example against `kipple schema receipt` ("Documented compatibility rule").
-- [ ] 2.10 Wave 2 gate: `command make check`, `make test-linux` and `make test-linux-mounts` are green; commit.
+- [x] 2.10 Wave 2 gate: `command make check`, `make test-linux` and `make test-linux-mounts` are green; commit.
 - [ ] 2.11 Review gate: the orchestrator runs the Opus review and the red-team review of wave 2. The red team focuses on mount boundaries (same-device binds, overlay, btrfs), the home guard, the denylist and user-dirs protections, the catalogue split and the XDG policy, and must "find a directory under ~/.cache that is not a cache": every find becomes an `xdg.cache` exclude with a reason and a test before the gate passes. Fix until both pass, then re-run 2.10.
 
 ## 3. Wave 3: CI, release, GUI decision, docs, v0.3.0
