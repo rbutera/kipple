@@ -390,7 +390,8 @@ nostatx_check
 #    binary) pass when TMPDIR is on ext4 or btrfs, not only tmpfs (ext4
 #    reuses inode numbers at once; the file system's name differs).
 apply_tests_on() {
-	local fs="$1" img="/tmp/$1.img" mnt="/tmp/$1-tmp" lo out
+	local fs="$1" img="/tmp/$1.img" mnt="/tmp/$1-tmp" lo out repo
+	repo="$(cd "$(dirname "$0")/.." && pwd -P)"
 	local tests
 	tests="$(dirname "$K")/apply.test"
 	if [ ! -x "$tests" ]; then
@@ -404,7 +405,9 @@ apply_tests_on() {
 	mount "$lo" "$mnt"
 	chmod 1777 "$mnt"
 	set +e
-	out="$(cd /tmp && setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
+	# From the package folder in the read-only repository, as go test runs
+	# them (some tests read the docs at ../../docs).
+	out="$(cd "$repo/internal/apply" && setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
 		env HOME=/home/kipple PATH=/usr/bin:/bin TMPDIR="$mnt" "$tests" -test.count=1 2>&1)"
 	local code=$?
 	set -e

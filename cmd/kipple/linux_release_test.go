@@ -80,3 +80,13 @@ func TestLinuxCIJob(t *testing.T) {
 	rel := readRepoFile(t, ".github/workflows/release.yml")
 	mustContain(t, "release.yml", rel, "actions/workflows/ci.yml/runs", `.conclusion == "success"`, "needs: ci-green")
 }
+
+// Task 3.7: the v0.3.0 release notes cover what the task lists: the Linux
+// CLI and TUI, the larger denylist, os and arch in version, mover
+// freedesktop, and the GUI still macOS-only.
+func TestReleaseNotesV030(t *testing.T) {
+	notes := readRepoFile(t, "docs/release-notes/v0.3.0.md")
+	mustContain(t, "docs/release-notes/v0.3.0.md", notes,
+		"runs on Linux", "`kipple tui`", "A larger denylist", "`os` and `arch`", `"mover": "freedesktop"`,
+		"The Mac app stays macOS-only", "`mounts_unavailable`", "`unsupported_platform`", "kipple_0.3.0_linux_amd64.tar.gz")
+}

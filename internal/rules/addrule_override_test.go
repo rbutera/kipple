@@ -33,7 +33,7 @@ func TestAddARuleWithALinuxOverride(t *testing.T) {
 	}
 	roots := map[string]string{rules.PlatformDarwin: ".example/cache", rules.PlatformLinux: ".local/share/example/cache"}
 	undo := rules.AddForTest(r, []string{roots[rules.PlatformLinux]})
-	defer undo()
+	t.Cleanup(func() { undo() }) // whichever addition is current at the end
 
 	for _, goos := range rules.Platforms() {
 		cat := rules.CatalogueFor(goos)
