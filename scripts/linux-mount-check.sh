@@ -238,8 +238,25 @@ put_back() {
 	jq '[.skipped[]? | select(.reason == "contains_mount" and (.detail | contains("it was put back where it was")))] | length' "$1"
 }
 
-race_check() {
-	local r=/tmp/race n=150 i targets="" moved skipped left back
+# retry_race runs one race attempt (FN TRY) up to three times. An attempt
+# returns 0 when it passed (it reported ok), 1 when it failed outright (it
+# reported fail: a mount left in the Trash, the key gone), and 2 when it
+# left nothing behind but never reached the post-move put-back, which a
+# clean run does about 1 time in 8 (wave 2 confirmation G4). Only that
+# last case is retried; it must not pass vacuously, so three misses fail.
+retry_race() {
+	local label="$1" fn="$2" try rc
+	for try in 1 2 3; do
+		rc=0
+		"$fn" "$try" || rc=$?
+		[ "$rc" -eq 2 ] || return 0
+		echo "note  $label: run $try never reached the post-move put-back; running it again"
+	done
+	fail "$label: none of 3 runs reached the post-move put-back"
+}
+
+race_once() {
+	local r="/tmp/race$1" n=150 i targets="" moved skipped left back
 	many_fixture "$r" "$n"
 	user_in "$r" "$K" scan --json >"$r/out/plan.json"
 	for i in $(seq -w 1 "$n"); do targets="$targets $r/home/.cache/c$i/m"; done
@@ -258,20 +275,23 @@ race_check() {
 	moved="$(jq '.moved | length' "$r/out/res.json")"
 	skipped="$(jq -r '[.skipped[]?.reason] | group_by(.) | map("\(.[0])=\(length)") | join(" ")' "$r/out/res.json")"
 	back="$(put_back "$r/out/res.json")"
-	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ] && [ "$back" -gt 0 ]; then
-		ok "binds flipping during apply: no mount left in the Trash, $back caught after the move and put back (moved $moved; skipped $skipped)"
-	else
-		fail "binds flipping during apply: $left mounts under the Trash, $back put back after the move (moved $moved; skipped $skipped)"
-	fi
 	unmount_under "$r/home"
+	if [ "$left" -ne 0 ] || [ ! -e "$r/home/.ssh/id_ed25519" ]; then
+		fail "binds flipping during apply: $left mounts under the Trash (moved $moved; skipped $skipped)"
+		return 1
+	fi
+	[ "$back" -gt 0 ] || return 2
+	ok "binds flipping during apply: no mount left in the Trash, $back caught after the move and put back (moved $moved; skipped $skipped; run $1)"
 }
-race_check
+retry_race "binds flipping during apply" race_once
 
 # 4b. Wave 2 re-attack F1: the bind sits below a folder that is then made
 #     unreadable (mode 000), so a walk that ignored partial results would
-#     call the item clean. No mount may be left under the Trash.
-race_unreadable_check() {
-	local r=/tmp/race2 n=150 i targets="" left back
+#     call the item clean. No mount may be left under the Trash. flip2
+#     toggles every FLIP_US microseconds; 20 reaches the put-back far more
+#     often than the old 200 (wave 2 confirmation G4).
+race_unreadable_once() {
+	local r="/tmp/race2-$1" n=150 i targets="" left back
 	many_fixture "$r" "$n"
 	for i in $(seq -w 1 "$n"); do mkdir -p "$r/home/.cache/c$i/d/m"; done
 	chown -R 1000:1000 "$r/home/.cache"
@@ -280,7 +300,7 @@ race_unreadable_check() {
 	for i in $(seq -w 1 "$n"); do targets="$targets $r/home/.cache/c$i"; done
 	rm -f /tmp/flipstop
 	# shellcheck disable=SC2086
-	/tmp/flip2 60 "$r/home/.ssh" $targets 2>"$r/out/flip.err" &
+	FLIP_US=20 /tmp/flip2 60 "$r/home/.ssh" $targets 2>"$r/out/flip.err" &
 	local fp=$!
 	sleep 0.3
 	set +e
@@ -291,15 +311,16 @@ race_unreadable_check() {
 	rm -f /tmp/flipstop
 	left="$(mounts_under "$r/home/.local/share/Trash")"
 	back="$(put_back "$r/out/res.json")"
-	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ] && [ "$back" -gt 0 ]; then
-		ok "binds below folders made unreadable during apply: no mount left in the Trash, $back put back after the move (moved $(jq '.moved | length' "$r/out/res.json"))"
-	else
-		fail "binds below unreadable folders: $left mounts under the Trash, $back put back after the move"
-	fi
 	find "$r" -type d -exec chmod u+rwx {} + 2>/dev/null || true
 	unmount_under "$r/home"
+	if [ "$left" -ne 0 ] || [ ! -e "$r/home/.ssh/id_ed25519" ]; then
+		fail "binds below unreadable folders: $left mounts under the Trash"
+		return 1
+	fi
+	[ "$back" -gt 0 ] || return 2
+	ok "binds below folders made unreadable during apply: no mount left in the Trash, $back put back after the move (moved $(jq '.moved | length' "$r/out/res.json"); run $1)"
 }
-race_unreadable_check
+retry_race "binds below folders made unreadable during apply" race_unreadable_once
 
 # 4c. Wave 2 confirmation G3: KIPPLE_STATE_DIR on a bind mount of ~/.ssh
 #     (or of a folder inside it) mounted outside home is still warned about
