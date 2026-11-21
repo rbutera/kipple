@@ -636,3 +636,29 @@ func TestMountTableUnavailableCLI(t *testing.T) {
 		t.Fatal("the fixture changed")
 	}
 }
+
+// Wave 2 re-attack F6 through the CLI: when mount points can no longer be
+// read partway through, the error says how many items moved and names the
+// receipt, the JSON envelope carries the result, and it never claims that
+// nothing was moved.
+func TestStopPartwayCLI(t *testing.T) {
+	cleanFixture(t)
+	rt := testEnv(t)
+	calls := 0
+	rt.mounts = policy.StubMounts{OnRefresh: func() error {
+		calls++
+		if calls > 2 {
+			return fmt.Errorf("%w: mountinfo vanished", policy.ErrMountsUnavailable)
+		}
+		return nil
+	}}
+	code, out, _ := cliWith(t, rt, "clean", "--apply", "--json")
+	var env errorEnvelope
+	exactlyOneJSON(t, out, &env)
+	if code != exitError || env.Error.Code != codeMountsUnavailable || strings.Contains(env.Error.Message, "nothing was moved") || !strings.Contains(env.Error.Message, "after 1 moves") {
+		t.Fatalf("exit %d %+v", code, env)
+	}
+	if env.Result == nil || len(env.Result.Moved) != 1 || !strings.Contains(env.Error.Message, env.Result.ReceiptID) {
+		t.Fatalf("result %+v", env.Result)
+	}
+}

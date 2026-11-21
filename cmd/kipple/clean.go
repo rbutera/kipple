@@ -198,7 +198,7 @@ consent.`,
 			if err != nil {
 				ae := a.applyError(err)
 				var ce *cliError
-				if errors.As(ae, &ce) && errors.Is(err, apply.ErrReceipt) {
+				if errors.As(ae, &ce) && (errors.Is(err, apply.ErrReceipt) || errors.Is(err, apply.ErrStoppedPartway)) {
 					ce.result = &res
 					if !a.json {
 						_ = output.CleanResult(a.stderr, res)
@@ -234,11 +234,17 @@ const trashAccessHelp = "kipple cannot use your Trash folder: macOS lets only ap
 
 // applyError maps an error from apply.Run or apply.Restore to a CLI error.
 func (a *app) applyError(err error) error {
+	// "nothing was moved" only when that is true: a run that stopped
+	// partway says how many items moved and where the receipt is.
+	nothing := "; nothing was moved"
+	if errors.Is(err, apply.ErrStoppedPartway) {
+		nothing = ""
+	}
 	if errors.Is(err, apply.ErrTrashAccess) {
-		if runtime.GOOS != "darwin" {
+		if runtime.GOOS != "darwin" || nothing == "" {
 			// Not a Full Disk Access problem: the error says what is
 			// wrong with the Trash (a symlink, its mode, the file system).
-			return fail(codeTrashAccess, "%v; nothing was moved", err)
+			return fail(codeTrashAccess, "%v%s", err, nothing)
 		}
 		return fail(codeTrashAccess, "%s (%v)", trashAccessHelp, err)
 	}
@@ -246,7 +252,7 @@ func (a *app) applyError(err error) error {
 		return fail(codeReceipt, "%v", err)
 	}
 	if errors.Is(err, apply.ErrMountsUnavailable) {
-		return fail(codeMountsUnavailable, "%v; nothing was moved", err)
+		return fail(codeMountsUnavailable, "%v%s", err, nothing)
 	}
 	return fail(codeApply, "%v", err)
 }

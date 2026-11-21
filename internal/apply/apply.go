@@ -320,10 +320,19 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 			ErrReceipt, path, len(res.Moved), a.saveErr, rc.ID)
 	}
 	if a.stopErr != nil {
+		if n := len(res.Moved) + len(res.Displaced); n > 0 {
+			return res, fmt.Errorf("%w after %d moves (receipt %s, %s); kipple restore %s --apply puts them back: %w",
+				ErrStoppedPartway, n, rc.ID, path, rc.ID, a.stopErr)
+		}
 		return res, a.stopErr
 	}
 	return res, nil
 }
+
+// ErrStoppedPartway: the run stopped (mount points could no longer be
+// determined, the Trash became unusable) after some items had moved; the
+// error says how many and names the receipt, and the result lists them.
+var ErrStoppedPartway = errors.New("kipple stopped moving items")
 
 // ErrMountsUnavailable: mount points cannot be determined (Linux without
 // the statx mount-root attribute and without a readable mount table), so
@@ -640,28 +649,55 @@ func (a *applier) afterMoveCheck(f *policy.Fresh, it plan.Item, dir *os.File, mo
 	// Not a.ctx: once the item has moved, stopping the run must not stop
 	// its check (an interrupted walk would put it back for no reason).
 	res, err := sizes.MeasureDir(context.Background(), dir, sizes.Options{MountRoot: a.sess.MountRoot})
-	if err == nil && len(res.Mounts) == 0 && a.stopErr == nil {
-		return false
-	}
-	where := strings.Join(res.Mounts, ", ")
-	if where == "" {
-		where = "it could not be checked"
-	}
 	name := filepath.Base(moved.TrashPath)
-	if a.trashDir != nil && filepath.Dir(moved.TrashPath) == a.trashDir.Path() {
-		if berr := trash.MoveNoReplace(a.trashDir.Fd(), name, f.ParentFd, f.Name); berr == nil {
-			if a.info != nil {
-				if _, ierr := a.info.RemoveInfo(name, it.Path, moved.InfoIno); ierr != nil {
-					a.warn("%s: put back; its Trash info file was not removed: %v", it.Path, ierr)
-				}
-			}
-			_ = clearTag(int(dir.Fd()))
-			a.skip(it, plan.ReasonContainsMount, "a mount appeared inside the item while it was being moved ("+where+"); it was put back where it was")
-			return true
+	inTrash := a.trashDir != nil && filepath.Dir(moved.TrashPath) == a.trashDir.Path()
+	var why string
+	switch {
+	case len(res.Mounts) > 0:
+		why = "a mount appeared inside it (" + strings.Join(res.Mounts, ", ") + ")"
+	case err != nil || res.Status == sizes.StatusPartial:
+		// The check before the move refuses a partial walk, so a partial
+		// walk now means the item changed: it could hide a mount.
+		w := "it could not be walked"
+		if len(res.Warnings) > 0 {
+			w = res.Warnings[0]
+		} else if err != nil {
+			w = err.Error()
+		}
+		why = "it could not be checked completely after the move (" + w + ")"
+	case a.stopErr != nil:
+		why = "mount points could no longer be determined (" + a.stopErr.Error() + ")"
+	case inTrash:
+		// The Trash entry itself must not have become a mount point.
+		if mr, merr := a.sess.MountRoot(a.trashDir.Fd(), name, moved.Dev, moved.Ino); mr || merr != nil {
+			why = "its place in the Trash is a mount point, or could not be checked"
 		}
 	}
-	a.warn("%s: a mount appeared inside the item while it was being moved (%s) and it could not be put back; it is at %s. Do not empty the Trash until that mount is gone (unmount it first).", it.Path, where, moved.TrashPath)
-	a.skip(it, plan.ReasonContainsMount, "a mount appeared inside this item ("+where+") and it is in the Trash at "+moved.TrashPath+"; do not empty the Trash until it is unmounted")
+	if why == "" {
+		return false
+	}
+	if inTrash && entryIs(a.trashDir.Fd(), name, moved.Dev, moved.Ino) {
+		if berr := trash.MoveNoReplace(a.trashDir.Fd(), name, f.ParentFd, f.Name); berr == nil {
+			if entryIs(f.ParentFd, f.Name, moved.Dev, moved.Ino) {
+				if a.info != nil {
+					if _, ierr := a.info.RemoveInfo(name, it.Path, moved.InfoIno); ierr != nil {
+						a.warn("%s: put back; its Trash info file was not removed: %v", it.Path, ierr)
+					}
+				}
+				_ = clearTag(int(dir.Fd()))
+				a.skip(it, plan.ReasonContainsMount, why+" while it was being moved; it was put back where it was")
+				return true
+			}
+			// Something else was at the Trash name at that moment and
+			// came back instead: the item itself is still in the Trash
+			// somewhere, keeping its tag and info file.
+			a.warn("%s: %s while it was being moved; putting it back brought back a different object, so the item is still in the Trash (look for it near %s). Do not empty the Trash until you have checked it for mounts (findmnt -R ~/.local/share/Trash).", it.Path, why, moved.TrashPath)
+			a.skip(it, plan.ReasonContainsMount, why+"; a different object came back from the Trash, and the item is still in the Trash: do not empty the Trash until it is unmounted")
+			return false
+		}
+	}
+	a.warn("%s: %s while it was being moved, and it could not be put back; it is at %s. Do not empty the Trash until that mount is gone (findmnt -R ~/.local/share/Trash, then unmount it).", it.Path, why, moved.TrashPath)
+	a.skip(it, plan.ReasonContainsMount, why+"; it is in the Trash at "+moved.TrashPath+": do not empty the Trash until it is unmounted")
 	return false
 }
 

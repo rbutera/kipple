@@ -492,7 +492,9 @@ func (m Model) errorBody() string {
 		out = append(out, th.title.Render("kipple could not finish the scan."))
 	}
 	out = append(out, "")
-	if errors.Is(err, apply.ErrTrashAccess) && runtime.GOOS != "darwin" {
+	if errors.Is(err, apply.ErrStoppedPartway) {
+		out = append(out, wrapLines(th.text, output.SafeText(err.Error())+".", w)...)
+	} else if errors.Is(err, apply.ErrTrashAccess) && runtime.GOOS != "darwin" {
 		out = append(out, wrapLines(th.text, output.SafeText(err.Error())+"; nothing was moved.", w)...)
 	} else if errors.Is(err, apply.ErrTrashAccess) {
 		out = append(out, wrapLines(th.text, "kipple cannot use your Trash folder: macOS lets only apps with Full Disk Access open it, so nothing was moved. Grant Full Disk Access to your terminal (System Settings > Privacy & Security > Full Disk Access) and try again.", w)...)

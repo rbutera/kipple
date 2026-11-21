@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -640,5 +641,16 @@ func TestDoneViewNamesTheTrash(t *testing.T) {
 	}
 	if note := moverNote(plan.Result{Moved: []plan.MovedItem{{Mover: plan.MoverRename}}}); !strings.Contains(note, output.Here.TrashFolder) {
 		t.Errorf("rename note %q", note)
+	}
+}
+
+// Wave 2 re-attack F6 in the TUI: a run that stopped partway never says
+// nothing was moved.
+func TestStoppedPartwayErrorText(t *testing.T) {
+	m := Model{th: newTheme(lipgloss.NewRenderer(io.Discard), false), width: 100, height: 30}
+	m.outcome = Outcome{Applied: true, Err: fmt.Errorf("%w after 3 moves (receipt X, /r): %w", apply.ErrStoppedPartway, apply.ErrMountsUnavailable)}
+	body := m.errorBody()
+	if strings.Contains(body, "nothing was moved") || !strings.Contains(body, "after 3 moves") {
+		t.Fatalf("%s", body)
 	}
 }

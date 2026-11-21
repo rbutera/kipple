@@ -45,6 +45,17 @@ type StubMounts struct {
 	Err   error
 	// Failing makes the check of these identities fail with the error.
 	Failing map[FileIdentity]error
+	// OnRefresh, when set, answers Session.RefreshMounts (a snapshot
+	// oracle re-reading the mount table).
+	OnRefresh func() error
+}
+
+// Refresh implements the snapshot refresh for tests.
+func (s StubMounts) Refresh() error {
+	if s.OnRefresh != nil {
+		return s.OnRefresh()
+	}
+	return nil
 }
 
 // Available implements MountOracle.
