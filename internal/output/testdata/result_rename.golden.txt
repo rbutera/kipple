@@ -1,0 +1,6 @@
+Moved 1 item to the Trash (4.1 kB; emptying the Trash frees 4.1 kB).
+  moved    aaaaaaaaaaaa  /fx/home/.cache/pip/http
+      -> /fx/home/.Trash/http
+
+Receipt 20261121T100000Z-abc123 (/fx/state/receipts/20261121T100000Z-abc123.json).
+To put the items back: kipple restore 20261121T100000Z-abc123 --apply

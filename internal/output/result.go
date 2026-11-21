@@ -55,14 +55,33 @@ func CleanResult(w io.Writer, r plan.Result) error {
 			fmt.Fprintf(b, "  %s  taken from %s\n      -> %s\n", SafeText(d.ID), SafeText(d.Path), SafeText(d.TrashPath))
 		}
 	}
+	freedesktop := false
+	for _, m := range r.Moved {
+		freedesktop = freedesktop || m.Mover == plan.MoverFreedesktop
+	}
+	if freedesktop {
+		lx := PhrasesFor("linux")
+		fmt.Fprintf(b, "They are in %s.\n", lx.YourTrash)
+	}
 	writeWarnings(b, r.Warnings)
 	if r.ReceiptID != "" {
 		fmt.Fprintf(b, "\nReceipt %s (%s).\n", SafeText(r.ReceiptID), SafeText(r.ReceiptPath))
 		if len(r.Moved) > deleted || len(r.Displaced) > 0 {
 			fmt.Fprintf(b, "To put the items back: kipple restore %s --apply\n", SafeText(r.ReceiptID))
+			if freedesktop {
+				fmt.Fprintf(b, "%s puts an item back too.\n", capFirst(PhrasesFor("linux").OtherRestore))
+			}
 		}
 	}
 	return writeSafe(w, b)
+}
+
+// capFirst capitalises the first letter of s.
+func capFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // RestoreResult writes what kipple restore did, or would do in a dry run.

@@ -198,3 +198,45 @@ func TestPendingAndDisplacedCounts(t *testing.T) {
 		t.Fatalf("restore line: %q", b.String())
 	}
 }
+
+// Task 2.8: the CLI's human result names the Trash the items went to:
+// macOS's ~/.Trash wording is unchanged, and a freedesktop run (Linux)
+// names ~/.local/share/Trash, the file manager and kipple restore. Goldens
+// per mover in testdata/result_<mover>.golden.txt.
+func TestResultGoldenPerPlatform(t *testing.T) {
+	for _, mover := range []string{plan.MoverRename, plan.MoverFreedesktop} {
+		t.Run(mover, func(t *testing.T) {
+			trash := "/fx/home/.Trash"
+			if mover == plan.MoverFreedesktop {
+				trash = "/fx/home/.local/share/Trash/files"
+			}
+			r := plan.Result{Command: "clean", Home: "/fx/home", ReceiptID: "20261121T100000Z-abc123", ReceiptPath: "/fx/state/receipts/20261121T100000Z-abc123.json",
+				Moved: []plan.MovedItem{{ID: "aaaaaaaaaaaa", Path: "/fx/home/.cache/pip/http", TrashPath: trash + "/http", Bytes: 4096, ReclaimableBytes: 4096, Mover: mover}}}
+			var b strings.Builder
+			if err := CleanResult(&b, r); err != nil {
+				t.Fatal(err)
+			}
+			golden := filepath.Join("testdata", "result_"+mover+".golden.txt")
+			if *update {
+				if err := os.WriteFile(golden, []byte(b.String()), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if b.String() != string(want) {
+				t.Fatalf("got:\n%s\nwant:\n%s", b.String(), want)
+			}
+			got := b.String()
+			if mover == plan.MoverFreedesktop {
+				if !strings.Contains(got, "~/.local/share/Trash, visible in your file manager") || strings.Contains(got, "Finder") {
+					t.Fatalf("Linux result: %s", got)
+				}
+			} else if strings.Contains(got, "file manager") {
+				t.Fatalf("macOS result changed: %s", got)
+			}
+		})
+	}
+}

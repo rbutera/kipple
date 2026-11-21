@@ -624,3 +624,21 @@ func TestTerminalEscapesInTUI(t *testing.T) {
 		check("done", m.View())
 	}
 }
+
+// Task 2.8: the done view names the Trash the items went to; a freedesktop
+// run (Linux) names ~/.local/share/Trash, the file manager and kipple
+// restore, and never Finder.
+func TestDoneViewNamesTheTrash(t *testing.T) {
+	note := moverNote(plan.Result{Moved: []plan.MovedItem{{Mover: plan.MoverFreedesktop}}})
+	for _, want := range []string{"~/.local/share/Trash, visible in your file manager", "kipple restore", "Restore in your file manager's Trash"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("freedesktop note %q lacks %q", note, want)
+		}
+	}
+	if strings.Contains(note, "Finder") || strings.Contains(note, "~/.Trash") {
+		t.Errorf("freedesktop note %q names macOS", note)
+	}
+	if note := moverNote(plan.Result{Moved: []plan.MovedItem{{Mover: plan.MoverRename}}}); !strings.Contains(note, output.Here.TrashFolder) {
+		t.Errorf("rename note %q", note)
+	}
+}
