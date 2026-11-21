@@ -14,6 +14,7 @@ package homeguard
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 )
@@ -131,6 +132,9 @@ func RelateID(fsys FS, candidate, real string) (Relation, ID, error) {
 	}
 	for _, mp := range al.Inside {
 		id, ok, err := fsys.Stat(mp)
+		if errors.Is(err, fs.ErrPermission) {
+			continue // unreachable for this user, as below
+		}
 		if err != nil {
 			return Separate, c[0], fmt.Errorf("cannot identify %q: %w", mp, err)
 		}
@@ -142,6 +146,12 @@ func RelateID(fsys FS, candidate, real string) (Relation, ID, error) {
 	// (on the mount point's ".." chain) contains that part of home.
 	for _, mp := range append(append([]string(nil), al.Real...), al.Inside...) {
 		chain, err := fsys.Chain(mp, false)
+		if errors.Is(err, fs.ErrPermission) {
+			// A mount point this user cannot reach (under /root, say) is
+			// not reachable through the candidate either: any route the
+			// user can traverse into it is its own mount table entry.
+			continue
+		}
 		if err != nil {
 			return Separate, c[0], fmt.Errorf("cannot identify %q: %w", mp, err)
 		}

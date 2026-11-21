@@ -125,6 +125,39 @@ func TestRelateThroughBindMounts(t *testing.T) {
 			}
 		})
 	}
+	t.Run("A bind under a folder this user cannot enter is skipped", func(t *testing.T) {
+		locked := fsys
+		chain := fsys.Chain
+		locked.Chain = func(dir string, nofollow bool) ([]homeguard.ID, error) {
+			if dir == "/root/hid/x" {
+				return nil, os.ErrPermission
+			}
+			return chain(dir, nofollow)
+		}
+		stat := fsys.Stat
+		locked.Stat = func(p string) (homeguard.ID, bool, error) {
+			if p == "/root/hid/x" {
+				return homeguard.ID{}, false, os.ErrPermission
+			}
+			return stat(p)
+		}
+		locked.Aliases = func(string) (homeguard.Aliases, error) {
+			return homeguard.Aliases{Inside: []string{"/root/hid/x"}}, nil
+		}
+		if got, err := homeguard.Relate(locked, "/tmp/fx", "/home/me"); err != nil || got != homeguard.Separate {
+			t.Fatalf("got %v %v, want separate", got, err)
+		}
+		other := locked
+		other.Chain = func(dir string, nofollow bool) ([]homeguard.ID, error) {
+			if dir == "/root/hid/x" {
+				return nil, errors.New("I/O error")
+			}
+			return chain(dir, nofollow)
+		}
+		if _, err := homeguard.Relate(other, "/tmp/fx", "/home/me"); err == nil {
+			t.Fatal("any other failure must still refuse")
+		}
+	})
 	t.Run("mountinfo unreadable refuses", func(t *testing.T) {
 		bad := fsys
 		bad.Aliases = func(string) (homeguard.Aliases, error) { return homeguard.Aliases{}, os.ErrPermission }
