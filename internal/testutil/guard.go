@@ -88,11 +88,17 @@ func GuardRealHome(t testing.TB) {
 //
 //	func TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }
 //
-// It points KIPPLE_HOME and KIPPLE_STATE_DIR at a fresh empty sandbox (so code
-// that reads them never falls back to the real home), verifies the guard, runs
-// the tests and removes the sandbox. Tests that need content call NewHome,
-// which replaces both variables for that test.
+// It refuses to run anything as root (kipple refuses euid 0, and tests of
+// permission bits prove nothing as root), points KIPPLE_HOME and
+// KIPPLE_STATE_DIR at a fresh empty sandbox (so code that reads them never
+// falls back to the real home), verifies the guard, runs the tests and
+// removes the sandbox. Tests that need content call NewHome, which replaces
+// both variables for that test.
 func GuardedMain(m *testing.M) int {
+	if err := checkNotRoot(os.Geteuid()); err != nil {
+		fmt.Fprintln(os.Stderr, "testutil.GuardedMain:", err)
+		return 1
+	}
 	base, err := os.MkdirTemp("", "kipple-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "testutil.GuardedMain:", err)
@@ -131,6 +137,14 @@ func GuardedMain(m *testing.M) int {
 		return 1
 	}
 	return m.Run()
+}
+
+// checkNotRoot refuses the effective user ID 0, before any test runs.
+func checkNotRoot(euid int) error {
+	if euid == 0 {
+		return errors.New("refusing to run tests as root (effective UID 0): kipple refuses root, and permission tests prove nothing as root; run them as an unprivileged user")
+	}
+	return nil
 }
 
 // checkEnv fails closed: if the real home cannot be determined, nothing runs.

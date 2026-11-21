@@ -355,3 +355,19 @@ func TestContentChecksum(t *testing.T) {
 		t.Fatal("a content change was not detected")
 	}
 }
+
+// Test suite refuses root (specs/distribution): GuardedMain fails every
+// package before any test when the effective UID is 0, so this test only
+// ever runs unprivileged, and the refusal itself is checked directly.
+func TestSuiteIsNotRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Fatal("the test suite is running as root; GuardedMain must have refused it")
+	}
+	err := checkNotRoot(0)
+	if err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("checkNotRoot(0) = %v, want a refusal naming root", err)
+	}
+	if err := checkNotRoot(os.Geteuid()); err != nil {
+		t.Fatalf("checkNotRoot(%d) = %v", os.Geteuid(), err)
+	}
+}
