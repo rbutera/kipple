@@ -11,3 +11,5 @@
 .idea/
 .vscode/
 /checkhome
+/cmd/kipple/kipple
+/cmd/kipple-gui/kipple-gui
