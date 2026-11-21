@@ -23,8 +23,31 @@ import (
 // contents, so they use that catalogue on every host. The Linux catalogue
 // has its own tests (internal/rules, and the Linux scenario tests).
 func TestMain(m *testing.M) {
+	if ready := os.Getenv(fakeAgentEnv); ready != "" {
+		fakeAgent(ready)
+		return
+	}
 	rules.UseCatalogueOf(rules.PlatformDarwin)
 	os.Exit(testutil.GuardedMain(m))
+}
+
+// fakeAgentEnv makes this test binary, started under an agent's name, act
+// as that agent (see startFakeAgent): it runs no tests.
+const fakeAgentEnv = "KIPPLE_TEST_FAKE_AGENT_READY"
+
+// fakeAgent writes its working directory to the file ready, then stays
+// alive until it is killed (or for two minutes).
+func fakeAgent(ready string) {
+	fakeAgentSetup()
+	wd, err := os.Getwd()
+	if err != nil {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(ready, []byte(wd), 0o600); err != nil {
+		os.Exit(2)
+	}
+	time.Sleep(2 * time.Minute)
+	os.Exit(0)
 }
 
 var (

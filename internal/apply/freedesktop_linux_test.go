@@ -3,12 +3,14 @@
 package apply
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -386,38 +388,113 @@ func TestFreedesktopTag(t *testing.T) {
 }
 
 // Spec scenario "Claude Code open in project" with real processes: a
-// process named claude (a copy of sleep) with its working directory in the
-// project blocks the project's node_modules, read from /proc.
+// process named claude with its working directory in the project blocks
+// the project's node_modules, read from /proc. The fake agent is this test
+// binary copied as "claude" (a copy of sleep is a multi-call binary on some
+// systems and exits at once under another name); the test waits until
+// /proc shows it working in the project before applying.
 func TestClaudeCodeOpenInProjectLinux(t *testing.T) {
 	f := newFx(t, testutil.Spec{
 		Repos: []testutil.Repo{gitProject("dev/app")},
 		Files: []testutil.File{{Path: "dev/app/node_modules/x/i.js", Content: "x"}},
 	})
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin, err := os.ReadFile(sleep)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claude := filepath.Join(t.TempDir(), "claude")
-	if err := os.WriteFile(claude, bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(claude, "60")
-	cmd.Dir = f.abs("dev/app/src")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	src := f.abs("dev/app/src")
+	startFakeAgent(t, "claude", src, false)
 	p := f.scan(rules.LevelReview)
 	o := f.opts(p)
 	o.Procs = procs.New()
 	res := f.run(o)
 	nm := f.abs("dev/app/node_modules")
-	if s, ok := skipFor(res, nm); !ok || s.Reason != plan.SkipToolRunning || !exists(nm) || !strings.Contains(s.Detail, "an agent process is working in "+f.abs("dev/app/src")) {
+	if s, ok := skipFor(res, nm); !ok || s.Reason != plan.SkipToolRunning || !exists(nm) || !strings.Contains(s.Detail, "an agent process is working in "+src) {
 		t.Fatalf("skipped %+v moved %+v", res.Skipped, res.Moved)
+	}
+}
+
+// Ubuntu CI follow-up, fail closed with a real process: an agent of this
+// user that is not dumpable (prctl PR_SET_DUMPABLE 0) is listed, but the
+// kernel refuses to show its working directory. The review item is skipped
+// because kipple cannot tell where the agent works, never moved.
+func TestNonDumpableAgentInProjectLinux(t *testing.T) {
+	f := newFx(t, testutil.Spec{
+		Repos: []testutil.Repo{gitProject("dev/app")},
+		Files: []testutil.File{{Path: "dev/app/node_modules/x/i.js", Content: "x"}},
+	})
+	pid := startFakeAgent(t, "claude", f.abs("dev/app/src"), true)
+	if _, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil {
+		t.Fatal("the non-dumpable agent's working directory is readable: the scenario is not reproduced")
+	}
+	p := f.scan(rules.LevelReview)
+	o := f.opts(p)
+	o.Procs = procs.New()
+	res := f.run(o)
+	nm := f.abs("dev/app/node_modules")
+	if s, ok := skipFor(res, nm); !ok || s.Reason != plan.SkipToolRunning || !exists(nm) || !strings.Contains(s.Detail, "could not tell whether an agent") {
+		t.Fatalf("skipped %+v moved %+v", res.Skipped, res.Moved)
+	}
+}
+
+// startFakeAgent runs a copy of this test binary named name with its
+// working directory dir (not dumpable if nonDumpable), and returns its PID
+// once /proc lists a process of that name and, for a dumpable one, shows
+// it working in dir. If the process exits, or /proc never shows it, the
+// test fails with what /proc says about it.
+func startFakeAgent(t *testing.T, name, dir string, nonDumpable bool) int {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	agent := filepath.Join(tmp, name)
+	if err := os.WriteFile(agent, bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ready := filepath.Join(tmp, "ready")
+	var stderr bytes.Buffer
+	cmd := exec.Command(agent)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), fakeAgentEnv+"="+ready)
+	if nonDumpable {
+		cmd.Env = append(cmd.Env, fakeAgentNonDumpableEnv+"=1")
+	}
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		t.Logf("fake agent %s ended: %v", name, <-exited)
+	})
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		select {
+		case err := <-exited:
+			exited <- err
+			t.Fatalf("the fake agent %s exited before the test: %v; stderr: %s", name, err, stderr.String())
+		default:
+		}
+		wd, _ := os.ReadFile(ready)
+		names, nerr := procs.New().RunningNames(context.Background(), []string{name})
+		cwds, perr := procs.New().ProcessCwds(context.Background(), []string{name})
+		if string(wd) == dir && nerr == nil && names[name] && (nonDumpable || (perr == nil && slices.Contains(cwds, dir))) {
+			return cmd.Process.Pid
+		}
+		if time.Now().After(deadline) {
+			pid := cmd.Process.Pid
+			comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+			cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+			cwd, cerr := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+			status, _ := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+			t.Fatalf("/proc never showed %s working in %s: ready file %q; RunningNames %v, %v; ProcessCwds %v, %v; pid %d comm %q cmdline %q cwd %q (%v); status:\n%s",
+				name, dir, wd, names, nerr, cwds, perr, pid, comm, cmdline, cwd, cerr, status)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
