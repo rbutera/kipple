@@ -81,7 +81,7 @@ func TestLinuxCIJob(t *testing.T) {
 	// by design (sudo apt) runs between them.
 	t.Run("Runner home unchanged", func(t *testing.T) {
 		mustContain(t, "ci.yml linux job", job, "GOCACHE=${RUNNER_TEMP}", "GOMODCACHE=${RUNNER_TEMP}", "go telemetry off",
-			`-path "$HOME/runners/*/_diag"`)
+			`-path "$HOME/runners/*/_diag"`, `-path "$HOME/actions-runner/*/*/_diag"`)
 		if strings.Contains(job, "-name _diag") {
 			t.Error("the listings prune every _diag folder, not only the runner's")
 		}

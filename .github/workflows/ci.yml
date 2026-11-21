@@ -131,11 +131,11 @@ jobs:
       - name: Snapshot the runner home
         # Path, type, mode, owner, group, size, mtime, ctime and inode, as
         # test/linux/run.sh does. The workspace and $RUNNER_TEMP (under
-        # ~/work) and the runner's own logs (~/runners/<version>/_diag)
+        # ~/work) and the runner's own logs (~/runners/<version>/_diag or ~/actions-runner/cached/<version>/_diag)
         # change by design. Every step after this one up to "Runner home
         # unchanged", the job's last step, is covered.
         run: |
-          find ~ -xdev \( -path "$HOME/work" -o -path "$HOME/runners/*/_diag" \) -prune -o -printf '%p %y %m %U %G %s %T@ %C@ %i\n' |
+          find ~ -xdev \( -path "$HOME/work" -o -path "$HOME/runners/*/_diag" -o -path "$HOME/actions-runner/*/*/_diag" \) -prune -o -printf '%p %y %m %U %G %s %T@ %C@ %i\n' |
             LC_ALL=C sort >"${RUNNER_TEMP}/home-before.txt"
           wc -l <"${RUNNER_TEMP}/home-before.txt"
       - name: go vet
@@ -163,7 +163,7 @@ jobs:
         run: go test -count=1 -v -tags gui -run 'TestLinuxRefusal' ./cmd/kipple-gui/...
       - name: Runner home unchanged
         run: |
-          find ~ -xdev \( -path "$HOME/work" -o -path "$HOME/runners/*/_diag" \) -prune -o -printf '%p %y %m %U %G %s %T@ %C@ %i\n' |
+          find ~ -xdev \( -path "$HOME/work" -o -path "$HOME/runners/*/_diag" -o -path "$HOME/actions-runner/*/*/_diag" \) -prune -o -printf '%p %y %m %U %G %s %T@ %C@ %i\n' |
             LC_ALL=C sort >"${RUNNER_TEMP}/home-after.txt"
           if ! cmp -s "${RUNNER_TEMP}/home-before.txt" "${RUNNER_TEMP}/home-after.txt"; then
             echo "::error::the runner home folder changed during the tests (hard rule 1):"
