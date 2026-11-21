@@ -255,14 +255,14 @@ func TestFreedesktopRemoveInfo(t *testing.T) {
 	}, Symlinks: []testutil.Symlink{{Path: ".local/share/Trash/info/link.trashinfo", Target: "~/target"}}})
 	tr := fdTrash(t, home)
 	info := func(n string) string { return testutil.Abs(home, ".local/share/Trash/info/"+n+".trashinfo") }
-	if ok, err := tr.RemoveInfo("ok", "/home/me/.cache/ok"); !ok || err != nil {
+	if ok, err := tr.RemoveInfo("ok", "/home/me/.cache/ok", 0); !ok || err != nil {
 		t.Fatalf("matching info: %v %v", ok, err)
 	}
 	if _, err := os.Lstat(info("ok")); !os.IsNotExist(err) {
 		t.Fatal("matching info not removed")
 	}
 	for _, n := range []string{"other", "bad", "link"} {
-		ok, err := tr.RemoveInfo(n, "/home/me/.cache/"+n)
+		ok, err := tr.RemoveInfo(n, "/home/me/.cache/"+n, 0)
 		if ok || err == nil || !strings.Contains(err.Error(), "left in place") {
 			t.Errorf("%s: %v %v, want a refusal", n, ok, err)
 		}
@@ -270,7 +270,16 @@ func TestFreedesktopRemoveInfo(t *testing.T) {
 			t.Errorf("%s was removed", n)
 		}
 	}
-	if ok, err := tr.RemoveInfo("absent", "/x"); ok || err != nil {
+	// With an inode recorded, only that file is removed.
+	mine := info("other")
+	_, otherIno := identity(t, mine)
+	if ok, err := tr.RemoveInfo("other", "/home/me/.cache/elsewhere", otherIno+1); ok || err == nil || !exists(mine) {
+		t.Fatalf("an info file with another inode: %v %v", ok, err)
+	}
+	if ok, err := tr.RemoveInfo("other", "/home/me/.cache/elsewhere", otherIno); !ok || err != nil || exists(mine) {
+		t.Fatalf("the recorded inode: %v %v", ok, err)
+	}
+	if ok, err := tr.RemoveInfo("absent", "/x", 0); ok || err != nil {
 		t.Fatalf("absent info: %v %v", ok, err)
 	}
 }

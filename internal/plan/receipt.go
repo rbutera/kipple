@@ -154,6 +154,10 @@ type MovedItem struct {
 	// example something else arrived at the destination), so nothing that
 	// moved is ever unrecorded.
 	RestoreNote string `json:"restore_note,omitempty"`
+	// InfoIno is, on Linux, the inode of the .trashinfo file apply wrote
+	// for this entry in the freedesktop Trash; restore removes an info
+	// file only if it is that inode and describes Path.
+	InfoIno uint64 `json:"info_ino,omitempty" jsonschema:"description=Linux: the inode of the .trashinfo file kipple wrote for this Trash entry."`
 }
 
 // SkippedItem is a selected item that was not moved (or, in a restore

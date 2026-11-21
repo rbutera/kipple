@@ -248,7 +248,7 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			m.RestoredAt = &now
 			annotated = true
 			if info != nil && (rc.Mover == plan.MoverFreedesktop || m.Mover == plan.MoverFreedesktop) {
-				res.Warnings = append(res.Warnings, removeInfo(tr, info, m, recorded)...)
+				res.Warnings = append(res.Warnings, removeInfo(info, m, recorded)...)
 			}
 			res.Restored = append(res.Restored, plan.RestoredItem{Kind: kind[m], ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
 		case reason == "would":
@@ -335,24 +335,32 @@ func restoreOne(sess *policy.Session, tr *trash.DirTrasher, r rules.Rule, m *pla
 }
 
 // removeInfo removes the .trashinfo of an entry restore just put back
-// (freedesktop receipts): the one for the name the entry was found under,
-// and, when that differs from the name the receipt recorded, the recorded
-// name's too, but only while no entry of that name is in the Trash (so no
-// entry is ever left without its info file). trash.FreedesktopTrasher
-// removes a file only if its decoded Path is the item's original path; any
-// file it leaves is returned as a warning.
-func removeInfo(tr *trash.DirTrasher, info infoRemover, m *plan.MovedItem, recorded string) []string {
-	var warnings []string
+// (freedesktop receipts, design L5). With the info file's inode in the
+// receipt (InfoIno), it removes only that file, under the name the entry
+// was found under or the name apply gave it, and only if its decoded Path
+// is the item's original path. A receipt without it (written before the
+// inode was recorded) gets the design's rule: the info file of the name the
+// entry was found under, if its Path matches. Every info file left in
+// place that might have been the item's is reported as a warning.
+func removeInfo(info infoRemover, m *plan.MovedItem, recorded string) []string {
 	names := []string{filepath.Base(m.TrashPath)}
-	if recorded != names[0] && recorded != "." && recorded != "/" && !entryExists(tr.Fd(), recorded) {
+	if m.InfoIno != 0 && recorded != names[0] && recorded != "." && recorded != "/" {
 		names = append(names, recorded)
 	}
+	var errs []string
 	for _, n := range names {
-		if _, err := info.RemoveInfo(n, m.Path); err != nil {
-			warnings = append(warnings, m.Path+": restored; its Trash info file was not removed: "+err.Error())
+		removed, err := info.RemoveInfo(n, m.Path, m.InfoIno)
+		if removed {
+			return nil
+		}
+		if err != nil {
+			errs = append(errs, err.Error())
 		}
 	}
-	return warnings
+	if len(errs) == 0 {
+		return nil
+	}
+	return []string{m.Path + ": restored; its Trash info file was not removed: " + strings.Join(errs, "; ")}
 }
 
 // protectedSource refuses a Trash entry whose own name, or anything inside

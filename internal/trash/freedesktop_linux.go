@@ -160,14 +160,22 @@ func (t *FreedesktopTrasher) TrashExpect(parentFd int, name string, dev, ino uin
 // the parent), the item is moved back and ErrItemChanged is returned, so
 // no info file ever describes a location the item did not come from.
 func (t *FreedesktopTrasher) TrashExpectAt(parentFd int, name, parent string, dev, ino uint64) (string, error) {
+	dest, _, err := t.TrashExpectAtInfo(parentFd, name, parent, dev, ino)
+	return dest, err
+}
+
+// TrashExpectAtInfo is TrashExpectAt that also returns the inode of the
+// info file it wrote, for the receipt: restore later removes only that file.
+func (t *FreedesktopTrasher) TrashExpectAtInfo(parentFd int, name, parent string, dev, ino uint64) (string, uint64, error) {
 	if !strings.HasPrefix(parent, "/") {
-		return "", fmt.Errorf("trash: parent %q is not absolute", parent)
+		return "", 0, fmt.Errorf("trash: parent %q is not absolute", parent)
 	}
 	return t.trashAt(parentFd, name, parent, &[2]uint64{dev, ino})
 }
 
 func (t *FreedesktopTrasher) trash(parentFd int, name string, want *[2]uint64) (string, error) {
-	return t.trashAt(parentFd, name, "", want)
+	dest, _, err := t.trashAt(parentFd, name, "", want)
+	return dest, err
 }
 
 // parentAt checks that the descriptor parentFd is still at parent.
@@ -182,37 +190,37 @@ func parentAt(parentFd int, parent string) error {
 	return nil
 }
 
-func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[2]uint64) (string, error) {
+func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[2]uint64) (string, uint64, error) {
 	if !validName(name) {
-		return "", ErrInvalidName
+		return "", 0, ErrInvalidName
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := t.verify(); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var pst, ist unix.Stat_t
 	if err := fstat(parentFd, &pst); err != nil {
-		return "", fmt.Errorf("trash: parent of %s: %w", name, err)
+		return "", 0, fmt.Errorf("trash: parent of %s: %w", name, err)
 	}
 	if err := fstatat(parentFd, name, &ist); err != nil {
-		return "", fmt.Errorf("trash: %s: %w", name, err)
+		return "", 0, fmt.Errorf("trash: %s: %w", name, err)
 	}
 	if want != nil && (ist.Dev != want[0] || ist.Ino != want[1]) {
-		return "", ErrItemChanged
+		return "", 0, ErrItemChanged
 	}
 	if pst.Dev != t.files.dev || ist.Dev != t.files.dev {
-		return "", ErrDifferentDevice
+		return "", 0, ErrDifferentDevice
 	}
 	parent := planned
 	if parent == "" {
 		p, err := policy.DescriptorPath(parentFd)
 		if err != nil {
-			return "", fmt.Errorf("trash: the original location of %s: %w", name, err)
+			return "", 0, fmt.Errorf("trash: the original location of %s: %w", name, err)
 		}
 		parent = p
 	} else if err := parentAt(parentFd, parent); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	original := parent + "/" + name
 	if parent == "/" {
@@ -224,7 +232,7 @@ func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[
 	}
 	content, err := EncodeTrashInfo(original, now())
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	regular := ist.Mode&unix.S_IFMT == unix.S_IFREG
 	for i := 1; i < maxCollisions; i++ {
@@ -234,7 +242,7 @@ func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		if t.beforeRename != nil {
 			t.beforeRename(cand)
@@ -250,10 +258,11 @@ func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[
 				if errors.As(aerr, &de) {
 					// Something moved and stayed: keep its info file so
 					// a file manager can restore it too.
-					return de.Dest, aerr
+					de.InfoIno = info[1]
+					return de.Dest, info[1], aerr
 				}
 				t.removeOwn(cand, info)
-				return "", aerr
+				return "", 0, aerr
 			}
 			if planned != "" {
 				if perr := parentAt(parentFd, planned); perr != nil {
@@ -266,29 +275,30 @@ func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[
 						if fstatat(t.files.fd, cand, &got) == nil {
 							de.Dev, de.Ino, de.Size, de.Mtime, de.Known = got.Dev, got.Ino, got.Size, time.Unix(got.Mtim.Unix()).UTC(), true
 						}
-						return de.Dest, de
+						de.InfoIno = info[1]
+						return de.Dest, info[1], de
 					}
 					t.removeOwn(cand, info)
-					return "", perr
+					return "", 0, perr
 				}
 			}
-			return t.files.path + "/" + cand, nil
+			return t.files.path + "/" + cand, info[1], nil
 		case errors.Is(err, unix.EEXIST):
 			// An orphan in files/ with no info file: leave it alone.
 			t.removeOwn(cand, info)
 			continue
 		case errors.Is(err, unix.EXDEV):
 			t.removeOwn(cand, info)
-			return "", ErrDifferentDevice
+			return "", 0, ErrDifferentDevice
 		default:
 			t.removeOwn(cand, info)
 			if errors.Is(err, ErrNoReplaceUnsupported) {
-				return "", err
+				return "", 0, err
 			}
-			return "", fmt.Errorf("trash: move %s: %w", name, err)
+			return "", 0, fmt.Errorf("trash: move %s: %w", name, err)
 		}
 	}
-	return "", fmt.Errorf("trash: too many items named %q in %s", name, t.files.path)
+	return "", 0, fmt.Errorf("trash: too many items named %q in %s", name, t.files.path)
 }
 
 // reserve creates info/<cand>.trashinfo exclusively, writes content, and
@@ -346,11 +356,12 @@ func (t *FreedesktopTrasher) removeOwn(cand string, id [2]uint64) {
 
 // RemoveInfo removes info/<name>.trashinfo after restore moved files/<name>
 // back to original, but only if it is a regular file whose decoded Path is
-// original. It reports whether it removed one; no info file at all is
+// original and, when ino is not 0, whose inode is ino (the file apply
+// wrote, recorded in the receipt). It reports whether it removed one; no info file at all is
 // (false, nil). A file that is a symlink, not regular, unreadable, or
 // describes another location is left in place and returned as an error,
 // for restore to report as a warning.
-func (t *FreedesktopTrasher) RemoveInfo(name, original string) (bool, error) {
+func (t *FreedesktopTrasher) RemoveInfo(name, original string, ino uint64) (bool, error) {
 	if !validName(name) || !validName(name+infoSuffix) {
 		return false, ErrInvalidName
 	}
@@ -391,7 +402,10 @@ func (t *FreedesktopTrasher) RemoveInfo(name, original string) (bool, error) {
 		return false, fmt.Errorf("%s is not a valid Trash info file (%v); left in place", file, err)
 	}
 	if info.Path != original {
-		return false, fmt.Errorf("%s describes %s, not %s; left in place", file, strings.ToValidUTF8(info.Path, "�"), original)
+		return false, fmt.Errorf("%s describes %s, not %s; left in place", file, strings.ToValidUTF8(info.Path, "\uFFFD"), original)
+	}
+	if ino != 0 && st.Ino != ino {
+		return false, fmt.Errorf("%s is not the info file kipple wrote for this item; left in place", file)
 	}
 	var now unix.Stat_t
 	if err := fstatat(t.infoFd, name+infoSuffix, &now); err != nil || now.Dev != st.Dev || now.Ino != st.Ino {

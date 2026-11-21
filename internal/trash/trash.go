@@ -95,6 +95,9 @@ type DisplacedError struct {
 	Mtime    time.Time
 	Known    bool
 	Why      string
+	// InfoIno, for the freedesktop Trash, is the inode of the .trashinfo
+	// file kept for the displaced object (0 if none).
+	InfoIno uint64
 }
 
 func (e *DisplacedError) Error() string {

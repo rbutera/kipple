@@ -336,12 +336,6 @@ func tagDisplaced(path string, dev, ino uint64, tag []byte) error {
 	return setTag(fd, tag)
 }
 
-// entryExists reports whether the Trash folder open at trashFd has an
-// entry name (of any type, without following it).
-func entryExists(trashFd int, name string) bool {
-	var st unix.Stat_t
-	return fstatat(trashFd, name, &st) == nil
-}
 
 // taggedAt reports whether path, reached through the session's verified
 // walk to its parent (no symlink followed), is a regular file or directory

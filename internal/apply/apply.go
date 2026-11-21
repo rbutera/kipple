@@ -569,7 +569,7 @@ func (a *applier) one(t target) {
 			return
 		}
 	} else {
-		moved.TrashPath, err = a.trashTagged(f, it, dev, ino, dir)
+		moved.TrashPath, moved.InfoIno, err = a.trashTagged(f, it, dev, ino, dir)
 	}
 	if errors.Is(err, trash.ErrNoReplaceUnsupported) {
 		// Nothing moved; the file system cannot do a move that never
@@ -592,23 +592,23 @@ func (a *applier) one(t target) {
 // that object is recorded as displaced, with its Trash path and identity,
 // so the receipt lists every object that moved; the item is skipped. The
 // tag is removed again from an approved object that did not move.
-func (a *applier) trashTagged(f *policy.Fresh, it plan.Item, dev, ino uint64, dir *os.File) (string, error) {
+func (a *applier) trashTagged(f *policy.Fresh, it plan.Item, dev, ino uint64, dir *os.File) (string, uint64, error) {
 	tag := tagValue(a.receiptID, it.ID, a.o.Env.HomeIdentity)
 	tfd, closeTfd, err := tagTarget(f, dev, ino, dir)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer closeTfd()
 	if err := setTag(tfd, tag); err != nil {
-		return "", fmt.Errorf("could not tag the item for restore: %w", err)
+		return "", 0, fmt.Errorf("could not tag the item for restore: %w", err)
 	}
-	dest, err := a.trashItem(f, it, dev, ino, dir)
+	dest, infoIno, err := a.trashItem(f, it, dev, ino, dir)
 	if err == nil {
-		return dest, nil
+		return dest, infoIno, nil
 	}
 	var de *trash.DisplacedError
 	if errors.As(err, &de) {
-		d := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, TrashPath: de.Dest, Mover: a.moverName, MovedAt: a.now().UTC()}
+		d := plan.MovedItem{ID: it.ID, Rule: it.Rule, Path: it.Path, TrashPath: de.Dest, Mover: a.moverName, MovedAt: a.now().UTC(), InfoIno: de.InfoIno}
 		if de.Known {
 			d.Dev, d.Ino, d.Size, d.Mtime = de.Dev, de.Ino, de.Size, de.Mtime
 			if terr := tagDisplaced(de.Dest, de.Dev, de.Ino, tag); terr != nil {
@@ -622,19 +622,23 @@ func (a *applier) trashTagged(f *policy.Fresh, it plan.Item, dev, ino uint64, di
 	if cerr := clearTag(tfd); cerr != nil {
 		a.warn("%s: its restore tag could not be removed: %v", it.Path, cerr)
 	}
-	return "", err
+	return "", 0, err
 }
 
 // trashItem moves the item, adding owner write permission to a read-only
 // directory item for the duration of the rename when the system requires
 // it (macOS needs write permission on a directory to move it to another
 // folder; Go's module cache is read-only). Contents are never changed.
-func (a *applier) trashItem(f *policy.Fresh, it plan.Item, dev, ino uint64, dir *os.File) (string, error) {
+func (a *applier) trashItem(f *policy.Fresh, it plan.Item, dev, ino uint64, dir *os.File) (string, uint64, error) {
+	var infoIno uint64
 	move := func() (string, error) {
 		// A mover that records where the item came from (the freedesktop
-		// Trash's .trashinfo) gets the parent VerifyParent just confirmed.
+		// Trash's .trashinfo) gets the parent VerifyParent just confirmed,
+		// and reports the info file it wrote for the receipt.
 		if at, ok := a.mover.(atTrasher); ok {
-			return at.TrashExpectAt(f.ParentFd, f.Name, filepath.Dir(it.Path), dev, ino)
+			dest, ino2, err := at.TrashExpectAtInfo(f.ParentFd, f.Name, filepath.Dir(it.Path), dev, ino)
+			infoIno = ino2
+			return dest, err
 		}
 		return a.mover.TrashExpect(f.ParentFd, f.Name, dev, ino)
 	}
@@ -646,13 +650,13 @@ func (a *applier) trashItem(f *policy.Fresh, it plan.Item, dev, ino uint64, dir 
 			return e
 		})
 	}
-	return dest, err
+	return dest, infoIno, err
 }
 
 // atTrasher is a mover told the verified parent path of each item
 // (trash.FreedesktopTrasher).
 type atTrasher interface {
-	TrashExpectAt(parentFd int, name, parent string, dev, ino uint64) (string, error)
+	TrashExpectAtInfo(parentFd int, name, parent string, dev, ino uint64) (string, uint64, error)
 }
 
 // running checks the rule's owner and, for project artifacts, agent

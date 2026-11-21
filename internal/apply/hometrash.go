@@ -22,7 +22,7 @@ type homeTrash struct {
 
 // infoRemover is trash.FreedesktopTrasher's RemoveInfo.
 type infoRemover interface {
-	RemoveInfo(name, original string) (bool, error)
+	RemoveInfo(name, original string, ino uint64) (bool, error)
 }
 
 // Close releases the Trash's descriptors.

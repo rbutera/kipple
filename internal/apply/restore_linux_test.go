@@ -168,6 +168,71 @@ func TestFreedesktopRestore(t *testing.T) {
 			t.Fatal("the info file of the name it was found under was not removed")
 		}
 	})
+	t.Run("An info file kipple did not write is left", func(t *testing.T) {
+		f, e, m := pipCleaned(t)
+		if m.InfoIno == 0 {
+			t.Fatal("the receipt does not record the info file's inode")
+		}
+		info := f.abs(".local/share/Trash/info/http.trashinfo")
+		b, err := os.ReadFile(info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Same name, same Path, another file (another inode).
+		if err := os.Remove(info); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(info, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := f.restore(e, true, m.ID)
+		if len(res.Restored) != 1 || len(res.Warnings) != 1 || !exists(info) {
+			t.Fatalf("%+v", res)
+		}
+	})
+	t.Run("Entry renamed in the Trash: its own info file is still found", func(t *testing.T) {
+		f, e, m := pipCleaned(t)
+		if err := os.Rename(m.TrashPath, f.abs(".local/share/Trash/files/http renamed")); err != nil {
+			t.Fatal(err)
+		}
+		res := f.restore(e, true, m.ID)
+		if len(res.Restored) != 1 || len(res.Warnings) != 0 || !exists(m.Path) {
+			t.Fatalf("%+v", res)
+		}
+		if exists(f.abs(".local/share/Trash/info/http.trashinfo")) {
+			t.Fatal("the info file kipple wrote was not removed")
+		}
+	})
+	t.Run("Another entry's info under the recorded name is left", func(t *testing.T) {
+		f, e, m := pipCleaned(t)
+		// The entry is renamed and another item takes its old name, with
+		// an info file of the same Path (the cache came back and was
+		// trashed again from the file manager).
+		if err := os.Rename(m.TrashPath, f.abs(".local/share/Trash/files/http renamed")); err != nil {
+			t.Fatal(err)
+		}
+		info := f.abs(".local/share/Trash/info/http.trashinfo")
+		if err := os.Rename(info, f.abs(".local/share/Trash/info/http renamed.trashinfo")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(m.TrashPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		other := "[Trash Info]\nPath=" + m.Path + "\nDeletionDate=2026-11-21T10:30:00\n"
+		if err := os.WriteFile(info, []byte(other), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res := f.restore(e, true, m.ID)
+		if len(res.Restored) != 1 {
+			t.Fatalf("%+v", res)
+		}
+		if b, _ := os.ReadFile(info); string(b) != other {
+			t.Fatal("the other entry's info file was removed")
+		}
+		if exists(f.abs(".local/share/Trash/info/http renamed.trashinfo")) {
+			t.Fatal("the restored entry's own info file was left")
+		}
+	})
 	t.Run("Missing Trash is an error, never created", func(t *testing.T) {
 		f, e, _ := pipCleaned(t)
 		if err := os.Rename(f.abs(".local/share/Trash"), f.abs("moved-trash")); err != nil {

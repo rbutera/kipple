@@ -51,6 +51,5 @@ func entryIs(int, string, uint64, uint64) bool { return false }
 
 func tagDisplaced(string, uint64, uint64, []byte) error { return trash.ErrUnsupported }
 
-func entryExists(int, string) bool { return false }
 
 func taggedAt(*policy.Session, string, uint64, uint64, []byte) bool { return false }
