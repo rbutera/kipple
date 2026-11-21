@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,7 +12,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/sizes"
 	"github.com/rbutera/kipple/internal/testutil"
 	"github.com/rbutera/kipple/internal/tui"
 )
@@ -72,7 +75,18 @@ func TestTUILaunch(t *testing.T) {
 	if code != exitOK || strings.TrimSpace(out) != "Nothing was moved." {
 		t.Fatalf("exit %d output %q", code, out)
 	}
-	for _, want := range []string{"App caches", "App logs", "Go module cache", "Old installers in Downloads", "Ollama models", "65.5 kB", "4.1 kB", "~/Library/Caches/com.example.app", "~/Downloads/Old.dmg"} {
+	// Item sizes are what the file system allocated (APFS, tmpfs, ext4 and
+	// btrfs differ), so they come from measuring the fixture's items.
+	sizeOf := func(rel string) string {
+		t.Helper()
+		res, err := sizes.Measure(context.Background(), filepath.Join(home, rel), sizes.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return output.Bytes(res.AllocatedBytes)
+	}
+	for _, want := range []string{"App caches", "App logs", "Go module cache", "Old installers in Downloads", "Ollama models",
+		sizeOf("Library/Caches/com.example.app"), sizeOf("Downloads/Old.dmg"), "~/Library/Caches/com.example.app", "~/Downloads/Old.dmg"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view lacks %q:\n%s", want, view)
 		}

@@ -528,16 +528,36 @@ func TestTUIPolish(t *testing.T) {
 		f.cfg.HomeLabel = "KIPPLE_HOME …/fixture/home"
 		m := start(t, f, 80, 24)
 		view := m.View()
-		for _, want := range []string{"╭─ Items ", "╭─ Detail ", "KIPPLE_HOME …/fixture/home", "──── 1 · 65.5 kB"} {
+		// Sizes are what the file system allocated, which differs between
+		// APFS, tmpfs, ext4 and btrfs, so the expected strings come from
+		// the scan, not literals (red team H4: /tmp is ext4 on CI).
+		var app, listed, sel int64
+		nsel := 0
+		for _, it := range m.plan.Items {
+			listed += it.AllocatedBytes
+			if it.Path == testutil.Abs(f.home, "Library/Caches/com.example.app") {
+				app = it.AllocatedBytes
+			}
+			if it.Selected {
+				nsel++
+				sel += it.AllocatedBytes
+			}
+		}
+		if app == 0 || nsel != 2 {
+			t.Fatalf("fixture plan: app cache %d bytes, %d selected", app, nsel)
+		}
+		for _, want := range []string{"╭─ Items ", "╭─ Detail ", "KIPPLE_HOME …/fixture/home", "──── 1 · " + output.Bytes(app)} {
 			if !strings.Contains(view, want) {
 				t.Errorf("color=%v: review view lacks %q:\n%s", color, want, view)
 			}
 		}
-		bar := "[========--]"
+		w := barWidth(80)
+		on := int((sel*int64(w) + listed - 1) / listed)
+		bar := "[" + strings.Repeat("=", on) + strings.Repeat("-", w-on) + "]"
 		if color {
-			bar = "━━━━━━━━──"
+			bar = strings.Repeat("━", on) + strings.Repeat("─", w-on)
 		}
-		if !strings.Contains(view, "Selected 2 · 69.6 kB "+bar) {
+		if !strings.Contains(view, "Selected 2 · "+output.Bytes(sel)+" "+bar) {
 			t.Errorf("color=%v: no selection bar %q:\n%s", color, bar, view)
 		}
 		badge := map[bool]string{false: "(review)", true: " review "}[color]
@@ -546,7 +566,11 @@ func TestTUIPolish(t *testing.T) {
 		}
 		m = press(m, "a", "y")
 		done := m.View()
-		for _, want := range []string{"╭─ Receipt ", "Moved      2 items · 69.6 kB", "Undo       kipple restore " + m.Outcome().Result.ReceiptID + " --apply"} {
+		var moved int64
+		for _, mv := range m.Outcome().Result.Moved {
+			moved += mv.Bytes
+		}
+		for _, want := range []string{"╭─ Receipt ", "Moved      2 items · " + output.Bytes(moved), "Undo       kipple restore " + m.Outcome().Result.ReceiptID + " --apply"} {
 			if !strings.Contains(done, want) {
 				t.Errorf("color=%v: done view lacks %q:\n%s", color, want, done)
 			}

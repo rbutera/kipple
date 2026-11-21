@@ -399,38 +399,47 @@ nostatx_check() {
 }
 nostatx_check
 
-# 6. Wave 2 re-attack F3: the apply tests (cross-compiled next to the
-#    binary) pass when TMPDIR is on ext4 or btrfs, not only tmpfs (ext4
-#    reuses inode numbers at once; the file system's name differs).
-apply_tests_on() {
-	local fs="$1" img="/tmp/$1.img" mnt="/tmp/$1-tmp" lo out repo
+# 6. Wave 2 re-attack F3 and wave 3 red team H4: the tests that depend on
+#    the file system (cross-compiled next to the binary) pass when TMPDIR is
+#    on ext4 or btrfs, not only tmpfs: ext4 reuses inode numbers at once,
+#    the file system's name differs, and allocated sizes differ (the TUI
+#    and CLI tests show sizes; /tmp on the hosted CI runner is ext4).
+fs_test_pkgs="internal/apply internal/tui cmd/kipple"
+tests_on() {
+	local fs="$1" img="/tmp/$1.img" mnt="/tmp/$1-tmp" lo out repo pkg tests code
 	repo="$(cd "$(dirname "$0")/.." && pwd -P)"
-	local tests
-	tests="$(dirname "$K")/apply.test"
-	if [ ! -x "$tests" ]; then
-		fail "$tests is missing (make test-linux-mounts builds it)"
+	truncate -s 400M "$img"
+	if ! out="$("mkfs.$fs" -q "$img" 2>&1)"; then
+		fail "mkfs.$fs failed, so no tests ran on $fs: $out"
 		return
 	fi
-	truncate -s 400M "$img"
-	"mkfs.$fs" -q "$img" >/dev/null 2>&1
 	lo="$(losetup -f --show "$img")"
 	mkdir -p "$mnt"
 	mount "$lo" "$mnt"
 	chmod 1777 "$mnt"
-	set +e
-	# From the package folder in the read-only repository, as go test runs
-	# them (some tests read the docs at ../../docs).
-	out="$(cd "$repo/internal/apply" && setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
-		env HOME=/home/kipple PATH=/usr/bin:/bin TMPDIR="$mnt" "$tests" -test.count=1 2>&1)"
-	local code=$?
-	set -e
-	if [ "$code" -eq 0 ]; then ok "internal/apply tests pass with TMPDIR on $fs"; else fail "internal/apply tests with TMPDIR on $fs (exit $code):"; echo "$out" | grep -E -- "--- FAIL|_test.go" | head -20; fi
+	for pkg in $fs_test_pkgs; do
+		tests="$(dirname "$K")/$(basename "$pkg").test"
+		if [ ! -x "$tests" ]; then
+			fail "$tests is missing (make test-linux-mounts builds it)"
+			continue
+		fi
+		set +e
+		# From the package folder in the read-only repository, as go test
+		# runs them (some tests read the docs at ../../docs). Go is not in
+		# this container's PATH for the user, so a test that runs the go
+		# command must not be in these packages' file-system pass.
+		out="$(cd "$repo/$pkg" && setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
+			env HOME=/home/kipple PATH=/usr/bin:/bin TMPDIR="$mnt" "$tests" -test.count=1 2>&1)"
+		code=$?
+		set -e
+		if [ "$code" -eq 0 ]; then ok "$pkg tests pass with TMPDIR on $fs"; else fail "$pkg tests with TMPDIR on $fs (exit $code):"; echo "$out" | grep -E -- "--- FAIL|_test.go" | head -20; fi
+	done
 	umount "$mnt"
 	losetup -d "$lo"
 	rm -f "$img"
 }
-apply_tests_on ext4
-apply_tests_on btrfs
+tests_on ext4
+tests_on btrfs
 
 if [ "$failures" -ne 0 ]; then
 	echo "linux-mount-check: $failures failure(s)"
