@@ -3,9 +3,6 @@ package launch
 import (
 	"context"
 	"errors"
-	"github.com/rbutera/kipple/internal/policy"
-	"github.com/rbutera/kipple/internal/rules"
-	"github.com/rbutera/kipple/internal/scan"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,7 +13,10 @@ import (
 
 	"github.com/rbutera/kipple/internal/gitstate"
 	"github.com/rbutera/kipple/internal/homeguard"
+	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/receipt"
+	"github.com/rbutera/kipple/internal/rules"
+	"github.com/rbutera/kipple/internal/scan"
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
