@@ -674,6 +674,12 @@ func (a *applier) afterMoveCheck(f *policy.Fresh, it plan.Item, dir *os.File, mo
 			w = err.Error()
 		}
 		why = "it could not be checked completely after the move (" + w + ")"
+	case inTrash && !entryIs(a.trashDir.Fd(), name, moved.Dev, moved.Ino):
+		// The name in the Trash no longer leads to the item: something is
+		// mounted over it or was swapped in. The mountinfo fallback answers
+		// for the identity it is given, so this must be checked by name
+		// first; a foreign bind root never matches the item's identity.
+		why = "its place in the Trash now holds a different object (a mount over it, or a swap)"
 	case inTrash:
 		// The Trash entry itself must not have become a mount point.
 		if mr, merr := a.sess.MountRoot(a.trashDir.Fd(), name, moved.Dev, moved.Ino); mr || merr != nil {

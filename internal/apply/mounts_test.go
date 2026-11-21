@@ -219,6 +219,40 @@ func TestMoveBackChecksIdentity(t *testing.T) {
 	}
 }
 
+// Wave 2 confirmation G1: with the mountinfo fallback, a bind over the
+// Trash entry itself (another folder's identity at the entry's name) after
+// the post-move walk is caught by name, not missed because the oracle only
+// answers for the item's own identity. The item cannot be put back, so the
+// result and the receipt say so loudly.
+func TestForeignObjectAtTheTrashEntryIsLoud(t *testing.T) {
+	f := newFx(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Caches/foo/blob", Content: "x", MTime: old}, {Path: "other/SECRET", Content: "s"}}})
+	f.env.Mounts = policy.StubMounts{Roots: map[policy.FileIdentity]bool{}}
+	p := f.scan("")
+	it := itemByRel(t, p, "Library/Caches/foo")
+	o := f.opts(p)
+	o.Only = []string{it.ID}
+	var entry string
+	o.afterMove = func(plan.Item) {
+		tr := f.abs(testutil.TrashRel)
+		entry = filepath.Join(tr, trashEntries(t, f.home)[0])
+		// What a bind of another folder over the entry looks like by name.
+		for _, r := range [][2]string{{entry, filepath.Join(tr, "real")}, {f.abs("other"), entry}} {
+			if err := os.Rename(r[0], r[1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	res := f.run(o)
+	_, moved := movedFor(res, it.Path)
+	s, skipped := skipFor(res, it.Path)
+	if !moved || !skipped || s.Reason != plan.ReasonContainsMount || !strings.Contains(s.Detail, "different object") || !strings.Contains(s.Detail, "do not empty the Trash") || len(res.Warnings) == 0 || ExitCode(res) != ExitPartial {
+		t.Fatalf("%+v", res)
+	}
+	if !exists(filepath.Join(entry, "SECRET")) || exists(f.abs("Library/Caches/foo/SECRET")) {
+		t.Fatal("the foreign object was moved")
+	}
+}
+
 // Wave 2 re-attack F6: a run that stops partway (mount points can no longer
 // be read at item N) says how many items moved and names the receipt.
 func TestStopPartwayReportsMoves(t *testing.T) {
