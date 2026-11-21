@@ -56,10 +56,14 @@ func ctimeOf(st *unix.Stat_t) time.Time { return time.Unix(st.Ctim.Unix()) }
 //     recorded object and not protected before it is unlinked; a folder is
 //     removed only after its contents were deleted through its own held
 //     descriptor and only if its name still leads to that object.
+//   - Before deleting in each folder the mount table is read again
+//     (refresh), and every entry is checked against it before it is
+//     unlinked or entered: a mount made since the check pass stops the
+//     delete. A table that cannot be read stops it too.
 //
 // Any mismatch stops the delete. It returns what was removed, also on
 // error.
-func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc, mounted mountFunc, since time.Time) (removal, error) {
+func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc, mounted mountFunc, refresh refreshFunc, since time.Time) (removal, error) {
 	var rm removal
 	want := ident{dev, ino}
 	var st unix.Stat_t
@@ -97,7 +101,8 @@ func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc, mounted m
 	if afterPrecheck != nil {
 		afterPrecheck()
 	}
-	if err := deleteContents(fd, "", parent, dev, protect, ids, &rm, 0); err != nil {
+	w := deleteWalk{dev: dev, protect: protect, mounted: mounted, refresh: refresh, ids: ids, rm: &rm}
+	if err := w.contents(fd, "", parent, 0); err != nil {
 		return rm, err
 	}
 	if err := checkHeld(fd, "", want, parent, dev); err != nil {
@@ -203,18 +208,33 @@ func precheck(fd int, rel string, self, parent ident, dev uint64, protect protec
 	return nil
 }
 
-// deleteContents deletes everything inside the folder open at fd (item-
-// relative rel, inside parent) through held descriptors.
-func deleteContents(fd int, rel string, parent ident, dev uint64, protect protectFunc, ids map[string]ident, rm *removal, depth int) error {
+// deleteWalk is the delete pass of removeItem.
+type deleteWalk struct {
+	dev     uint64
+	protect protectFunc
+	mounted mountFunc
+	refresh refreshFunc
+	ids     map[string]ident
+	rm      *removal
+}
+
+// contents deletes everything inside the folder open at fd (item-relative
+// rel, inside parent) through held descriptors.
+func (w *deleteWalk) contents(fd int, rel string, parent ident, depth int) error {
 	if depth > maxRemoveDepth {
 		return fmt.Errorf("deeper than %d levels; stopped", maxRemoveDepth)
 	}
-	self, ok := ids[rel]
+	self, ok := w.ids[rel]
 	if !ok {
 		return &errChanged{rel: rel, why: "was not checked"}
 	}
-	if err := checkHeld(fd, rel, self, parent, dev); err != nil {
+	if err := checkHeld(fd, rel, self, parent, w.dev); err != nil {
 		return err
+	}
+	if w.refresh != nil {
+		if err := w.refresh(); err != nil {
+			return fmt.Errorf("%s: stopped: %w", relName(rel), err)
+		}
 	}
 	names, err := readNames(fd)
 	if err != nil {
@@ -230,21 +250,29 @@ func deleteContents(fd int, rel string, parent ident, dev uint64, protect protec
 			}
 			return err
 		}
-		if protect != nil {
-			if reason, hit := protect(child, n, uint64(st.Dev), uint64(st.Ino), policy.StatMode(uint32(st.Mode))); hit {
+		if w.protect != nil {
+			if reason, hit := w.protect(child, n, uint64(st.Dev), uint64(st.Ino), policy.StatMode(uint32(st.Mode))); hit {
 				return &errProtected{rel: child, reason: reason}
 			}
 		}
-		want, ok := ids[child]
+		want, ok := w.ids[child]
 		if !ok || identOf(&st) != want {
 			return &errChanged{rel: child, why: "is not the entry that was checked"}
+		}
+		if uint64(st.Dev) != w.dev {
+			return errCrossDevice
+		}
+		if w.mounted != nil {
+			if mr, err := w.mounted(fd, n, uint64(st.Dev), uint64(st.Ino)); mr || err != nil {
+				return errCrossDevice
+			}
 		}
 		if st.Mode&unix.S_IFMT != unix.S_IFDIR {
 			if err := unix.Unlinkat(fd, n, 0); err != nil {
 				return err
 			}
-			rm.count++
-			rm.bytes += st.Blocks * 512
+			w.rm.count++
+			w.rm.bytes += st.Blocks * 512
 			continue
 		}
 		if beforeDescend != nil {
@@ -257,9 +285,9 @@ func deleteContents(fd int, rel string, parent ident, dev uint64, protect protec
 		if afterDescend != nil {
 			afterDescend(child)
 		}
-		err = deleteContents(cfd, child, self, dev, protect, ids, rm, depth+1)
+		err = w.contents(cfd, child, self, depth+1)
 		if err == nil {
-			err = checkHeld(cfd, child, want, self, dev)
+			err = checkHeld(cfd, child, want, self, w.dev)
 		}
 		_ = unix.Close(cfd)
 		if err != nil {
@@ -272,10 +300,18 @@ func deleteContents(fd int, rel string, parent ident, dev uint64, protect protec
 		if err := unix.Unlinkat(fd, n, unix.AT_REMOVEDIR); err != nil {
 			return err
 		}
-		rm.count++
-		rm.bytes += st.Blocks * 512
+		w.rm.count++
+		w.rm.bytes += st.Blocks * 512
 	}
 	return nil
+}
+
+// relName names an item-relative folder for a message.
+func relName(rel string) string {
+	if rel == "" {
+		return "the item"
+	}
+	return rel
 }
 
 // readNames lists the directory open at fd through a fresh descriptor.

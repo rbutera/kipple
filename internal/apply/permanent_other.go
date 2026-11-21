@@ -9,6 +9,6 @@ import (
 	"github.com/rbutera/kipple/internal/trash"
 )
 
-func removeItem(*policy.Fresh, uint64, uint64, protectFunc, mountFunc, time.Time) (removal, error) {
+func removeItem(*policy.Fresh, uint64, uint64, protectFunc, mountFunc, refreshFunc, time.Time) (removal, error) {
 	return removal{}, trash.ErrUnsupported
 }

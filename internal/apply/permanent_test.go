@@ -3,10 +3,16 @@
 package apply
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/testutil"
 )
@@ -136,5 +142,64 @@ func TestPermanentFailingPartwayIsPartial(t *testing.T) {
 	}
 	if _, ok := movedFor(res, item); ok {
 		t.Fatal("a partial delete was reported as moved")
+	}
+}
+
+// Standards addendum C: with a snapshot mount oracle (mountinfo, statx
+// denied), the delete pass reads the mount table again before deleting in
+// each folder. A bind made over zzz after the check pass is in the table
+// only once it is read again; it must stop the delete before zzz is
+// entered.
+func TestPermanentRereadsMountsPerFolder(t *testing.T) {
+	f, o, item := permanentFx(t)
+	zzz := filepath.Join(item, "zzz")
+	fi, err := os.Lstat(zzz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	id := policy.FileIdentity{Dev: uint64(st.Dev), Ino: uint64(st.Ino)} //nolint:unconvert // Dev is int32 on darwin
+	roots := map[policy.FileIdentity]bool{}
+	armed, refreshes := false, 0
+	o.Env.Mounts = policy.StubMounts{Roots: roots, OnRefresh: func() error {
+		if armed {
+			refreshes++
+			roots[id] = true // the snapshot now sees the bind
+		}
+		return nil
+	}}
+	afterPrecheck = func() { armed = true }
+	defer func() { afterPrecheck = nil }()
+	res := f.run(o)
+	s, ok := skipFor(res, item)
+	if !ok || s.Reason != plan.ReasonContainsMount || !s.Partial || !exists(filepath.Join(zzz, "data")) || exists(filepath.Join(item, "aaa")) {
+		t.Fatalf("skipped %+v moved %+v", res.Skipped, res.Moved)
+	}
+	if refreshes < 2 { // the item folder, then aaa, before zzz
+		t.Fatalf("mount table read again %d times during the delete, want one per folder", refreshes)
+	}
+}
+
+// Standards addendum C: a mount table that cannot be read again during the
+// delete stops it before anything in that folder is unlinked, and stops the
+// run.
+func TestPermanentStopsWhenMountTableUnreadable(t *testing.T) {
+	_, o, item := permanentFx(t)
+	armed := false
+	o.Env.Mounts = policy.StubMounts{OnRefresh: func() error {
+		if armed {
+			return fmt.Errorf("%w: mountinfo vanished", policy.ErrMountsUnavailable)
+		}
+		return nil
+	}}
+	afterPrecheck = func() { armed = true }
+	defer func() { afterPrecheck = nil }()
+	res, err := Run(context.Background(), o)
+	if !errors.Is(err, policy.ErrMountsUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	s, ok := skipFor(res, item)
+	if !ok || s.Reason != plan.ReasonContainsMount || !exists(filepath.Join(item, "aaa", "blob")) || !exists(filepath.Join(item, "zzz", "data")) {
+		t.Fatalf("skipped %+v moved %+v", res.Skipped, res.Moved)
 	}
 }

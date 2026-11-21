@@ -40,3 +40,9 @@ func (e *errChanged) Error() string {
 // (a same-device bind mount on Linux), which a permanent delete must not
 // cross.
 type mountFunc func(dirfd int, name string, dev, ino uint64) (bool, error)
+
+// refreshFunc is policy.Session.RefreshMounts: it reads the mount table
+// again where the mount oracle works from a snapshot (/proc/self/mountinfo
+// when statx is denied). The permanent delete calls it before deleting in
+// each folder, so a mount made after the check pass is still seen.
+type refreshFunc func() error

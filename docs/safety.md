@@ -530,7 +530,10 @@ implementation exists behind the `kipple_permanent` build tag and is
 tested there, but it still checks an entry by name and then removes it by
 name, and a program swapping names at exactly that moment could make it
 delete something else (the red-team review won that race once in 60
-contended runs). It ships when that gap is closed.
+contended runs). It ships when that gap is closed. On Linux, where kipple
+reads the mount table instead of asking the kernel, that build reads it
+again before deleting in each folder and stops at any mount it finds, or
+when the table cannot be read.
 
 ## Roadmap
 

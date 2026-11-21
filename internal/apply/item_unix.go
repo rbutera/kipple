@@ -106,7 +106,7 @@ func classify(err error) string {
 		return plan.SkipIdentityChanged
 	case errors.As(err, new(*errRestoreArrived)):
 		return plan.SkipTrashItemMismatch
-	case errors.Is(err, errCrossDevice):
+	case errors.Is(err, errCrossDevice), errors.Is(err, policy.ErrMountsUnavailable):
 		return plan.ReasonContainsMount
 	case errors.Is(err, trash.ErrDifferentDevice), errors.Is(err, unix.EXDEV):
 		return plan.SkipDifferentDevice

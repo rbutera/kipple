@@ -596,8 +596,13 @@ func (a *applier) one(t target) {
 	if a.o.Permanent {
 		g := a.sess.Guard(r, it.Path)
 		var rm removal
-		rm, err = removeItem(f, dev, ino, g.CheckMode, a.sess.MountRoot, since)
+		rm, err = removeItem(f, dev, ino, g.CheckMode, a.sess.MountRoot, a.sess.RefreshMounts, since)
 		moved.Permanent = true
+		if errors.Is(err, policy.ErrMountsUnavailable) {
+			// The mount table could not be read again mid-delete: no later
+			// item can be checked either.
+			a.stopErr = fmt.Errorf("apply: %w", err)
+		}
 		if err != nil && rm.count > 0 {
 			a.res.Skipped = append(a.res.Skipped, plan.SkippedItem{
 				ID: it.ID, Rule: it.Rule, Path: it.Path, Reason: classify(err),
