@@ -205,6 +205,101 @@ btrfs_check() {
 }
 btrfs_check
 
+# 4 and 5 build many-item fixtures: <root>/home with .ssh and N aged items
+# .cache/cNNN/{blob,m/}, and a Trash.
+many_fixture() {
+	local root="$1" n="$2" i
+	mkfile "$root/home/.ssh/id_ed25519" "private key"
+	mkdir -p "$root/home/.local/share/Trash/files" "$root/home/.local/share/Trash/info" "$root/state" "$root/out"
+	for i in $(seq -w 1 "$n"); do
+		mkfile "$root/home/.cache/c$i/blob" "z"
+		mkdir -p "$root/home/.cache/c$i/m"
+	done
+	chmod 700 "$root/home/.ssh" "$root/home/.local/share/Trash" "$root/home/.local/share/Trash/files" "$root/home/.local/share/Trash/info"
+	chown -R 1000:1000 "$root"
+	find "$root/home" -exec touch -h -d "$old" {} +
+}
+mounts_under() { awk '{print $5}' /proc/self/mountinfo | grep -c "^$1" || true; }
+unmount_under() {
+	local m
+	for m in $(awk '{print $5}' /proc/self/mountinfo | grep "^$1" | sort -r || true); do umount -l "$m"; done
+}
+gcc -O2 -o /tmp/flip test/linux/flip.c
+gcc -O2 -o /tmp/nostatx test/linux/nostatx.c
+user_in() {
+	local root="$1"
+	shift
+	setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
+		env HOME=/home/kipple PATH=/usr/bin:/bin KIPPLE_HOME="$root/home" KIPPLE_STATE_DIR="$root/state" "$@"
+}
+
+# 4. Wave 2 red-team R1: bind mounts of .ssh flip on and off inside every
+#    item while clean --apply runs. A bind that rides into the Trash with an
+#    item must be found after the rename and the item put back: no mount
+#    may be left under the Trash.
+race_check() {
+	local r=/tmp/race n=150 i targets="" moved skipped left
+	many_fixture "$r" "$n"
+	user_in "$r" "$K" scan --json >"$r/out/plan.json"
+	for i in $(seq -w 1 "$n"); do targets="$targets $r/home/.cache/c$i/m"; done
+	rm -f /tmp/flipstop
+	# shellcheck disable=SC2086
+	/tmp/flip 60 "$r/home/.ssh" $targets 2>"$r/out/flip.err" &
+	local fp=$!
+	sleep 0.2
+	set +e
+	user_in "$r" "$K" clean --apply --json --plan "$r/out/plan.json" >"$r/out/res.json" 2>"$r/out/res.err"
+	set -e
+	touch /tmp/flipstop
+	wait "$fp" || true
+	rm -f /tmp/flipstop
+	left="$(mounts_under "$r/home/.local/share/Trash")"
+	moved="$(jq '.moved | length' "$r/out/res.json")"
+	skipped="$(jq -r '[.skipped[]?.reason] | group_by(.) | map("\(.[0])=\(length)") | join(" ")' "$r/out/res.json")"
+	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ]; then
+		ok "binds flipping during apply: no mount left in the Trash (moved $moved; skipped $skipped)"
+	else
+		fail "binds flipping during apply: $left mounts under the Trash (moved $moved; skipped $skipped)"
+	fi
+	unmount_under "$r/home"
+}
+race_check
+
+# 5. Wave 2 red-team R3: with statx denied (kernels before 5.8), kipple
+#    falls back to /proc/self/mountinfo. A bind present at scan is
+#    contains_mount, and binds made while clean --apply runs must be seen
+#    (the table is read again before each item and after each move).
+nostatx_check() {
+	local r=/tmp/nostatx-fx n=400 i mounted=0 left
+	many_fixture "$r" "$n"
+	mkdir -p "$r/p"
+	for i in $(seq -w 1 "$n"); do mkfile "$r/p/$i/thesis.tex" "gold"; done
+	chown -R 1000:1000 "$r/p"
+	find "$r/p" -exec touch -h -d "$old" {} +
+	mount --bind "$r/p/001" "$r/home/.cache/c001/m"
+	/tmp/nostatx setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
+		env HOME=/home/kipple PATH=/usr/bin:/bin KIPPLE_HOME="$r/home" KIPPLE_STATE_DIR="$r/state" "$K" scan --json >"$r/out/plan.json"
+	case "$(jq -r --arg p "$r/home/.cache/c001" '[.items[] | select(.path == $p) | .reasons[]] | join(",")' "$r/out/plan.json")" in
+	*contains_mount*) ok "statx denied: a bind present at scan is contains_mount (mountinfo fallback)" ;;
+	*) fail "statx denied: the bind in c001 was not seen" ;;
+	esac
+	(/tmp/nostatx setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
+		env HOME=/home/kipple PATH=/usr/bin:/bin KIPPLE_HOME="$r/home" KIPPLE_STATE_DIR="$r/state" \
+		"$K" clean --apply --json --plan "$r/out/plan.json" >"$r/out/res.json" 2>"$r/out/res.err") &
+	local kp=$!
+	sleep 0.1
+	for i in $(seq -w 200 "$n"); do mount --bind "$r/p/$i" "$r/home/.cache/c$i/m" 2>/dev/null && mounted=$((mounted + 1)); done
+	wait "$kp" || true
+	left="$(mounts_under "$r/home/.local/share/Trash")"
+	if [ "$left" -eq 0 ]; then
+		ok "statx denied, $mounted binds made during apply: none in the Trash (moved $(jq '.moved | length' "$r/out/res.json"), contains_mount $(jq '[.skipped[]? | select(.reason == "contains_mount")] | length' "$r/out/res.json"))"
+	else
+		fail "statx denied: $left binds made during apply are under the Trash"
+	fi
+	unmount_under "$r/home"
+}
+nostatx_check
+
 if [ "$failures" -ne 0 ]; then
 	echo "linux-mount-check: $failures failure(s)"
 	exit 1

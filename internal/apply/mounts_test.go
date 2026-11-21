@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rbutera/kipple/internal/plan"
@@ -90,4 +91,63 @@ func TestMountTableUnavailable(t *testing.T) {
 	if es, _ := f.store.List(); len(es) != 0 {
 		t.Fatal("a receipt was written")
 	}
+}
+
+// Wave 2 red-team R1: a mount made inside an item after its last check
+// rides into the Trash with it. The post-move check finds it and puts the
+// item back (contains_mount); if that cannot happen, the item is recorded
+// as moved and skipped with a detail saying not to empty the Trash.
+func TestMountAppearsDuringTheMove(t *testing.T) {
+	setup := func(t *testing.T) (*fx, plan.Item, map[policy.FileIdentity]bool) {
+		f := newFx(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Caches/foo/m/x", Content: "x", MTime: old}, {Path: "Library/Caches/foo/blob", Content: "x", MTime: old}}})
+		roots := map[policy.FileIdentity]bool{}
+		f.env.Mounts = policy.StubMounts{Roots: roots}
+		p := f.scan("")
+		return f, itemByRel(t, p, "Library/Caches/foo"), roots
+	}
+	t.Run("put back", func(t *testing.T) {
+		f, it, roots := setup(t)
+		o := f.opts(f.scan(""))
+		o.Only = []string{it.ID}
+		m := fileIdentity(t, f.abs("Library/Caches/foo/m"))
+		o.afterMove = func(plan.Item) { roots[m] = true }
+		res := f.run(o)
+		s, ok := skipFor(res, it.Path)
+		if !ok || s.Reason != plan.ReasonContainsMount || len(res.Moved) != 0 || !exists(it.Path) || !strings.Contains(s.Detail, "put back") {
+			t.Fatalf("%+v", res)
+		}
+		if n := trashEntries(t, f.home); len(n) != 0 {
+			t.Fatalf("left in the Trash: %v", n)
+		}
+		if info := f.abs(".local/share/Trash/info"); exists(info) {
+			if es, _ := os.ReadDir(info); len(es) != 0 {
+				t.Fatalf("info files left: %v", es)
+			}
+		}
+	})
+	t.Run("cannot be put back", func(t *testing.T) {
+		f, it, roots := setup(t)
+		o := f.opts(f.scan(""))
+		o.Only = []string{it.ID}
+		m := fileIdentity(t, f.abs("Library/Caches/foo/m"))
+		o.afterMove = func(plan.Item) {
+			roots[m] = true
+			if err := os.Mkdir(it.Path, 0o755); err != nil { // something took the name
+				t.Fatal(err)
+			}
+		}
+		res := f.run(o)
+		mv, moved := movedFor(res, it.Path)
+		s, skipped := skipFor(res, it.Path)
+		if !moved || !skipped || s.Reason != plan.ReasonContainsMount || !strings.Contains(s.Detail, "do not empty the Trash") || len(res.Warnings) == 0 || ExitCode(res) != ExitPartial {
+			t.Fatalf("%+v", res)
+		}
+		if !exists(mv.TrashPath) {
+			t.Fatal("the item is not where the result says")
+		}
+		e, err := f.store.Load(res.ReceiptID)
+		if err != nil || len(e.Receipt.Moved) != 1 || len(e.Receipt.Skipped) != 1 || !strings.Contains(e.Receipt.Skipped[0].Detail, "do not empty the Trash") {
+			t.Fatalf("receipt %+v %v", e.Receipt, err)
+		}
+	})
 }

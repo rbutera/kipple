@@ -62,6 +62,7 @@ import (
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/scan"
+	"github.com/rbutera/kipple/internal/sizes"
 	"github.com/rbutera/kipple/internal/trash"
 )
 
@@ -139,6 +140,9 @@ type Options struct {
 	// beforeMove, in tests, runs after every check and immediately before
 	// the parent re-check and the move.
 	beforeMove func(plan.Item)
+	// afterMove, in tests, runs after an item was moved and before the
+	// post-move mount check.
+	afterMove func(plan.Item)
 	// openTrash, in tests, replaces opening the home Trash.
 	openTrash func() (*homeTrash, error)
 	// SaveReceipt, when set, replaces Receipts.Save. Tests use it to fail
@@ -178,8 +182,14 @@ type applier struct {
 	// saveErr is the first failure to save the receipt; no move follows it.
 	saveErr error
 	// stopErr stops the run: the Trash turned out to be unusable at the
-	// first move (no RENAME_NOREPLACE). Nothing moves after it.
+	// first move (no RENAME_NOREPLACE), or mount points could no longer be
+	// determined. Nothing moves after it.
 	stopErr error
+	// trashDir is the folder items land in (nil for the NSFileManager
+	// mover), for putting an item back after the post-move check; info
+	// removes its .trashinfo then (freedesktop Trash only).
+	trashDir *trash.DirTrasher
+	info     infoRemover
 }
 
 // Run executes o.Plan and returns the result. It returns an error, having
@@ -227,6 +237,7 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		a.moverName = plan.MoverNone
 	case o.Trash != nil:
 		a.mover, a.moverName, trashDir = o.Trash, plan.MoverRename, o.Trash.Path()
+		a.trashDir = o.Trash
 	default:
 		open := o.openTrash
 		if open == nil {
@@ -239,6 +250,7 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		case err == nil:
 			defer func() { _ = tr.Close() }()
 			a.mover, a.moverName, trashDir = tr.mover, tr.name, tr.dir.Path()
+			a.trashDir, a.info = tr.dir, tr.info
 		case finderFallback && isPermission(err) && o.Finder != nil:
 			ft, ferr := o.Finder()
 			if ferr != nil {
@@ -282,7 +294,7 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 			continue
 		}
 		if a.stopErr != nil {
-			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the Trash cannot be used")
+			a.skip(t.item, plan.SkipMoveFailed, "not attempted: "+a.stopErr.Error())
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -489,6 +501,14 @@ func rootFor(p plan.Plan, it plan.Item) (plan.RootIdentity, bool) {
 // one runs the move-time checks for t and moves it, recording the outcome.
 func (a *applier) one(t target) {
 	it, r := t.item, t.rule
+	// A snapshot of the mount table (kernels without the statx mount-root
+	// attribute) is read again before each item, so a mount made during
+	// the run is seen; if it can no longer be read, nothing else moves.
+	if err := a.sess.RefreshMounts(); err != nil {
+		a.stopErr = fmt.Errorf("apply: %w", err)
+		a.skip(it, plan.ReasonContainsMount, err.Error())
+		return
+	}
 	f, d := a.sess.AuthorizeFresh(r, it.Path)
 	if !d.Allowed {
 		if d.Reason == policy.ReasonPermissionDenied {
@@ -592,7 +612,55 @@ func (a *applier) one(t target) {
 		return
 	}
 	moved.MovedAt = a.now().UTC()
+	if dir != nil && !a.o.Permanent {
+		if putBack := a.afterMoveCheck(f, it, dir, &moved); putBack {
+			return
+		}
+	}
 	a.res.Moved = append(a.res.Moved, moved)
+}
+
+// afterMoveCheck walks a directory item again through its held descriptor
+// once it is in the Trash. A mount made inside it after the last check (a
+// bind mount races the rename) would otherwise sit in the Trash, and
+// emptying the Trash would follow it into the mounted folder. If it finds a
+// mount, it renames the item back to where it was (never replacing
+// anything), removes its .trashinfo and tag, skips it with contains_mount,
+// and returns true. If the item cannot be put back, it stays recorded as
+// moved, and is also skipped with contains_mount and a detail saying not to
+// empty the Trash until the mount is gone, so the result and the receipt
+// both say so; it returns false.
+func (a *applier) afterMoveCheck(f *policy.Fresh, it plan.Item, dir *os.File, moved *plan.MovedItem) bool {
+	if a.o.afterMove != nil {
+		a.o.afterMove(it)
+	}
+	if err := a.sess.RefreshMounts(); err != nil {
+		a.stopErr = fmt.Errorf("apply: %w", err)
+	}
+	res, err := sizes.MeasureDir(a.ctx, dir, sizes.Options{MountRoot: a.sess.MountRoot})
+	if err == nil && len(res.Mounts) == 0 && a.stopErr == nil {
+		return false
+	}
+	where := strings.Join(res.Mounts, ", ")
+	if where == "" {
+		where = "it could not be checked"
+	}
+	name := filepath.Base(moved.TrashPath)
+	if a.trashDir != nil && filepath.Dir(moved.TrashPath) == a.trashDir.Path() {
+		if berr := trash.MoveNoReplace(a.trashDir.Fd(), name, f.ParentFd, f.Name); berr == nil {
+			if a.info != nil {
+				if _, ierr := a.info.RemoveInfo(name, it.Path, moved.InfoIno); ierr != nil {
+					a.warn("%s: put back; its Trash info file was not removed: %v", it.Path, ierr)
+				}
+			}
+			_ = clearTag(int(dir.Fd()))
+			a.skip(it, plan.ReasonContainsMount, "a mount appeared inside the item while it was being moved ("+where+"); it was put back where it was")
+			return true
+		}
+	}
+	a.warn("%s: a mount appeared inside the item while it was being moved (%s) and it could not be put back; it is at %s. Do not empty the Trash until that mount is gone (unmount it first).", it.Path, where, moved.TrashPath)
+	a.skip(it, plan.ReasonContainsMount, "a mount appeared inside this item ("+where+") and it is in the Trash at "+moved.TrashPath+"; do not empty the Trash until it is unmounted")
+	return false
 }
 
 // trashTagged tags the approved object (tagValue, required by restore),
