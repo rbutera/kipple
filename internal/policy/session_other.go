@@ -80,3 +80,11 @@ func (s *Session) AuthorizeDestination(rule Rule, path string, _ fs.FileMode) (*
 func (s *Session) OpenUnderHome(rel string) (*os.File, error) {
 	return nil, &RefusedError{Path: rel, Reason: ReasonDifferentDevice, Err: errors.New("unsupported platform")}
 }
+
+// MountsErr: nothing is supported here.
+func (s *Session) MountsErr() error { return ErrMountsUnavailable }
+
+// MountRoot: unknown here.
+func (s *Session) MountRoot(int, string, uint64, uint64) (bool, error) {
+	return false, ErrMountsUnavailable
+}

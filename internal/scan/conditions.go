@@ -147,7 +147,7 @@ func (c *conditions) projectIdle(project string, days int) bool {
 			}
 			return c.hasRegularFile(parent, ms)
 		}
-		res, err := sizes.MeasureDir(c.ctx, e.Dir, sizes.Options{SkipDir: skip})
+		res, err := sizes.MeasureDir(c.ctx, e.Dir, sizes.Options{SkipDir: skip, MountRoot: c.sess.MountRoot})
 		_ = e.Dir.Close()
 		// An incomplete walk cannot prove the project idle.
 		idle = err == nil && res.Status == sizes.StatusComplete &&
@@ -200,7 +200,7 @@ func guardOptions(sess *policy.Session, r rules.Rule, item string) sizes.Options
 	return sizes.Options{ProtectedMode: func(rel, name string, dev, ino uint64, mode fs.FileMode) bool {
 		_, hit := g.CheckMode(rel, name, dev, ino, mode)
 		return hit
-	}}
+	}, MountRoot: sess.MountRoot}
 }
 
 // Checker re-evaluates an item's conditions the way a scan does: it

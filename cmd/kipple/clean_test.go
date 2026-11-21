@@ -16,6 +16,7 @@ import (
 	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
+	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/testutil"
 )
@@ -608,5 +609,30 @@ func TestRestoreRefusesASymlinkedReceiptsFolder(t *testing.T) {
 	}
 	if _, err := os.Lstat(res.Moved[0].Path); !os.IsNotExist(err) {
 		t.Fatal("something was restored")
+	}
+}
+
+// Spec scenario "Mount table unavailable" through the CLI: scan warns and
+// marks every item contains_mount; clean --apply exits 1 with error code
+// mounts_unavailable and the fixture is unchanged.
+func TestMountTableUnavailableCLI(t *testing.T) {
+	home := cleanFixture(t)
+	before := testutil.Checksum(t, home)
+	rt := testEnv(t)
+	rt.mounts = policy.StubMounts{Err: policy.ErrMountsUnavailable}
+	code, out, _ := cliWith(t, rt, "scan", "--json")
+	var p plan.Plan
+	exactlyOneJSON(t, out, &p)
+	if code != exitOK || len(p.Warnings) == 0 || p.Totals.SelectedCount != 0 {
+		t.Fatalf("scan: exit %d warnings %q selected %d", code, p.Warnings, p.Totals.SelectedCount)
+	}
+	code, out, _ = cliWith(t, rt, "clean", "--apply", "--json")
+	var env errorEnvelope
+	exactlyOneJSON(t, out, &env)
+	if code != exitError || env.Error.Code != codeMountsUnavailable {
+		t.Fatalf("clean --apply: exit %d %+v", code, env)
+	}
+	if testutil.Checksum(t, home) != before {
+		t.Fatal("the fixture changed")
 	}
 }

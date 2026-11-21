@@ -60,6 +60,9 @@ type Runtime struct {
 	// GuardFS looks up directory identities for that guard; the zero value
 	// means the real file system.
 	GuardFS homeguard.FS
+	// Mounts tells mount roots apart (nil: the platform's own); tests
+	// inject policy.StubMounts.
+	Mounts policy.MountOracle
 }
 
 // System is the real process environment.
@@ -104,6 +107,8 @@ type Home struct {
 	ID homeguard.ID
 	// Config is the config file under home (defaults when absent).
 	Config config.Config
+	// Mounts is Runtime.Mounts, passed to every policy session.
+	Mounts policy.MountOracle
 }
 
 // Resolve resolves home and loads config.
@@ -116,7 +121,7 @@ func Resolve(rt Runtime) (Home, error) {
 	if err != nil {
 		return Home{}, err
 	}
-	return Home{Path: home, FromEnv: fromEnv, ID: id, Config: cfg}, nil
+	return Home{Path: home, FromEnv: fromEnv, ID: id, Config: cfg, Mounts: rt.Mounts}, nil
 }
 
 // LoadConfig reads the config file relative to the approved home's
@@ -140,6 +145,7 @@ func LoadConfig(home string, id homeguard.ID) (config.Config, error) {
 func (h Home) PolicyEnv() policy.Env {
 	env := h.Config.PolicyEnv(h.Path)
 	env.HomeIdentity = &policy.FileIdentity{Dev: h.ID.Dev, Ino: h.ID.Ino}
+	env.Mounts = h.Mounts
 	return env
 }
 

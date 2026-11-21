@@ -26,6 +26,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -101,6 +102,8 @@ type scanner struct {
 	warnings []string
 	status   []string              // per rule
 	roots    [][]plan.RootIdentity // per rule: existing roots and identities
+	// mountsErr is set when mount points cannot be determined.
+	mountsErr error
 }
 
 // Run scans and returns the plan. It fails only when home cannot be used
@@ -133,6 +136,12 @@ func Run(ctx context.Context, opts Options) (plan.Plan, error) {
 	}
 	s := &scanner{ctx: ctx, opts: opts, rules: rs, sess: sess, home: opts.Env.Home, now: opts.Now(), status: make([]string, len(rs)), roots: make([][]plan.RootIdentity, len(rs))}
 	s.cond = &conditions{ctx: ctx, sess: sess, rules: rs, now: s.now, git: git, idle: map[string]bool{}, repos: map[string]gitstate.Result{}}
+	if err := sess.MountsErr(); err != nil {
+		// Fail closed: without mount points nothing can be shown to stay
+		// on one side of every boundary.
+		s.mountsErr = err
+		s.warn("%v; every item is marked contains_mount, and clean --apply stops with mounts_unavailable", err)
+	}
 	var cands []*candidate
 	projects := map[string][]int{} // project roots -> project rule indexes
 	for i, r := range rs {
@@ -394,7 +403,7 @@ func (s *scanner) measureOne(c *candidate) {
 		return
 	}
 	defer func() { _ = e.Dir.Close() }()
-	opts := sizes.Options{}
+	opts := sizes.Options{MountRoot: s.sess.MountRoot}
 	if c.guard {
 		opts = guardOptions(s.sess, s.rules[c.rule], c.path)
 	}
@@ -445,6 +454,9 @@ func (s *scanner) decide(c *candidate) {
 		it.Git, it.AtRisk = v.git, v.atRisk
 	}
 	it.Reasons = append(it.Reasons, reasons...)
+	if s.mountsErr != nil && !slices.Contains(it.Reasons, plan.ReasonContainsMount) {
+		it.Reasons = append(it.Reasons, plan.ReasonContainsMount)
+	}
 	it.Selected = len(it.Reasons) == 0
 }
 

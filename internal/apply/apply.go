@@ -205,6 +205,9 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		return res, fmt.Errorf("apply: %w", err)
 	}
 	defer func() { _ = sess.Close() }()
+	if merr := sess.MountsErr(); merr != nil && !o.DryRun {
+		return res, fmt.Errorf("apply: %w", merr)
+	}
 	a := &applier{ctx: ctx, o: o, sess: sess, procs: o.Procs, now: o.Now, res: &res}
 	a.check = scan.NewChecker(ctx, sess, o.Rules, o.Git, o.Now())
 
@@ -309,6 +312,12 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	}
 	return res, nil
 }
+
+// ErrMountsUnavailable: mount points cannot be determined (Linux without
+// the statx mount-root attribute and without a readable mount table), so
+// no move can be shown to stay inside home's mounts; nothing moves. cmd/
+// reports it with error code mounts_unavailable.
+var ErrMountsUnavailable = policy.ErrMountsUnavailable
 
 // ErrReceipt: the receipt could not be saved, so apply stopped. Items it
 // was about to move are listed as pending in the receipt on disk.
@@ -558,7 +567,7 @@ func (a *applier) one(t target) {
 	if a.o.Permanent {
 		g := a.sess.Guard(r, it.Path)
 		var rm removal
-		rm, err = removeItem(f, dev, ino, g.CheckMode, since)
+		rm, err = removeItem(f, dev, ino, g.CheckMode, a.sess.MountRoot, since)
 		moved.Permanent = true
 		if err != nil && rm.count > 0 {
 			a.res.Skipped = append(a.res.Skipped, plan.SkippedItem{

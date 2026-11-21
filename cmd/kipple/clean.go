@@ -245,6 +245,9 @@ func (a *app) applyError(err error) error {
 	if errors.Is(err, apply.ErrReceipt) {
 		return fail(codeReceipt, "%v", err)
 	}
+	if errors.Is(err, apply.ErrMountsUnavailable) {
+		return fail(codeMountsUnavailable, "%v; nothing was moved", err)
+	}
 	return fail(codeApply, "%v", err)
 }
 

@@ -54,6 +54,12 @@ type Options struct {
 	// SkipDir, when set, is called for every directory below the root;
 	// returning true leaves it out of the walk entirely (not measured).
 	SkipDir func(rel, name string) bool
+	// MountRoot, when set, is asked about every entry below the root on
+	// the root's device (policy.Session.MountRoot): a mount root there (a
+	// Linux bind mount) is recorded in Mounts and not entered, like a
+	// device change. An error other than the entry vanishing is treated
+	// the same way, so an unanswerable check never lets a walk cross.
+	MountRoot func(dirfd int, name string, dev, ino uint64) (bool, error)
 }
 
 // Result is the measurement of one item.

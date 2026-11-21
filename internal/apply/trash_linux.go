@@ -107,11 +107,12 @@ func trashFolder(sess *policy.Session, path string, create, check bool) (*os.Fil
 		// not have gained. Anything else was not ours (replaced between
 		// the mkdir and the open) and is checked, never changed.
 		var st unix.Stat_t
-		if err := unix.Fstat(int(e.Dir.Fd()), &st); err != nil || int(st.Uid) != os.Geteuid() || st.Mode&0o077 != 0 {
-			created = false
-		} else if err := unix.Fchmod(int(e.Dir.Fd()), 0o700); err != nil {
-			_ = e.Dir.Close()
-			return nil, fmt.Errorf("%w: %s: %v", ErrTrashAccess, path, err)
+		ours := unix.Fstat(int(e.Dir.Fd()), &st) == nil && int(st.Uid) == os.Geteuid() && st.Mode&0o077 == 0
+		if ours {
+			if err := unix.Fchmod(int(e.Dir.Fd()), 0o700); err != nil {
+				_ = e.Dir.Close()
+				return nil, fmt.Errorf("%w: %s: %v", ErrTrashAccess, path, err)
+			}
 		}
 	}
 	if !check {

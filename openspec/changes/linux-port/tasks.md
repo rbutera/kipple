@@ -43,7 +43,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
 
 ## 2. Wave 2: Linux safety boundaries and content
 
-- [ ] 2.1 Add mount-point detection to `internal/policy` (design L3):
+- [x] 2.1 Add mount-point detection to `internal/policy` (design L3):
   - a mountinfo parser handling octal escapes, optional fields and the `root` field;
   - `statx` `STATX_ATTR_MOUNT_ROOT`, with mountinfo as the fallback, compared by identity;
   - `mounts_unavailable` when neither works.

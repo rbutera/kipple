@@ -59,7 +59,7 @@ func ctimeOf(st *unix.Stat_t) time.Time { return time.Unix(st.Ctim.Unix()) }
 //
 // Any mismatch stops the delete. It returns what was removed, also on
 // error.
-func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc, since time.Time) (removal, error) {
+func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc, mounted mountFunc, since time.Time) (removal, error) {
 	var rm removal
 	want := ident{dev, ino}
 	var st unix.Stat_t
@@ -91,7 +91,7 @@ func removeItem(f *policy.Fresh, dev, ino uint64, protect protectFunc, since tim
 	}
 	defer func() { _ = unix.Close(fd) }()
 	ids := map[string]ident{}
-	if err := precheck(fd, "", want, parent, dev, protect, since, ids, 0); err != nil {
+	if err := precheck(fd, "", want, parent, dev, protect, mounted, since, ids, 0); err != nil {
 		return rm, err
 	}
 	if afterPrecheck != nil {
@@ -143,7 +143,7 @@ func join(rel, name string) string {
 
 // precheck walks the folder open at fd (the object self, inside parent)
 // without deleting anything, recording identities in ids.
-func precheck(fd int, rel string, self, parent ident, dev uint64, protect protectFunc, since time.Time, ids map[string]ident, depth int) error {
+func precheck(fd int, rel string, self, parent ident, dev uint64, protect protectFunc, mounted mountFunc, since time.Time, ids map[string]ident, depth int) error {
 	if depth > maxRemoveDepth {
 		return fmt.Errorf("deeper than %d levels; stopped", maxRemoveDepth)
 	}
@@ -165,6 +165,11 @@ func precheck(fd int, rel string, self, parent ident, dev uint64, protect protec
 		if uint64(st.Dev) != dev {
 			return errCrossDevice
 		}
+		if mounted != nil {
+			if mr, err := mounted(fd, n, uint64(st.Dev), uint64(st.Ino)); mr || err != nil {
+				return errCrossDevice
+			}
+		}
 		if protect != nil {
 			if reason, hit := protect(child, n, uint64(st.Dev), uint64(st.Ino), policy.StatMode(uint32(st.Mode))); hit {
 				return &errProtected{rel: child, reason: reason}
@@ -175,7 +180,7 @@ func precheck(fd int, rel string, self, parent ident, dev uint64, protect protec
 			if err != nil {
 				return err
 			}
-			err = precheck(cfd, child, identOf(&st), self, dev, protect, since, ids, depth+1)
+			err = precheck(cfd, child, identOf(&st), self, dev, protect, mounted, since, ids, depth+1)
 			_ = unix.Close(cfd)
 			if err != nil {
 				return err

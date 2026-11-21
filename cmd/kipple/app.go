@@ -52,6 +52,9 @@ const (
 	// codeTrashAccess: the Trash folder cannot be used (no Full Disk Access
 	// and no usable fallback).
 	codeTrashAccess = "trash_access"
+	// codeMountsUnavailable: mount points cannot be determined (Linux), so
+	// apply moves nothing.
+	codeMountsUnavailable = "mounts_unavailable"
 )
 
 // runtimeEnv is the process environment, injectable for tests.
@@ -73,6 +76,8 @@ type runtimeEnv struct {
 	procs procs.Inspector
 	// saveReceipt, in tests, replaces saving the receipt (apply.Options.SaveReceipt).
 	saveReceipt func(plan.Receipt) error
+	// mounts, in tests, replaces the platform's mount oracle.
+	mounts policy.MountOracle
 	// beforeScan, when set, runs after home is resolved and guarded and
 	// before the scan opens it. Tests use it to swap the directory.
 	beforeScan func(home string)
@@ -333,7 +338,7 @@ type homeEnv = launch.Home
 
 // launch is the part of the runtime environment home resolution uses.
 func (rt runtimeEnv) launch() launch.Runtime {
-	return launch.Runtime{Getenv: rt.getenv, UserHome: rt.userHome, RealHomes: rt.realHomes, GuardFS: rt.guardFS}
+	return launch.Runtime{Getenv: rt.getenv, UserHome: rt.userHome, RealHomes: rt.realHomes, GuardFS: rt.guardFS, Mounts: rt.mounts}
 }
 
 // launchErr maps a launch error to a CLI error with the same code.

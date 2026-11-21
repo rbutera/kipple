@@ -41,6 +41,8 @@ type Session struct {
 	homeID   fileID // identity of homeFd
 	homeFail string // filesystem refusal for every path when home is unusable
 	ids      *protectedIDs
+	// mounts tells mount roots apart; unavailable until home is open.
+	mounts MountOracle
 
 	// life guards closed and homeFd: every walk holds the read lock from
 	// start to finish and Close takes the write lock, so Close can never
@@ -85,7 +87,8 @@ func (e *HomeError) Unwrap() error { return e.Err }
 // ends.
 func NewSession(env Env) (*Session, error) {
 	s := &Session{
-		env:    Env{Home: env.Home, Protect: append([]string(nil), env.Protect...), HomeIdentity: copyIdentity(env.HomeIdentity)},
+		env:    Env{Home: env.Home, Protect: append([]string(nil), env.Protect...), HomeIdentity: copyIdentity(env.HomeIdentity), Mounts: env.Mounts},
+		mounts: unavailableMounts{err: ErrMountsUnavailable},
 		homeFd: -1,
 		dirs:   map[fileID]*dirNames{},
 	}
@@ -139,7 +142,22 @@ func NewSession(env Env) (*Session, error) {
 	s.homeID = hid
 	s.homeDev = dev
 	s.ids = collectIDs(home, s.env.Protect)
+	s.mounts = env.Mounts
+	if s.mounts == nil {
+		s.mounts = systemMounts(home, fd)
+	}
 	return s, nil
+}
+
+// MountsErr is nil when the session can tell mount points apart; otherwise
+// it wraps ErrMountsUnavailable. Scan then marks every item contains_mount
+// and apply refuses to move anything.
+func (s *Session) MountsErr() error { return s.mounts.Available() }
+
+// MountRoot reports whether name in the directory open at dirfd (with
+// identity dev, ino) is a mount root, for size walks (sizes.Options).
+func (s *Session) MountRoot(dirfd int, name string, dev, ino uint64) (bool, error) {
+	return s.mounts.MountRoot(dirfd, name, dev, ino)
 }
 
 // Close releases the home descriptor. Later calls refuse everything.
@@ -433,6 +451,14 @@ func (s *Session) walk(comps []string, want itemType, ids *protectedIDs, openFin
 		id, ok := identityOf(fi)
 		if !ok {
 			return stop(ReasonDifferentDevice, nil)
+		}
+		// A mount on home's own device (a bind mount) is a boundary too.
+		// When mounts cannot be determined at all, scan and apply decide
+		// (contains_mount, mounts_unavailable); any other failure refuses.
+		if mr, err := s.mounts.MountRoot(w.parent, c, id.dev, id.ino); mr {
+			return stop(ReasonDifferentDevice, nil)
+		} else if err != nil && !errors.Is(err, ErrMountsUnavailable) {
+			return stop(missingOr(err), err)
 		}
 		if ids != nil {
 			if reason, hit := ids.refusal(id, last); hit {

@@ -123,6 +123,9 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 		return res, fmt.Errorf("restore: %w", err)
 	}
 	defer func() { _ = sess.Close() }()
+	if merr := sess.MountsErr(); merr != nil && o.Apply {
+		return res, fmt.Errorf("restore: %w", merr)
+	}
 
 	skip := func(m *plan.MovedItem, reason, detail string) {
 		res.Skipped = append(res.Skipped, plan.SkippedItem{ID: m.ID, Rule: m.Rule, Path: m.Path, Reason: reason, Detail: detail})
@@ -384,7 +387,7 @@ func protectedSource(sess *policy.Session, r rules.Rule, dest, name string, efd 
 	res, err := sizes.MeasureDir(context.Background(), f, sizes.Options{ProtectedMode: func(rel, n string, dev, ino uint64, mode fs.FileMode) bool {
 		_, hit := g.CheckMode(rel, n, dev, ino, mode)
 		return hit
-	}})
+	}, MountRoot: sess.MountRoot})
 	switch {
 	case res.ProtectedCount > 0:
 		return plan.ReasonContainsProtected, "the Trash entry contains protected files: " + strings.Join(res.Protected, ", ")

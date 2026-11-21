@@ -153,6 +153,10 @@ type Env struct {
 	Home         string
 	Protect      []string
 	HomeIdentity *FileIdentity
+	// Mounts tells mount roots apart (design L3 of linux-port); nil means
+	// the platform's own (statx or /proc/self/mountinfo on Linux). Tests
+	// inject StubMounts.
+	Mounts MountOracle
 }
 
 // FileIdentity is a file's (st_dev, st_ino).
@@ -257,6 +261,9 @@ func Authorize(env Env, rule Rule, path string) Decision {
 	}
 	if fd := checkFilesystem(home, lx.comps, lx.want, collectIDs(home, env.Protect)); !fd.Allowed {
 		return fd
+	}
+	if md := checkMounts(env, lx.comps); !md.Allowed {
+		return md
 	}
 	if lx.want == directory {
 		return checkMarkers(home+"/"+strings.Join(lx.comps[:len(lx.comps)-1], "/"), rule.RuleMatchMarkers())

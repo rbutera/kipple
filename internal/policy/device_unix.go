@@ -55,3 +55,52 @@ func storedName(dir, name string) (bool, error) {
 		}
 	}
 }
+
+// checkMounts refuses, with ReasonDifferentDevice, a path with a mount root
+// between home and itself (inclusive), asking env.Mounts or the platform's
+// oracle. It runs after checkFilesystem, so no component is a symlink.
+func checkMounts(env Env, comps []string) Decision {
+	m := env.Mounts
+	if m == nil {
+		fd, err := openHomeForMounts(env.Home)
+		if err != nil {
+			return refuse(missingOr(err))
+		}
+		m = systemMounts(env.Home, fd)
+		_ = unix.Close(fd)
+	}
+	if m.Available() != nil {
+		// As in a session: scan marks items contains_mount and apply
+		// refuses to run (mounts_unavailable).
+		return Decision{Allowed: true}
+	}
+	cur := env.Home
+	for _, c := range comps {
+		cur += "/" + c
+		fi, err := lstat(cur)
+		if err != nil {
+			return refuse(missingOr(err))
+		}
+		id, ok := identityOf(fi)
+		if !ok {
+			return refuse(ReasonDifferentDevice)
+		}
+		mr, err := m.MountRoot(unix.AT_FDCWD, cur, id.dev, id.ino)
+		if err != nil {
+			return refuse(missingOr(err))
+		}
+		if mr {
+			return refuse(ReasonDifferentDevice)
+		}
+	}
+	return Decision{Allowed: true}
+}
+
+func openHomeForMounts(home string) (int, error) {
+	for {
+		fd, err := unix.Open(home, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != unix.EINTR {
+			return fd, err
+		}
+	}
+}

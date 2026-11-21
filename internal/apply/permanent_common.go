@@ -35,3 +35,8 @@ func (e *errChanged) Error() string {
 	}
 	return rel + " " + e.why + "; stopped"
 }
+
+// mountFunc is policy.Session.MountRoot: whether an entry is a mount root
+// (a same-device bind mount on Linux), which a permanent delete must not
+// cross.
+type mountFunc func(dirfd int, name string, dev, ino uint64) (bool, error)

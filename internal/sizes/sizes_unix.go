@@ -154,6 +154,25 @@ func (w *walker) entry(fd int, rel, name string, depth int, inProtected bool) er
 		w.r.warn("%s: on another volume, not measured", p)
 		return nil
 	}
+	if w.opts.MountRoot != nil {
+		mr, err := w.opts.MountRoot(fd, name, uint64(st.Dev), uint64(st.Ino))
+		switch {
+		case errors.Is(err, unix.ENOENT):
+			return nil // removed while we walked
+		case err != nil:
+			w.r.Mounts = append(w.r.Mounts, p)
+			w.r.warn("%s: whether something is mounted here could not be checked (%v), not measured", p, err)
+			return nil
+		case mr:
+			// Not part of the item at all, so not a partial walk: the
+			// item is contains_mount (and never moves) for that reason.
+			w.r.Mounts = append(w.r.Mounts, p)
+			if len(w.r.Warnings) < maxWarnings {
+				w.r.Warnings = append(w.r.Warnings, p+": a mount point, not measured")
+			}
+			return nil
+		}
+	}
 	protected := inProtected
 	if !inProtected && w.protected(p, name, dev, st) {
 		protected = true

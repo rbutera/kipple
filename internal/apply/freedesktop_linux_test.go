@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/procs"
 	"github.com/rbutera/kipple/internal/rules"
 	"github.com/rbutera/kipple/internal/testutil"
@@ -564,5 +565,33 @@ func TestParentDetailWithoutProc(t *testing.T) {
 	defer func() { _ = unix.Close(fd) }()
 	if got := parentDetail(fd, "changed"); got != "changed" {
 		t.Fatalf("detail %q", got)
+	}
+}
+
+// The wave 1 red-team layout: a same-device bind mount of ~/.ssh over
+// Trash/info made kipple write .trashinfo files into ~/.ssh. A Trash folder
+// that is a mount root (here through an injected oracle; with a real bind
+// mount in make test-linux-mounts) is trash_access, and nothing is written
+// into it or moved.
+func TestTrashInfoFolderIsABindMount(t *testing.T) {
+	for _, dir := range []string{".local/share/Trash/info", ".local/share/Trash/files", ".local/share/Trash"} {
+		t.Run(dir, func(t *testing.T) {
+			f := newFx(t, pipFixture())
+			f.env.Mounts = policy.StubMounts{Roots: map[policy.FileIdentity]bool{fileIdentity(t, f.abs(dir)): true}}
+			p := f.scan("")
+			if _, err := Run(context.Background(), f.opts(p)); !errors.Is(err, ErrTrashAccess) {
+				t.Fatalf("err = %v, want ErrTrashAccess", err)
+			}
+			for _, d := range []string{"files", "info"} {
+				if n, _ := os.ReadDir(f.abs(".local/share/Trash/" + d)); len(n) != 0 {
+					t.Fatalf("%s written: %v", d, n)
+				}
+			}
+			for _, it := range p.Items {
+				if !exists(it.Path) {
+					t.Errorf("%s moved", it.Path)
+				}
+			}
+		})
 	}
 }

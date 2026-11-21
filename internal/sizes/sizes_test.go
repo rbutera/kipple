@@ -4,6 +4,7 @@ package sizes
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -172,5 +173,32 @@ func TestSkipDirAndNewestFile(t *testing.T) {
 	}
 	if !r.NewestMtime.After(old) {
 		t.Fatalf("newest (dirs included) = %v, want the recent directory time", r.NewestMtime)
+	}
+}
+
+// A same-device mount root reported by Options.MountRoot (a Linux bind
+// mount) is recorded in Mounts and not entered; an unanswerable check is
+// treated the same way and makes the result partial.
+func TestMountRootStopsTheWalk(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{
+		{Path: "item/blob", Content: "x"},
+		{Path: "item/docs/letter.txt", Content: "secret"},
+	}})
+	f, err := os.Open(testutil.Abs(home, "item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	res, err := MeasureDir(context.Background(), f, Options{MountRoot: func(_ int, name string, _, _ uint64) (bool, error) {
+		return name == "docs", nil
+	}})
+	if err != nil || len(res.Mounts) != 1 || res.Mounts[0] != "docs" || res.FileCount != 1 || res.Status != StatusComplete {
+		t.Fatalf("%+v %v", res, err)
+	}
+	res, err = MeasureDir(context.Background(), f, Options{MountRoot: func(_ int, name string, _, _ uint64) (bool, error) {
+		return false, errors.New("unknown")
+	}})
+	if err != nil || len(res.Mounts) != 2 || res.Status != StatusPartial {
+		t.Fatalf("%+v %v", res, err)
 	}
 }
