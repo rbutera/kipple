@@ -637,7 +637,9 @@ func (a *applier) afterMoveCheck(f *policy.Fresh, it plan.Item, dir *os.File, mo
 	if err := a.sess.RefreshMounts(); err != nil {
 		a.stopErr = fmt.Errorf("apply: %w", err)
 	}
-	res, err := sizes.MeasureDir(a.ctx, dir, sizes.Options{MountRoot: a.sess.MountRoot})
+	// Not a.ctx: once the item has moved, stopping the run must not stop
+	// its check (an interrupted walk would put it back for no reason).
+	res, err := sizes.MeasureDir(context.Background(), dir, sizes.Options{MountRoot: a.sess.MountRoot})
 	if err == nil && len(res.Mounts) == 0 && a.stopErr == nil {
 		return false
 	}
