@@ -18,6 +18,13 @@ import (
 
 // ensureDir creates the receipts folder (0700) if needed.
 func (s Store) ensureDir() error {
+	if s.opener != nil {
+		f, err := s.opener(true)
+		if err != nil {
+			return fmt.Errorf("receipt: %w", err)
+		}
+		return f.Close()
+	}
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("receipt: %w", err)
 	}
@@ -27,6 +34,19 @@ func (s Store) ensureDir() error {
 // openDir opens the receipts folder without following a symlink at its
 // final component.
 func (s Store) openDir() (int, error) {
+	if s.opener != nil {
+		f, err := s.opener(false)
+		if err != nil {
+			return -1, err
+		}
+		defer func() { _ = f.Close() }()
+		fd, err := unix.Dup(int(f.Fd()))
+		if err != nil {
+			return -1, err
+		}
+		unix.CloseOnExec(fd)
+		return fd, nil
+	}
 	for {
 		fd, err := unix.Open(s.dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if err != unix.EINTR {

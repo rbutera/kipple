@@ -13,6 +13,7 @@ import (
 
 	"github.com/rbutera/kipple/internal/gitstate"
 	"github.com/rbutera/kipple/internal/homeguard"
+	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/policy"
 	"github.com/rbutera/kipple/internal/receipt"
 	"github.com/rbutera/kipple/internal/rules"
@@ -242,6 +243,79 @@ func TestUserDirsOnLinux(t *testing.T) {
 		h, err := Resolve(rt)
 		if err != nil || len(h.UserDirs.Protect) != 0 || len(h.Warnings) != 0 {
 			t.Fatalf("%+v %v", h.UserDirs, err)
+		}
+	})
+}
+
+// Wave 2 red-team R2: on Linux the default receipts folder under home is
+// opened through the policy session, so a symlink or a bind mount on the
+// way (~/.local/state into ~/.ssh) makes the receipt fail and nothing is
+// written there.
+func TestLinuxStateFolderIsVerified(t *testing.T) {
+	resolve := func(t *testing.T, spec testutil.Spec, mounts func(home string) policy.MountOracle) (Home, Runtime) {
+		t.Helper()
+		fixture := testutil.NewHome(t, spec)
+		rt := runtimeFor(t, fakeReal(t))
+		rt.GOOS = "linux"
+		if mounts != nil {
+			rt.Mounts = mounts(fixture)
+		}
+		t.Setenv("KIPPLE_HOME", fixture)
+		t.Setenv("KIPPLE_STATE_DIR", "")
+		h, err := Resolve(rt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h, rt
+	}
+	create := func(t *testing.T, h Home, rt Runtime) error {
+		t.Helper()
+		s, err := Store(rt, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := plan.Receipt{CreatedAt: time.Now(), Home: h.Path, Level: "safe", Mover: plan.MoverNone}
+		_, err = s.Create(&r)
+		return err
+	}
+	t.Run("default folder created 0700 under home", func(t *testing.T) {
+		h, rt := resolve(t, testutil.Spec{}, nil)
+		if err := create(t, h, rt); err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range []string{".local", ".local/state", ".local/state/kipple", ".local/state/kipple/receipts"} {
+			fi, err := os.Stat(filepath.Join(h.Path, d))
+			if err != nil || fi.Mode().Perm() != 0o700 {
+				t.Errorf("%s: %v %v", d, fi.Mode(), err)
+			}
+		}
+	})
+	t.Run("symlinked state folder", func(t *testing.T) {
+		h, rt := resolve(t, testutil.Spec{
+			Files:    []testutil.File{{Path: ".ssh/id_ed25519", Content: "key"}},
+			Symlinks: []testutil.Symlink{{Path: ".local/state", Target: "~/.ssh"}},
+		}, nil)
+		if err := create(t, h, rt); err == nil {
+			t.Fatal("a receipt was written through a symlink")
+		}
+		if es, _ := os.ReadDir(filepath.Join(h.Path, ".ssh")); len(es) != 1 {
+			t.Fatalf(".ssh changed: %v", es)
+		}
+	})
+	t.Run("state folder is a bind mount", func(t *testing.T) {
+		h, rt := resolve(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".local/state"}}}, func(home string) policy.MountOracle {
+			fi, err := os.Lstat(filepath.Join(home, ".local/state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			dev, ino, _ := policy.Identity(fi)
+			return policy.StubMounts{Roots: map[policy.FileIdentity]bool{{Dev: dev, Ino: ino}: true}}
+		})
+		if err := create(t, h, rt); err == nil {
+			t.Fatal("a receipt was written through a mount point")
+		}
+		if _, err := os.Stat(filepath.Join(h.Path, ".local/state/kipple")); !os.IsNotExist(err) {
+			t.Fatal("something was created inside the mount point")
 		}
 	})
 }

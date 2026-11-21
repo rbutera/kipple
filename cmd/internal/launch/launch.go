@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
@@ -331,7 +332,54 @@ func Store(rt Runtime, h Home) (receipt.Store, error) {
 	if err != nil {
 		return receipt.Store{}, fail(CodeReceipt, "%v", err)
 	}
+	// On Linux the default state folder is under home, below folders a
+	// bind mount or a symlink could redirect (~/.local/state into ~/.ssh).
+	// Open and create it through the policy session instead, which refuses
+	// a symlink or a mount point anywhere from home to the receipts folder.
+	if rt.Getenv("KIPPLE_STATE_DIR") == "" && h.GOOS == "linux" {
+		s = s.WithOpener(func(create bool) (*os.File, error) { return openUnderHome(h, s.Dir(), create) })
+	}
 	return s, nil
+}
+
+// openUnderHome opens the folder path (below home) through a policy session
+// pinned to home, walking every component without following a symlink and
+// refusing mount points; with create, missing folders are made 0700 first.
+func openUnderHome(h Home, path string, create bool) (*os.File, error) {
+	if !strings.HasPrefix(path, h.Path+"/") {
+		return nil, fmt.Errorf("%s is not inside the home folder", path)
+	}
+	sess, err := policy.NewSession(h.PolicyEnv())
+	defer func() { _ = sess.Close() }()
+	if err != nil {
+		return nil, err
+	}
+	comps := strings.Split(strings.TrimPrefix(path, h.Path+"/"), "/")
+	cur := h.Path
+	for i, c := range comps {
+		cur += "/" + c
+		e, err := sess.Open(cur)
+		if errors.Is(err, fs.ErrNotExist) && create {
+			if merr := sess.Mkdir(cur, 0o700); merr != nil && !errors.Is(merr, fs.ErrExist) {
+				return nil, fmt.Errorf("the receipts folder %s cannot be created: %w", path, merr)
+			}
+			e, err = sess.Open(cur)
+		}
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+			}
+			return nil, fmt.Errorf("the receipts folder %s cannot be used: %w", path, err)
+		}
+		if e.Dir == nil {
+			return nil, fmt.Errorf("the receipts folder %s cannot be used: %s is not a folder", path, cur)
+		}
+		if i == len(comps)-1 {
+			return e.Dir, nil
+		}
+		_ = e.Dir.Close()
+	}
+	return nil, fmt.Errorf("the receipts folder %s is the home folder", path)
 }
 
 // HomeLabel is how a front end's header names the home folder: "~" for the

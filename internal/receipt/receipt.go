@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -56,6 +57,19 @@ func NewID(now time.Time) string {
 // Store is the receipts folder of one state directory.
 type Store struct {
 	dir string
+	// opener, when set, opens (and with create, creates) the receipts
+	// folder instead of a path walk; cmd/ sets it on Linux for the default
+	// state folder under home, to open it through the policy session (no
+	// symlink, no mount point on the way). See WithOpener.
+	opener func(create bool) (*os.File, error)
+}
+
+// WithOpener returns s opening its receipts folder with open: the folder,
+// opened (and with create, created first if missing). A missing folder
+// without create must be an fs.ErrNotExist error.
+func (s Store) WithOpener(open func(create bool) (*os.File, error)) Store {
+	s.opener = open
+	return s
 }
 
 // Open returns the store for stateDir, which must be absolute and clean.
