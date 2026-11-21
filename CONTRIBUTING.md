@@ -37,7 +37,11 @@ delete anything in a real home folder, yours included.**
 
 You need Go 1.23 and [golangci-lint](https://golangci-lint.run) v2. On
 macOS you also need the Xcode command line tools (the Trash fallback uses
-cgo); on Linux a C compiler is needed only for the race detector.
+cgo). On Linux you need a C compiler for the race detector and, because
+`make check` also builds, vets, lints and tests the GUI (`-tags gui`), the
+OpenGL, X11, Wayland and xkbcommon headers. On Debian or Ubuntu that is
+`sudo apt-get install gcc libgl1-mesa-dev xorg-dev libwayland-dev
+libxkbcommon-dev`, the same packages the CI job installs.
 
 ```sh
 command make check   # gofmt, go vet, golangci-lint, no-real-home, tests with -race (both builds), build

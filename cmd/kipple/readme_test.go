@@ -128,7 +128,10 @@ func TestContributing(t *testing.T) {
 		"exits non-zero and says so", "stub-based mount tests", "### Rules on macOS and Linux",
 		"linuxOverrides", "macOSOnly", "linuxOnly", "rules.ValidateFor", "TestLinuxCatalogueCount",
 		"TestAddARuleWithALinuxOverride", "testdata/rules_darwin.json",
+		"libgl1-mesa-dev xorg-dev libwayland-dev\nlibxkbcommon-dev",
 	)
+	// The Linux GUI headers CONTRIBUTING lists are the ones CI installs.
+	mustContain(t, "ci.yml", readRepoFile(t, ".github/workflows/ci.yml"), "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev")
 	sources := map[string][]string{
 		"internal/rules/rules_test.go":            {"func TestCatalogueCount(", "func TestGoldenRulesJSON(", `flag.Bool("update"`},
 		"internal/scan/addrule_test.go":           {"func TestAddARuleSteps("},
