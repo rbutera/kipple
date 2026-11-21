@@ -47,8 +47,8 @@ kipple SHALL offer only the running platform's catalogue. A rule that exists on 
 
 ### Requirement: Linux catalogue contents
 The Linux catalogue SHALL include at least:
-- `safe`: npm (`.npm/_cacache`), pnpm (`.local/share/pnpm/store`, `.cache/pnpm`), Yarn classic (`.cache/yarn`), Bun (`.bun/install/cache`), pip (`.cache/pip`), uv (`.cache/uv`), Poetry (`.cache/pypoetry/cache`, `.cache/pypoetry/artifacts`), Cargo registry cache and src, Go build cache (`.cache/go-build`), Gradle caches, Homebrew cache (`.cache/Homebrew`), VS Code, Cursor and Windsurf `Cache`, `CachedData`, `Code Cache` and `GPUCache` under `.config/<App>` (skipped while the editor runs), Claude Code `shell-snapshots` and `debug`, Codex `log`.
-- `review`: `xdg.cache` (children of `.cache` untouched for 7 days, excluding the other rules' roots and `sessions`), `jetbrains.caches` (children of `.cache/JetBrains` untouched for 30 days, skipped while an IDE runs), `maven.repository` (children of `.m2/repository`), `flatpak.app-cache` (children of `.var/app/*/cache`), Go module download cache, project `node_modules`, `target`, `.venv`/`venv`, `.next`.
+- `safe`: npm (`.npm/_cacache`), pnpm (`.local/share/pnpm/store`, `.cache/pnpm`), Yarn classic (`.cache/yarn`), Bun (`.bun/install/cache`), pip (`.cache/pip`), uv (`.cache/uv`), Poetry (`.cache/pypoetry/cache`, `.cache/pypoetry/artifacts`), Cargo registry cache and src, Go build cache (`.cache/go-build`), Gradle caches, Homebrew cache (`.cache/Homebrew`), `xdg.cache` (children of `.cache` untouched for 7 days, with an explicit exclude list: every other rule's root under `.cache`, keyring and session state (`keyring*`, `gnome-keyring`, `sessions`), stores that can hold unsynchronised user data (`evolution`, `rclone`, `zellij`), password-manager state (`keepassxc`), and denylisted names, each exclude documented with its reason), VS Code, Cursor and Windsurf `Cache`, `CachedData`, `Code Cache` and `GPUCache` under `.config/<App>` (skipped while the editor runs), Claude Code `shell-snapshots` and `debug`, Codex `log`.
+- `review`: `jetbrains.caches` (children of `.cache/JetBrains` untouched for 30 days, skipped while an IDE runs), `maven.repository` (children of `.m2/repository`), `flatpak.app-cache` (children of `.var/app/*/cache`), Go module download cache, project `node_modules`, `target`, `.venv`/`venv`, `.next`.
 - `manual`: Hugging Face hub cache, Codex worktrees, `.deb`/`.rpm`/`.AppImage`/`.iso`/`.run` in Downloads older than 14 days.
 - `info`: Ollama models, Claude Code projects, Codex sessions, Docker Desktop's disk image (`.docker/desktop/vms/0/data`), rootless Docker (`.local/share/docker`), Podman storage (`.local/share/containers/storage`), Flatpak user installation (`.local/share/flatpak`), Snap data (`snap`), each with the owner's own cleanup command.
 
@@ -58,13 +58,21 @@ Every rule SHALL carry `what` and `if_removed` sentences written for a non-exper
 - **WHEN** `kipple rules --json` runs on Linux
 - **THEN** every rule listed above is present with the stated tier and no rule has a root under `Library/`
 
-#### Scenario: Broad cache rule is not pre-selected
-- **WHEN** `kipple scan` runs on Linux at the default level and `~/.cache/some-app` is 30 days old
-- **THEN** the item is listed under `xdg.cache` with `selected: false` and reason `tier_review`
+#### Scenario: Old cache folder pre-selected
+- **WHEN** `kipple scan` runs on Linux at the default level and `~/.cache/some-app` was last modified 30 days ago
+- **THEN** the item is listed under `xdg.cache` with `selected: true`
 
 #### Scenario: Recent cache folder held back
-- **WHEN** `kipple scan --level review` runs and `~/.cache/some-app` was modified 2 days ago
+- **WHEN** `kipple scan` runs on Linux and `~/.cache/some-app` was modified 2 days ago
 - **THEN** the item is listed with `selected: false` and reason `too_recent`
+
+#### Scenario: Excluded folder never offered
+- **WHEN** `~/.cache/rclone` and `~/.cache/pip` exist and are 30 days old
+- **THEN** no `xdg.cache` item is listed for either; `~/.cache/pip`'s children appear only under `pip.cache`
+
+#### Scenario: Excludes documented
+- **WHEN** the docs test runs
+- **THEN** every `xdg.cache` exclude appears in docs/safety.md with its reason, and the test fails if the two differ
 
 #### Scenario: Snap data is info only
 - **WHEN** `kipple clean --only <id of an item under ~/snap> --apply` runs

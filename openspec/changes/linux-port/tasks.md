@@ -59,13 +59,14 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
   - a malformed file warns.
 
   Verify with fixture tests "Localised Documents folder", "Download dir stays cleanable", "User dir set to home", a malformed file, a symlinked `user-dirs.dirs`, and "protection covers a rule root warns".
-- [ ] 2.5 Split the catalogue per design L8: an `entry` with per-platform overrides, `CatalogueFor(goos)`, `Catalogue()` using `runtime.GOOS`, the Linux rules with `what`/`if_removed` sentences and owners, and `kipple explain` refusing other-platform rules with exit 2. Move the golden to `testdata/rules_darwin.json` unchanged and add `testdata/rules_linux.json`. Add a per-platform rule table to `testutil` and switch tests and `scripts/agent-flow-check.sh` that hard-code macOS rule IDs to it. Verify:
+- [ ] 2.5 Split the catalogue per design L8: an `entry` with per-platform overrides, `CatalogueFor(goos)`, `Catalogue()` using `runtime.GOOS`, the Linux rules with `what`/`if_removed` sentences and owners, `xdg.cache` as `safe` with a 7-day age and the exclude table with one-sentence reasons (design L8), and `kipple explain` refusing other-platform rules with exit 2. Move the golden to `testdata/rules_darwin.json` unchanged and add `testdata/rules_linux.json`. Add a per-platform rule table to `testutil` and switch tests and `scripts/agent-flow-check.sh` that hard-code macOS rule IDs to it. Verify:
   - `TestCatalogueInvariants` runs for both platforms, including the new invariants and "Nested root not excluded";
   - "macOS catalogue unchanged by the port" (byte diff against the v0.2.0 golden);
   - "Shared rule ID", "macOS-only rule on Linux" and "Linux catalogue count";
-  - fixture scans in the container: "Broad cache rule is not pre-selected", "Recent cache folder held back" and "Snap data is info only".
+  - fixture scans in the container: "Old cache folder pre-selected", "Recent cache folder held back", "Excluded folder never offered" (one fixture child per exclude) and "Snap data is info only";
+  - "Excludes documented" (docs/safety.md exclude table diffed against the rule).
 - [ ] 2.6 Platform plumbing in `cmd/internal/launch` and `cmd/kipple`: `unsupported_platform` for other OSes, XDG warnings (ignored with `KIPPLE_HOME`), home resolution through a symlinked parent, and `os` and `arch` in `kipple version`. Verify with tests "Linux is supported", "Unsupported platform refused" (injected GOOS), "XDG_CACHE_HOME outside home", "XDG_CACHE_HOME elsewhere under home", "Fixture ignores XDG variables", "Symlinked /home" (fixture layout under `t.TempDir()`), "Symlink below home still refused", "Version JSON" and "Platform in version".
-- [ ] 2.7 Add `scripts/linux-mount-check.sh` and `make test-linux-mounts`, a privileged throwaway container whose only mount is the read-only repo. The script builds a fixture under `/tmp/fx` with:
+- [ ] 2.7 Add `scripts/linux-mount-check.sh` and `make test-linux-mounts`, a privileged throwaway container whose only mount is the read-only repo. If Docker refuses `--privileged`, the target exits non-zero with that reason and never reports a pass. The script builds a fixture under `/tmp/fx` with:
   - a bind mount of `Documents` at `.cache/foo/docs`;
   - a bind mount at `.cache/bar`;
   - a tmpfs at `.cache/baz/t`;
@@ -80,7 +81,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
 
   Verify: the denylist diff test passes, and a test validates the doc's Linux receipt example against `kipple schema receipt` ("Documented compatibility rule").
 - [ ] 2.10 Wave 2 gate: `command make check`, `make test-linux` and `make test-linux-mounts` are green; commit.
-- [ ] 2.11 Review gate: the orchestrator runs the Opus review and the red-team review of wave 2. The red team focuses on mount boundaries (same-device binds, overlay, btrfs), the home guard, the denylist and user-dirs protections, the catalogue split and the XDG policy. Fix until both pass, then re-run 2.10.
+- [ ] 2.11 Review gate: the orchestrator runs the Opus review and the red-team review of wave 2. The red team focuses on mount boundaries (same-device binds, overlay, btrfs), the home guard, the denylist and user-dirs protections, the catalogue split and the XDG policy, and must "find a directory under ~/.cache that is not a cache": every find becomes an `xdg.cache` exclude with a reason and a test before the gate passes. Fix until both pass, then re-run 2.10.
 
 ## 3. Wave 3: CI, release, GUI decision, docs, v0.3.0
 
@@ -105,7 +106,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
   - a roadmap: Linux GUI in v0.3.1; AUR, then deb, rpm and Nix packaging; top-directory Trash; following `XDG_*` under home; enabling the Maven and JetBrains rules on macOS.
 
   Update `llms.txt` and `SECURITY.md` too. Verify: "Linux install documented" by running the README's Linux steps against the snapshot tarball in the container, and the agent-flow check passing in the macOS and Ubuntu CI jobs.
-- [ ] 3.6 CONTRIBUTING.md: document `make test-linux` (unprivileged; the suite refuses root), `make test-linux-mounts`, how to add a rule with per-platform roots, and that both catalogues' invariants must pass. Verify: the existing add-a-rule test passes on both platforms with a scratch rule that has a Linux override.
+- [ ] 3.6 CONTRIBUTING.md: document `make test-linux` (unprivileged; the suite refuses root), `make test-linux-mounts` and its fallback (where Docker cannot run privileged containers the target exits non-zero saying so, and the stub-based mount tests remain the contract; CI always runs it), how to add a rule with per-platform roots, and that both catalogues' invariants must pass. Verify: the existing add-a-rule test passes on both platforms with a scratch rule that has a Linux override.
 - [ ] 3.7 Release readiness check:
   - `command make check`, `make test-linux`, `make test-linux-mounts` and `make release-snapshot` are green;
   - `openspec validate linux-port --strict` passes;

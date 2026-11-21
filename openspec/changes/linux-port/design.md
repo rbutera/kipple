@@ -164,7 +164,7 @@ Linux catalogue (`shared` = same roots as macOS; others are Linux roots for the 
 | `homebrew.cache` | safe | `.cache/Homebrew` | Homebrew on Linux |
 | `editor.vscode` / `editor.cursor` / `editor.windsurf` | safe | `.config/<App>/{Cache,CachedData,Code Cache,GPUCache}` | owner process `code` / `cursor` / `windsurf`; skip while running |
 | `claude.shell-snapshots`, `claude.debug`, `codex.log` | safe | shared | |
-| `xdg.cache` (new) | review | `.cache` children, min age 7 days | excludes every child that is another rule's root (`pip`, `uv`, `go-build`, `yarn`, `pnpm`, `pypoetry`, `huggingface`, `JetBrains`, `Homebrew`) and `sessions` (Xfce session state) |
+| `xdg.cache` (new) | safe | `.cache` children, min age 7 days | the Linux twin of macOS `caches.user`; explicit exclude list below |
 | `jetbrains.caches` (new) | review | `.cache/JetBrains` children, min age 30 days | skip while an IDE runs |
 | `maven.repository` (new) | review | `.m2/repository` children | locally installed snapshots need a rebuild |
 | `flatpak.app-cache` (new) | review | `.var/app/*/cache` children | owner unknown per app, hence review |
@@ -180,9 +180,26 @@ Linux catalogue (`shared` = same roots as macOS; others are Linux roots for the 
 | `flatpak.user` (new) | info | `.local/share/flatpak` | `flatpak uninstall --unused` |
 | `snap.data` (new) | info | `snap` | `snap list --all`, then `snap remove --purge <name>` |
 
-`xdg.cache` is `review`, not `safe` like macOS `Library/Caches`. macOS's guidance is that apps must tolerate removal of their caches; Linux has no equivalent contract, desktop components keep state there, and the owner of each child is unknown, so the owner-running check cannot apply. The 7-day age condition skips caches in active use. Rules for snap and Flatpak app data other than `cache` are deliberately absent: `.var/app/*/data`, `.var/app/*/config` and `snap` are on the denylist.
+`xdg.cache` is `safe`, like `caches.user` on macOS (owner decision, 2026-11-21): `~/.cache` is the main thing a Linux user expects a cleaner to reclaim, and parity with macOS matters more than extra caution. The XDG Base Directory spec defines `$XDG_CACHE_HOME` as non-essential data, which is the closest Linux has to Apple's guidance that apps must tolerate the loss of their caches. The protections that still apply are the 7-day age condition (a child modified in the last week is `too_recent`, which keeps caches in active use), the per-item re-check immediately before the move, the Trash default and the receipt. Because the owner of each child is unknown, no owner-running check applies, as for `caches.user`.
 
-The new rules exist on Linux only in v0.3.0, so the macOS catalogue is unchanged. Whether to enable `maven.repository` and `jetbrains.caches` on macOS (with macOS roots) is a v0.3.1 decision.
+Excluding children that are not caches is the part of this rule that matters most for safety. The excludes are a Go table beside the rule, each with a one-sentence reason. docs/safety.md lists them, and a test diffs the doc against the table, the same way the denylist is checked.
+
+| Exclude (child of `~/.cache`) | Why |
+|---|---|
+| `pip`, `uv`, `go-build`, `yarn`, `pnpm`, `pypoetry`, `huggingface`, `JetBrains`, `Homebrew` | Another rule owns it, with its own tier and conditions. |
+| `keyring*`, `gnome-keyring` | Older GNOME keyring versions keep their control directory here; it is session state for the password store, not a cache. |
+| `sessions` | Xfce and LXDE save the open-application session here; removing it loses the saved session. |
+| `evolution` | Evolution's offline mail store can hold messages and drafts not yet synchronised to the server. |
+| `rclone` | rclone's mount write-back cache can hold file changes not yet uploaded. |
+| `zellij` | zellij keeps session-resurrection layouts here, which are user state. |
+| `keepassxc` | KeePassXC keeps its recent-database and key-file list here, which belongs to a password manager. |
+| any child whose name matches the denylist (`.env*`, `.git`, `*.kdbx`, `*.pem`, ...) | The policy refuses it anyway; listed so the rule documents it. Protected names inside an item make it `contains_protected`, as everywhere. |
+
+The wave 2 red-team review must try to find a directory under `~/.cache` that is not a cache. Every find becomes an exclude with a reason and a test.
+
+Rules for snap and Flatpak app data other than `cache` are deliberately absent: `.var/app/*/data`, `.var/app/*/config` and `snap` are on the denylist.
+
+The new rules exist on Linux only in v0.3.0, so the macOS catalogue is unchanged. `maven.repository` (`~/.m2/repository`) and `jetbrains.caches` (`~/Library/Caches/JetBrains`, which `caches.user` must then exclude) are enabled on macOS in v0.3.1 (owner decision, 2026-11-21).
 
 Invariants (`TestCatalogueInvariants`) run for every platform in `{"darwin", "linux"}`: roots under home, info roots on the denylist and every other root off it, no duplicate roots, nested roots excluded by their parent rule, non-empty explanations, owner command on info rules. New invariant: Linux rules have no `BundleIDs`, and every Linux rule with `SkipIfOwnerRunning` names at least one process, or is `review`.
 
@@ -261,10 +278,10 @@ Alternative: ship the Linux GUI in v0.3.0 (rejected for the reasons above).
 - [The Trash created with 0700 surprises a user whose desktop never created one] → this is what GNOME does; documented.
 - [`XDG_*` overrides mean kipple misses a tool's real cache] → plan warning naming the variable; following them is on the roadmap with its own invariant design.
 - [Agents in another PID namespace (host vs container) are invisible] → documented; idle and git conditions still guard project artifacts.
-- [`xdg.cache` is broad] → review tier, 7-day age, exclusions, every child shown with its What/IfRemoved, Trash recoverability.
+- [`xdg.cache` is broad and `safe`, so a non-cache folder under `~/.cache` would be pre-selected] → 7-day age condition, explicit exclude table with reasons, denylist and `contains_protected` inside items, re-check before each move, Trash and receipts; the wave 2 red team hunts for non-cache folders under `~/.cache`.
 - [Union denylist refuses Linux-looking paths on macOS] → acceptable: refusing more is the safe direction; the darwin golden catalogue proves no macOS rule lost a root.
 - [Read-only module cache mount fails in the container] → `make test-linux-prime` fallback into a named volume.
-- [Unprivileged user namespaces blocked on Ubuntu 24.04 runners (AppArmor)] → real-mount tests run only in the privileged container harness locally; CI covers them with stubs and runs the privileged script in a `docker run --privileged` step on the Ubuntu runner, where Docker is available.
+- [Real mounts need privileges; unprivileged user namespaces are blocked on Ubuntu 24.04 runners (AppArmor)] → `make test-linux-mounts` runs in a privileged throwaway container, locally on colima and as a CI step on the ephemeral GitHub-hosted Ubuntu runner (owner approved, 2026-11-21). Where a contributor's Docker cannot start privileged containers, the target says so and exits non-zero. It never silently passes, and the stub-based mount tests (injected mount oracle and mountinfo parser) remain the contract. CONTRIBUTING.md documents this fallback.
 
 ## Migration Plan
 
@@ -278,6 +295,10 @@ Wave 1 is not releasable on its own, because same-device bind mounts are not yet
 
 No data migration. macOS users upgrading see the same catalogue and behaviour, plus `os` and `arch` in `kipple version`. Receipts written by v0.2.0 on macOS keep working (`mover: rename`). Rollback is installing v0.2.0; Linux receipts are only read by v0.3.0+.
 
-## Open Questions
+## Resolved decisions (owner, 2026-11-21)
 
-- Whether `maven.repository` and `jetbrains.caches` should also be enabled on macOS in v0.3.1 (macOS roots `~/.m2/repository`, `~/Library/Caches/JetBrains`). This does not affect v0.3.0's specs or tasks.
+- `mover: freedesktop` and the error codes `unsupported_platform` and `mounts_unavailable` are added under `schema_version` 1 (cli-agent-interface "Additive schema evolution").
+- The macOS catalogue is frozen for v0.3.0; `maven.repository` and `jetbrains.caches` are enabled on macOS in v0.3.1.
+- `xdg.cache` is `safe` with a 7-day age condition and an explicit exclude table (L8).
+- The privileged mount-check container runs in CI; the stub fallback stays documented.
+- The Linux GUI is deferred to v0.3.1 and refuses to start on Linux; items on another device are refused; XDG locations are not followed, outside home is never scanned, and `KIPPLE_HOME` ignores `XDG_*` entirely.
