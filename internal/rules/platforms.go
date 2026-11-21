@@ -130,6 +130,16 @@ var linuxOnly = []Rule{
 		IfRemoved: "Each app rebuilds what it needs on its next start, and its documents and settings in the same folder are untouched.",
 	},
 	{
+		ID:        "models.downloaded",
+		Title:     "Downloaded AI models",
+		Tier:      TierManual,
+		Roots:     []string{".cache/torch", ".cache/whisper", ".cache/llama.cpp", ".cache/lm-studio/models"},
+		Match:     children,
+		Owner:     Owner{Name: "PyTorch, Whisper, llama.cpp and LM Studio"},
+		What:      "Model weights that PyTorch hub, OpenAI Whisper, llama.cpp and LM Studio downloaded into ~/.cache, often several gigabytes each.",
+		IfRemoved: "Each model downloads again, often several gigabytes, the next time a program loads it.",
+	},
+	{
 		ID:           "docker.rootless",
 		Title:        "Rootless Docker data",
 		Tier:         TierInfo,

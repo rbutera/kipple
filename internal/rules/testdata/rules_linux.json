@@ -355,7 +355,23 @@
       "rclone",
       "zellij",
       "keepassxc",
-      "ibus"
+      "ibus",
+      "torch",
+      "whisper",
+      "llama.cpp",
+      "lm-studio",
+      "obexd",
+      "zsh",
+      "onedriver",
+      "yay",
+      "paru",
+      "pikaur",
+      "aurutils",
+      "vim",
+      "SpaceVim",
+      "vdirsyncer",
+      "cliphist",
+      "kioexec"
     ],
     "match": {
       "kind": "children"
@@ -674,6 +690,26 @@
     },
     "what": "Installer packages and disk images (.deb, .rpm, .AppImage, .iso, .run) in your Downloads folder that are more than two weeks old.",
     "if_removed": "You would need to download an installer again to reinstall that app."
+  },
+  {
+    "id": "models.downloaded",
+    "title": "Downloaded AI models",
+    "tier": "manual",
+    "roots": [
+      ".cache/torch",
+      ".cache/whisper",
+      ".cache/llama.cpp",
+      ".cache/lm-studio/models"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "PyTorch, Whisper, llama.cpp and LM Studio"
+    },
+    "what": "Model weights that PyTorch hub, OpenAI Whisper, llama.cpp and LM Studio downloaded into ~/.cache, often several gigabytes each.",
+    "if_removed": "Each model downloads again, often several gigabytes, the next time a program loads it."
   },
   {
     "id": "ollama.models",

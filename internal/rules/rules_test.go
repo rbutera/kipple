@@ -505,6 +505,7 @@ func TestLinuxCatalogueCount(t *testing.T) {
 		"project.venv": rules.TierReview, "project.next": rules.TierReview,
 
 		"huggingface.hub": rules.TierManual, "codex.worktrees": rules.TierManual, "downloads.installers": rules.TierManual,
+		"models.downloaded": rules.TierManual,
 
 		"ollama.models": rules.TierInfo, "claude.projects": rules.TierInfo, "codex.sessions": rules.TierInfo,
 		"docker.raw": rules.TierInfo, "docker.rootless": rules.TierInfo, "podman.storage": rules.TierInfo,

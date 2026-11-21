@@ -134,6 +134,30 @@ func TestLinuxCatalogueScenarios(t *testing.T) {
 			t.Fatalf("pip's child not under pip.cache: %+v %v", it, ok)
 		}
 	})
+	t.Run("Model caches are manual, like the Hugging Face cache", func(t *testing.T) {
+		testutil.NewHome(t, testutil.Spec{
+			Files: []testutil.File{
+				{Path: ".cache/torch/hub/checkpoints/resnet.pth", Content: "w", MTime: old},
+				{Path: ".cache/whisper/large-v3.pt", Content: "w", MTime: old},
+				{Path: ".cache/lm-studio/models/qwen/q.gguf", Content: "w", MTime: old},
+			},
+			Dirs: []testutil.Dir{{Path: ".cache/torch/hub", MTime: old}, {Path: ".cache/lm-studio/models/qwen", MTime: old}},
+		})
+		_, out, _ := linuxCLI(t, "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		for _, rel := range []string{".cache/torch/hub", ".cache/whisper/large-v3.pt", ".cache/lm-studio/models/qwen"} {
+			it, ok := itemAt(p, rel)
+			if !ok || it.Rule != "models.downloaded" || it.Tier != string(rules.TierManual) || it.Selected {
+				t.Errorf("%s: %+v %v", rel, it, ok)
+			}
+		}
+		for _, it := range p.Items {
+			if it.Rule == "xdg.cache" {
+				t.Errorf("xdg.cache offers %s", it.Path)
+			}
+		}
+	})
 	t.Run("Snap data is info only", func(t *testing.T) {
 		home := linuxFixture(t)
 		_, out, _ := linuxCLI(t, "scan", "--json")

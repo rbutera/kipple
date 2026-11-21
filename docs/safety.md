@@ -478,6 +478,22 @@ owns them or because they hold state that is not a cache:
 | `zellij` | zellij keeps session-resurrection layouts here, which are user state. |
 | `keepassxc` | KeePassXC keeps its recent-database and key-file list here, which belongs to a password manager. |
 | `ibus` | Some input methods (ibus-libpinyin, ibus-typing-booster) keep the phrases they learned from your typing here. |
+| `torch` | Another rule owns it, with its own tier and conditions. |
+| `whisper` | Another rule owns it, with its own tier and conditions. |
+| `llama.cpp` | Another rule owns it, with its own tier and conditions. |
+| `lm-studio` | Another rule owns it, with its own tier and conditions. |
+| `obexd` | BlueZ saves files received over Bluetooth here, and they may be the only copy. |
+| `zsh` | Common zsh setups (oh-my-zsh, zinit, prezto) keep your shell history and completion state here. |
+| `onedriver` | onedriver's OneDrive file cache can hold changes not yet uploaded. |
+| `yay` | AUR helpers keep their PKGBUILD clones here, and you may have edited them. |
+| `paru` | AUR helpers keep their PKGBUILD clones here, and you may have edited them. |
+| `pikaur` | AUR helpers keep their PKGBUILD clones here, and you may have edited them. |
+| `aurutils` | AUR helpers keep their PKGBUILD clones here, and you may have edited them. |
+| `vim` | Some Vim setups keep undo history and swap files here, which hold edits not yet saved. |
+| `SpaceVim` | SpaceVim keeps undo history and swap files here, which hold edits not yet saved. |
+| `vdirsyncer` | vdirsyncer keeps its sync state here; losing it makes the next sync treat every contact and event as changed. |
+| `cliphist` | cliphist keeps your clipboard history here. |
+| `kioexec` | KDE keeps local copies of remote files you are editing here until they are uploaded. |
 <!-- xdg-cache-excludes:end -->
 
 A child whose name is on the denylist (such as `.env*`, `.git`, `*.kdbx` or
