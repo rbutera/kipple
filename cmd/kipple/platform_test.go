@@ -113,6 +113,20 @@ func TestXDGVariablesNotFollowed(t *testing.T) {
 			t.Fatal("~/.cache was not scanned")
 		}
 	})
+	t.Run("The default spelled through a symlinked home is not warned about", func(t *testing.T) {
+		home := linuxFixture(t)
+		link := filepath.Join(filepath.Dir(home), "homelink")
+		if err := os.Symlink(home, link); err != nil {
+			t.Fatal(err)
+		}
+		rt := realHomeEnv(t, link, map[string]string{"XDG_CACHE_HOME": link + "/.cache"})
+		_, out, _ := cliWith(t, rt, "scan", "--json")
+		var p plan.Plan
+		exactlyOneJSON(t, out, &p)
+		if slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, "XDG_CACHE_HOME") }) {
+			t.Fatalf("warnings %q", p.Warnings)
+		}
+	})
 	t.Run("Fixture ignores XDG variables", func(t *testing.T) {
 		home := linuxFixture(t)
 		rt := testEnv(t)
