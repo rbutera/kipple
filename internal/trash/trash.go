@@ -14,6 +14,7 @@
 //     ("name 2", "report 2.pdf"). Apply uses it with the home folder's
 //     .Trash, opened through the policy session; tests use it with any
 //     fixture directory.
+//
 //   - FinderTrasher (finder_darwin.go, darwin with cgo) asks NSFileManager
 //     trashItemAtURL to move the item and returns where it landed. It works
 //     on a path, so it re-checks the item's identity before and after; it is

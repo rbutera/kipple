@@ -5,6 +5,7 @@ package procs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -143,4 +144,13 @@ func (s System) ProcessCwds(ctx context.Context, names []string) ([]string, erro
 		return nil, fmt.Errorf("%w: lsof: %v", ErrUnknown, err)
 	}
 	return cwds, nil
+}
+
+// exitCode returns err's exit code, or -1 when err did not come from an exit.
+func exitCode(err error) int {
+	var ec ExitCoder
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	return -1
 }

@@ -53,15 +53,6 @@ type Runner func(ctx context.Context, name string, args ...string) ([]byte, erro
 // ExitCoder is implemented by *exec.ExitError.
 type ExitCoder interface{ ExitCode() int }
 
-// exitCode returns err's exit code, or -1 when err did not come from an exit.
-func exitCode(err error) int {
-	var ec ExitCoder
-	if errors.As(err, &ec) {
-		return ec.ExitCode()
-	}
-	return -1
-}
-
 var bundleIDPattern = regexp.MustCompile(`bundleID="([^"]+)"`)
 
 // parseLsappinfo extracts bundle IDs from `lsappinfo list`. Output without

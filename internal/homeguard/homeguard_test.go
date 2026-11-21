@@ -29,18 +29,8 @@ func tree(t *testing.T, name string) (base, real string) {
 	return base, real
 }
 
-// exists skips the case when a spelling does not reach a directory on this
-// volume (a case- or normalisation-sensitive file system).
-func exists(t *testing.T, p string) {
-	t.Helper()
-	if fi, err := os.Stat(p); err != nil || !fi.IsDir() {
-		t.Skipf("spelling %q does not resolve on this volume: %v", p, err)
-	}
-}
-
 func TestRelateOnDisk(t *testing.T) {
 	base, real := tree(t, "me")
-	nfdBase, nfcReal := tree(t, "mé") // precomposed é
 	cases := []struct {
 		name      string
 		candidate string
@@ -52,14 +42,9 @@ func TestRelateOnDisk(t *testing.T) {
 		{"Inside the real home", filepath.Join(real, "Documents", "OldMac"), real, homeguard.Inside},
 		{"Ancestor of the real home", filepath.Join(base, "Users"), real, homeguard.Contains},
 		{"Filesystem root", "/", real, homeguard.Contains},
-		{"Long s spelling of the real home", filepath.Join(base, "Uſers", "me"), real, homeguard.Same},
-		{"Long s spelling inside the real home", filepath.Join(base, "Uſers", "me", "Documents", "OldMac"), real, homeguard.Inside},
-		{"NFD spelling inside the real home", filepath.Join(nfdBase, "Users", "mé", "Documents"), nfcReal, homeguard.Inside},
-		{"Upper-case spelling of an ancestor", filepath.Join(base, "USERS"), real, homeguard.Contains},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			exists(t, tc.candidate)
 			got, err := homeguard.Relate(homeguard.System(), tc.candidate, tc.real)
 			if err != nil {
 				t.Fatal(err)

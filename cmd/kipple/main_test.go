@@ -488,17 +488,6 @@ func TestHomeResolution(t *testing.T) {
 		t.Fatal("no items through a symlinked KIPPLE_HOME")
 	}
 
-	upper := filepath.Join(filepath.Dir(home), "HOME")
-	if fi, err := os.Stat(upper); err != nil || !fi.IsDir() {
-		t.Skip("case-sensitive volume")
-	}
-	t.Setenv("KIPPLE_HOME", upper)
-	_, out, _ = cli(t, "scan", "--json")
-	exactlyOneJSON(t, out, &p)
-	if p.Home != home || len(p.Items) == 0 {
-		t.Fatalf("case variant: home %q items %d, want %q", p.Home, len(p.Items), home)
-	}
-
 	for _, bad := range []string{"relative/home", home + "-missing", home + "/Library/Logs/app/log.txt"} {
 		t.Setenv("KIPPLE_HOME", bad)
 		code, out, _ := cli(t, "scan", "--json")
@@ -550,14 +539,10 @@ func TestKippleHomeInsideRealHomeRefused(t *testing.T) {
 		{"Real home itself", real},
 		{"Inside the real home", old},
 		{"Inside the real home through a symlink", link},
-		{"Inside the real home with different case", strings.ToUpper(old[:len(old)-len("OldMac")]) + "OldMac"},
 		{"Ancestor of the real home", filepath.Dir(real)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := os.Stat(tc.home); err != nil {
-				t.Skipf("spelling does not resolve on this volume: %v", err)
-			}
 			t.Setenv("KIPPLE_HOME", tc.home)
 			code, out, errOut := cliWith(t, rt, "scan", "--json")
 			var env errorEnvelope
@@ -591,57 +576,49 @@ func TestKippleHomeInsideRealHomeRefused(t *testing.T) {
 // real folder. Identity decides now. Each case below names a directory in
 // the stand-in real home through an alias that the old string comparison
 // accepted.
+// refusedHome checks that every command refuses KIPPLE_HOME=home (exit 1,
+// code home, naming the real home).
+func refusedHome(t *testing.T, rt runtimeEnv, home string) {
+	t.Helper()
+	if fi, err := os.Stat(home); err != nil || !fi.IsDir() {
+		t.Fatalf("test bug: %s is not a directory: %v", home, err)
+	}
+	t.Setenv("KIPPLE_HOME", home)
+	for _, args := range [][]string{{"scan", "--json"}, {"rules", "--json"}, {"version", "--json"}} {
+		code, out, errOut := cliWith(t, rt, args...)
+		var env errorEnvelope
+		exactlyOneJSON(t, out, &env)
+		if code != exitError || env.Error.Code != codeHome || !strings.Contains(errOut, "real home") {
+			t.Fatalf("%v: exit %d %+v stderr %q", args, code, env, errOut)
+		}
+	}
+}
+
+// mkRealHome makes a stand-in real home <base>/Users/<name> with
+// Documents/OldMac/Library/Caches/com.example.app inside.
+func mkRealHome(t *testing.T, name string) (string, string) {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(base, "Users", name)
+	if err := os.MkdirAll(filepath.Join(real, "Documents", "OldMac", "Library", "Caches", "com.example.app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return base, real
+}
+
+// withRealHome is the test runtime with real as the real home.
+func withRealHome(t *testing.T, real string) runtimeEnv {
+	rt := testEnv(t)
+	rt.realHomes = func() ([]string, error) { return []string{real}, nil }
+	return rt
+}
+
 func TestKippleHomeAliasOfRealHomeRefused(t *testing.T) {
 	fixture(t)
-	refused := func(t *testing.T, rt runtimeEnv, home string) {
-		t.Helper()
-		if fi, err := os.Stat(home); err != nil || !fi.IsDir() {
-			t.Skipf("spelling does not resolve on this volume: %v", err)
-		}
-		t.Setenv("KIPPLE_HOME", home)
-		for _, args := range [][]string{{"scan", "--json"}, {"rules", "--json"}, {"version", "--json"}} {
-			code, out, errOut := cliWith(t, rt, args...)
-			var env errorEnvelope
-			exactlyOneJSON(t, out, &env)
-			if code != exitError || env.Error.Code != codeHome || !strings.Contains(errOut, "real home") {
-				t.Fatalf("%v: exit %d %+v stderr %q", args, code, env, errOut)
-			}
-		}
-	}
-	mkReal := func(t *testing.T, name string) (string, string) {
-		t.Helper()
-		base, err := filepath.EvalSymlinks(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		real := filepath.Join(base, "Users", name)
-		if err := os.MkdirAll(filepath.Join(real, "Documents", "OldMac", "Library", "Caches", "com.example.app"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return base, real
-	}
-	withReal := func(t *testing.T, real string) runtimeEnv {
-		rt := testEnv(t)
-		rt.realHomes = func() ([]string, error) { return []string{real}, nil }
-		return rt
-	}
-
-	t.Run("Long s spelling inside the real home", func(t *testing.T) {
-		base, real := mkReal(t, "me")
-		refused(t, withReal(t, real), filepath.Join(base, "U\u017fers", "me", "Documents", "OldMac"))
-	})
-	t.Run("Long s spelling of the real home", func(t *testing.T) {
-		base, real := mkReal(t, "me")
-		refused(t, withReal(t, real), filepath.Join(base, "U\u017fers", "me"))
-	})
-	t.Run("Long s spelling of an ancestor", func(t *testing.T) {
-		base, real := mkReal(t, "me")
-		refused(t, withReal(t, real), filepath.Join(base, "U\u017fers"))
-	})
-	t.Run("NFD spelling inside the real home", func(t *testing.T) {
-		base, real := mkReal(t, "m\u00e9") // stored precomposed (NFC)
-		refused(t, withReal(t, real), filepath.Join(base, "Users", "me\u0301", "Documents", "OldMac"))
-	})
+	refused, mkReal, withReal := refusedHome, mkRealHome, withRealHome
 
 	// Firmlinks (/System/Volumes/Data/Users/<me> is /Users/<me>) cannot be
 	// made in a temp folder, so a stub identity function models them over
@@ -808,38 +785,6 @@ func scenarioPartialScanCLI(t *testing.T) {
 }
 
 func TestPartialScanCLI(t *testing.T) { t.Run("Partial scan recorded", scenarioPartialScanCLI) }
-
-// Review finding (wave 2 re-review): /System and /System/Volumes contain
-// the real home through the /System/Volumes/Data firmlink. This checks the
-// machine's real home read-only (stat, open and statfs only; kipple does
-// not run against it).
-func TestSystemFoldersContainRealHome(t *testing.T) {
-	if fi, err := os.Stat("/System/Volumes/Data"); err != nil || !fi.IsDir() {
-		t.Skip("no /System/Volumes/Data on this machine")
-	}
-	reals, err := realHomes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := map[string]bool{}
-	for _, real := range reals {
-		if seen[real] {
-			continue
-		}
-		seen[real] = true
-		for _, cand := range []string{"/System", "/System/Volumes", "/System/Volumes/Data", "/"} {
-			t.Run(cand, func(t *testing.T) {
-				rel, err := homeguard.Relate(homeguard.System(), cand, real)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if rel != homeguard.Contains {
-					t.Fatalf("Relate(%q, %q) = %v, want contains", cand, real, rel)
-				}
-			})
-		}
-	}
-}
 
 // Review finding (wave 2 re-review): after the guard approves KIPPLE_HOME,
 // its parent is swapped for a symlink to a stand-in. The scan must refuse

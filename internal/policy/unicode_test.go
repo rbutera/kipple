@@ -45,18 +45,18 @@ func sameObject(a, b string) bool {
 	return okA && okB && ia == ib
 }
 
-// Spec scenario "Unicode alias of a denylisted folder": case-fold aliases of
-// denylisted locations are refused, whether the rule root itself is spelled
-// with the alias or a glob covers it.
-func TestUnicodeAliasOfADenylistedFolder(t *testing.T) {
-	home := unicodeFixture(t)
+// unicodeAliasCase is a fold alias of a denylisted location and the
+// stored spelling it reaches on APFS.
+type unicodeAliasCase struct {
+	name  string
+	rule  Rule
+	alias string
+	real  string
+}
+
+func unicodeAliasCases() []unicodeAliasCase {
 	star := StaticRule{ID: "hypothetical.star", Roots: []string{"*"}, Kind: MatchChildren}
-	cases := []struct {
-		name  string
-		rule  Rule
-		alias string
-		real  string
-	}{
+	return []unicodeAliasCase{
 		{"Long s in Documents", StaticRule{ID: "x", Roots: []string{"Documentſ"}, Kind: MatchChildren}, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
 		{"Long s in Documents under a bare glob root (itself invalid)", star, "Documentſ/taxes.pdf", "Documents/taxes.pdf"},
 		{"Long s in .ssh", StaticRule{ID: "x", Roots: []string{".ſſh"}, Kind: MatchChildren}, ".ſſh/id_ed25519", ".ssh/id_ed25519"},
@@ -67,22 +67,22 @@ func TestUnicodeAliasOfADenylistedFolder(t *testing.T) {
 		{"Capital sharp s in Library/Messages", StaticRule{ID: "x", Roots: []string{"Library/MEẞAGES"}, Kind: MatchChildren}, "Library/MEẞAGES/chat.db", "Library/Messages/chat.db"},
 		{"Kelvin sign in Library/Keychains", StaticRule{ID: "x", Roots: []string{"Library/Keychains"}, Kind: MatchChildren}, "Library/Keychains/login.db", "Library/Keychains/login.db"},
 	}
-	for _, tc := range cases {
+}
+
+// Spec scenario "Unicode alias of a denylisted folder": case-fold aliases of
+// denylisted locations are refused, whether the rule root itself is spelled
+// with the alias or a glob covers it. The lexical layer decides this on
+// every platform; the identity layer's own refusal of the object the alias
+// reaches on APFS is in unicode_darwin_test.go.
+func TestUnicodeAliasOfADenylistedFolder(t *testing.T) {
+	home := unicodeFixture(t)
+	for _, tc := range unicodeAliasCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := authorizeBoth(t, Env{Home: home}, tc.rule, home+"/"+tc.alias); got.Reason != ReasonDenylisted {
 				t.Fatalf("want %q, got %+v", ReasonDenylisted, got)
 			}
 			if !IsDenylisted(tc.alias) {
 				t.Fatalf("IsDenylisted(%q) = false", tc.alias)
-			}
-			// The identity layer refuses it on its own too, wherever the
-			// filesystem resolves the alias to the real object.
-			if !sameObject(home+"/"+tc.alias, home+"/"+tc.real) {
-				t.Skipf("this volume does not resolve %q to %q", tc.alias, tc.real)
-			}
-			comps := strings.Split(tc.alias, "/")
-			if got := checkFilesystem(home, comps, anyType, collectProtectedIDs(home, nil)); got.Reason != ReasonDenylisted {
-				t.Fatalf("identity check alone: want %q, got %+v", ReasonDenylisted, got)
 			}
 		})
 	}
@@ -104,38 +104,6 @@ func TestIdentityRefusesAncestorAlias(t *testing.T) {
 	// A sibling that is not protected passes the identity check.
 	if got := checkFilesystem(home, []string{"Library", "Caches", "plain"}, anyType, collectProtectedIDs(home, nil)); !got.Allowed {
 		t.Errorf("unprotected sibling refused: %+v", got)
-	}
-}
-
-// NFC and NFD spellings name the same directory on APFS. Folding does not
-// normalise, so the identity check is what refuses the other spelling.
-func TestNFCAndNFDSpellings(t *testing.T) {
-	home := unicodeFixture(t)
-	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}, Kind: MatchChildren}
-	if !sameObject(home+"/Library/Caches/"+nfcCafe, home+"/Library/Caches/"+nfdCafe) {
-		t.Skip("this volume is normalisation-sensitive")
-	}
-	cases := []struct {
-		name, protect, candidate string
-	}{
-		{"Protect NFC, fixture and candidate NFD", nfcCafe, nfdCafe},
-		{"Protect NFC, candidate NFC on an NFD fixture dir", nfcCafe, nfcCafe},
-		{"Protect NFD, candidate NFC", nfdCafe, nfcCafe},
-		{"Protect NFC, candidate is a file inside the NFD dir", nfcCafe, nfdCafe + "/blob"},
-		{"Protect NFD, fixture and candidate NFC", "nfc-" + nfdCafe, "nfc-" + nfcCafe},
-		{"Protect NFD, candidate NFD on an NFC fixture dir", "nfc-" + nfdCafe, "nfc-" + nfdCafe},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			env := Env{Home: home, Protect: []string{home + "/Library/Caches/" + tc.protect}}
-			rule := caches
-			if strings.Contains(tc.candidate, "/") {
-				rule = StaticRule{ID: "x", Roots: []string{"Library/Caches/" + strings.Split(tc.candidate, "/")[0]}, Kind: MatchChildren}
-			}
-			if got := authorizeBoth(t, env, rule, home+"/Library/Caches/"+tc.candidate); got.Reason != ReasonUserProtected {
-				t.Fatalf("want %q, got %+v", ReasonUserProtected, got)
-			}
-		})
 	}
 }
 
@@ -182,7 +150,6 @@ func TestConfusableRune(t *testing.T) {
 func TestStoredNameMismatch(t *testing.T) {
 	home := unicodeFixture(t)
 	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}, Kind: MatchChildren}
-	libGlob := StaticRule{ID: "x", Roots: []string{"Library/*/sample"}, Kind: MatchChildren}
 	cases := []struct {
 		name string
 		rule Rule
@@ -193,17 +160,11 @@ func TestStoredNameMismatch(t *testing.T) {
 		{"Stored spelling is allowed", caches, "Library/Caches/sample", "", ""},
 		{"Stored NFD spelling is allowed", caches, "Library/Caches/" + nfdCafe, "", ""},
 		{"Stored NFC spelling is allowed", caches, "Library/Caches/nfc-" + nfcCafe, "", ""},
-		{"Case variant of the item", caches, "Library/Caches/SAMPLE", "Library/Caches/sample", ReasonNameMismatch},
-		{"Long s variant of the item", caches, "Library/Caches/ſample", "Library/Caches/sample", ReasonNameMismatch},
-		{"NFC spelling of an NFD-stored item", caches, "Library/Caches/" + nfcCafe, "Library/Caches/" + nfdCafe, ReasonNameMismatch},
-		{"NFD spelling of an NFC-stored item", caches, "Library/Caches/nfc-" + nfdCafe, "Library/Caches/nfc-" + nfcCafe, ReasonNameMismatch},
-		{"Case variant in the middle of the path", libGlob, "Library/CACHES/sample/blob", "Library/Caches/sample/blob", ReasonNameMismatch},
 	}
+	// The alias spellings APFS resolves to another entry are in
+	// TestStoredNameMismatchAliases (unicode_darwin_test.go).
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.real != "" && !sameObject(home+"/"+tc.rel, home+"/"+tc.real) {
-				t.Skip("this volume does not alias the spelling")
-			}
 			got := authorizeBoth(t, Env{Home: home}, tc.rule, home+"/"+tc.rel)
 			if tc.want == "" {
 				if !got.Allowed {
@@ -223,54 +184,5 @@ func TestStoredNameMismatch(t *testing.T) {
 	hasStored = func(string, string) (bool, error) { return false, fs.ErrPermission }
 	if got := Authorize(Env{Home: home}, caches, home+"/Library/Caches/sample"); got.Reason != ReasonPermissionDenied {
 		t.Fatalf("unlistable parent: want %q, got %+v", ReasonPermissionDenied, got)
-	}
-}
-
-// With the inode identity check switched off, the stored-name check alone
-// refuses every alias spelling with name_mismatch: case, long s and both
-// NFC/NFD directions, including aliases of a user-protected folder that the
-// lexical protect check does not match.
-func TestStoredNameWithoutIdentityCheck(t *testing.T) {
-	home := unicodeFixture(t)
-	orig := collectIDs
-	t.Cleanup(func() { collectIDs = orig })
-	collectIDs = func(string, []string) *protectedIDs {
-		return &protectedIDs{objects: map[fileID]string{}, ancestors: map[fileID]string{}, stats: map[string]statResult{}}
-	}
-	caches := StaticRule{ID: "caches.user", Roots: []string{"Library/Caches"}, Kind: MatchChildren}
-	cases := []struct {
-		name    string
-		protect string // home-relative, "" for none
-		alias   string
-		real    string
-	}{
-		{"Case variant", "", "Library/Caches/SAMPLE", "Library/Caches/sample"},
-		{"Long s variant", "", "Library/Caches/ſample", "Library/Caches/sample"},
-		{"NFC spelling of an NFD-stored folder", "", "Library/Caches/" + nfcCafe, "Library/Caches/" + nfdCafe},
-		{"NFD spelling of an NFC-stored folder", "", "Library/Caches/nfc-" + nfdCafe, "Library/Caches/nfc-" + nfcCafe},
-		{"Protected folder stored NFD, typed NFD, candidate NFC", "Library/Caches/" + nfdCafe, "Library/Caches/" + nfcCafe, "Library/Caches/" + nfdCafe},
-		{"Protected folder stored NFC, typed NFC, candidate NFD", "Library/Caches/nfc-" + nfcCafe, "Library/Caches/nfc-" + nfdCafe, "Library/Caches/nfc-" + nfcCafe},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if !sameObject(home+"/"+tc.alias, home+"/"+tc.real) {
-				t.Skip("this volume does not alias the spelling")
-			}
-			env := Env{Home: home}
-			if tc.protect != "" {
-				env.Protect = []string{home + "/" + tc.protect}
-			}
-			if got := authorizeBoth(t, env, caches, home+"/"+tc.alias); got.Reason != ReasonNameMismatch {
-				t.Fatalf("want %q, got %+v", ReasonNameMismatch, got)
-			}
-			// The stored spelling itself is still decided normally.
-			want := ""
-			if tc.protect != "" {
-				want = ReasonUserProtected
-			}
-			if got := authorizeBoth(t, env, caches, home+"/"+tc.real); got.Reason != want {
-				t.Fatalf("stored spelling: want %q, got %+v", want, got)
-			}
-		})
 	}
 }

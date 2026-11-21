@@ -11,10 +11,35 @@ package testutil
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestGuardRealHomeByAPFSAlias(t *testing.T) {
+	homes, err := realHomeDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := NewHome(t, Spec{})
+	t.Run("KIPPLE_HOME is a long s spelling of the real home", func(t *testing.T) {
+		real := homes[0]
+		i := strings.IndexAny(real, "sS")
+		if i < 0 {
+			t.Skip("real home path has no s to respell")
+		}
+		alias := real[:i] + "\u017f" + real[i+1:]
+		if fi, err := os.Stat(alias); err != nil || !fi.IsDir() {
+			t.Skipf("long s does not fold on this volume: %v", err)
+		}
+		t.Setenv("KIPPLE_HOME", alias)
+		t.Setenv("KIPPLE_STATE_DIR", StateDir(fixture))
+		f := &fakeTB{TB: t}
+		GuardRealHome(f)
+		if !f.failed {
+			t.Fatalf("guard passed %q", alias)
+		}
+	})
+
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

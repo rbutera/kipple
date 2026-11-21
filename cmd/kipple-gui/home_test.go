@@ -1,4 +1,8 @@
-//go:build gui
+//go:build gui && darwin
+
+// The GUI is macOS-only in v0.3.0 (linux-port design L11): its tests use
+// macOS fonts, Finder and the Full Disk Access flow, so they build only on
+// macOS.
 
 package main
 
