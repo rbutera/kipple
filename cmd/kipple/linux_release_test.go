@@ -55,9 +55,7 @@ func TestNoLinuxGUIArtifact(t *testing.T) {
 }
 
 // Spec scenarios "Linux failure blocks release" and "Runner home
-// unchanged" (distribution), workflow side: the Ubuntu job is part of the
-// CI workflow whose success the release gate requires, and it brackets the
-// tests with a listing of the runner home that must not change.
+// unchanged" (distribution), workflow side, one subtest each.
 func TestLinuxCIJob(t *testing.T) {
 	ci := readRepoFile(t, ".github/workflows/ci.yml")
 	i := strings.Index(ci, "\n  linux:\n")
@@ -65,20 +63,45 @@ func TestLinuxCIJob(t *testing.T) {
 		t.Fatal("ci.yml has no linux job")
 	}
 	job := ci[i:]
-	mustContain(t, "ci.yml linux job", job,
-		"runs-on: ubuntu-latest", "make fmt-check", "GOOS: linux", "go vet ./...", "make check-no-real-home",
-		"go test -race -count=1 ./...", "go build ./...", `CGO_ENABLED: "0"`, "scripts/agent-flow-check.sh",
-		"make test-linux-mounts", "GOCACHE=${RUNNER_TEMP}", "GOMODCACHE=${RUNNER_TEMP}", "go telemetry off",
-		"name: Snapshot the runner home", "name: Runner home unchanged", "go build -tags gui", "-run 'TestLinuxRefusal'",
-	)
-	snap, check := strings.Index(job, "Snapshot the runner home"), strings.Index(job, "Runner home unchanged")
-	for _, step := range []string{"go test -race -count=1 ./...", "scripts/agent-flow-check.sh", "make test-linux-mounts"} {
-		if k := strings.Index(job, step); k < snap || k > check {
-			t.Errorf("%q does not run between the two home listings", step)
+
+	// The Ubuntu job is part of the CI workflow whose success the release
+	// gate requires, so its failure stops a release.
+	t.Run("Linux failure blocks release", func(t *testing.T) {
+		mustContain(t, "ci.yml linux job", job,
+			"runs-on: ubuntu-latest", "timeout-minutes:", "make fmt-check", "GOOS: linux", "go vet ./...", "make check-no-real-home",
+			"go test -race -count=1 ./...", "go build ./...", `CGO_ENABLED: "0"`, "scripts/agent-flow-check.sh",
+			"make test-linux-mounts", "go build -tags gui", "-run 'TestLinuxRefusal'",
+		)
+		rel := readRepoFile(t, ".github/workflows/release.yml")
+		mustContain(t, "release.yml", rel, "actions/workflows/ci.yml/runs", `.conclusion == "success"`, "needs: ci-green")
+	})
+
+	// Every test step runs between the two listings of the runner home,
+	// the check is the job's last step, and nothing that writes under home
+	// by design (sudo apt) runs between them.
+	t.Run("Runner home unchanged", func(t *testing.T) {
+		mustContain(t, "ci.yml linux job", job, "GOCACHE=${RUNNER_TEMP}", "GOMODCACHE=${RUNNER_TEMP}", "go telemetry off",
+			`-path "$HOME/runners/*/_diag"`)
+		if strings.Contains(job, "-name _diag") {
+			t.Error("the listings prune every _diag folder, not only the runner's")
 		}
-	}
-	rel := readRepoFile(t, ".github/workflows/release.yml")
-	mustContain(t, "release.yml", rel, "actions/workflows/ci.yml/runs", `.conclusion == "success"`, "needs: ci-green")
+		snap := strings.Index(job, "- name: Snapshot the runner home")
+		check := strings.Index(job, "- name: Runner home unchanged")
+		if snap < 0 || check < snap {
+			t.Fatal("the job lacks the two home listings in order")
+		}
+		for _, step := range []string{"go test -race -count=1 ./...", "scripts/agent-flow-check.sh", "make test-linux-mounts", "go build -tags gui", "-run 'TestLinuxRefusal'"} {
+			if k := strings.Index(job, step); k < snap || k > check {
+				t.Errorf("%q does not run between the two home listings", step)
+			}
+		}
+		if k := strings.Index(job, "sudo apt-get"); k < 0 || k > snap {
+			t.Error("the GUI packages are not installed before the first home listing")
+		}
+		if strings.Contains(job[check+len("- name: Runner home unchanged"):], "- name:") || strings.Contains(job[check:], "- uses:") {
+			t.Error("Runner home unchanged is not the job's last step")
+		}
+	})
 }
 
 // Task 3.7: the v0.3.0 release notes cover what the task lists: the Linux
