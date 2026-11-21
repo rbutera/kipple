@@ -85,17 +85,17 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
 
 ## 3. Wave 3: CI, release, GUI decision, docs, v0.3.0
 
-- [ ] 3.1 Add the `linux` job to `.github/workflows/ci.yml` on `ubuntu-latest`, with actions pinned by SHA. The runner user is not root, and the suite's root guard would fail otherwise. Steps:
+- [x] 3.1 Add the `linux` job to `.github/workflows/ci.yml` on `ubuntu-latest`, with actions pinned by SHA. The runner user is not root, and the suite's root guard would fail otherwise. Steps:
   - `make fmt-check`, `golangci-lint` with `GOOS=linux`, `go vet`, `make check-no-real-home`, `go test -race -count=1 ./...`, `go build ./...`;
   - a `CGO_ENABLED=0` build of `cmd/kipple` run through `scripts/agent-flow-check.sh`;
   - `GOCACHE` and `GOMODCACHE` under `$RUNNER_TEMP`, and a `find ~ -xdev` snapshot before and after the tests that fails the job on any change ("Runner home unchanged").
 
   Verify: `actionlint` passes locally; the orchestrator checks the first run, in which a scratch commit that writes under `$HOME` from a test makes the job fail; and a green run on the branch.
-- [ ] 3.2 Add a CI step that runs `make test-linux-mounts` on the Ubuntu runner (privileged container, fixture only). Verify with `actionlint` and the job's output listing the "Real mounts checked" assertions.
+- [x] 3.2 Add a CI step that runs `make test-linux-mounts` on the Ubuntu runner (privileged container, fixture only). Verify with `actionlint` and the job's output listing the "Real mounts checked" assertions.
 - [ ] 3.3 Apply the GUI decision (design L11):
   - `cmd/kipple-gui` exits 1 on Linux before Fyne starts, with a message naming `kipple tui`;
   - the GUI tests are `gui && darwin`, except the refusal test;
-  - CI compiles `go build -tags gui ./cmd/kipple-gui` on Ubuntu with `libgl1-mesa-dev xorg-dev` installed.
+  - CI compiles `go build -tags gui ./cmd/kipple-gui` on Ubuntu with `libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev` installed.
 
   Verify: "GUI started on Linux" in CI (`go test -tags gui -run TestLinuxRefusal`), "No Linux GUI artifact" in the snapshot release, and `TestDefaultBuildHasNoFyne` still passing on both OSes.
 - [ ] 3.4 Add the `kipple-linux` build and archives to `.goreleaser.yaml`: linux amd64 and arm64, `CGO_ENABLED=0`, `-trimpath`, the same ldflags, and LICENSE, README and docs/safety.md in the archive. They share `checksums.txt` and the cosign signing. Verify: "Linux archives in the signed checksums" via `make release-snapshot`; `file` reports static binaries; and the arm64 tarball's binary, run in the container, prints `os: linux` in `kipple version --json`.

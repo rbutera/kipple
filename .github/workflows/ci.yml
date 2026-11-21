@@ -80,3 +80,91 @@ jobs:
         run: |
           go build -tags gui -o "${RUNNER_TEMP}/kipple-gui" ./cmd/kipple-gui
           scripts/build-app.sh "${RUNNER_TEMP}/kipple-gui" 0.0.0-ci "${RUNNER_TEMP}/kipple.app.zip"
+
+  # Linux (openspec/changes/linux-port design L13). The runner user is not
+  # root, which the suite requires (testutil.GuardedMain refuses euid 0).
+  # Go's caches live under $RUNNER_TEMP, Docker's client config too, and Go
+  # telemetry is off, so a listing of the home folder taken before the
+  # tests must match the one taken after them: the job fails naming any
+  # path a test created, changed or removed under the runner's home.
+  linux:
+    name: Linux (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep caches out of the home folder
+        run: |
+          {
+            echo "GOCACHE=${RUNNER_TEMP}/go-build"
+            echo "GOMODCACHE=${RUNNER_TEMP}/gomod"
+            echo "GOPATH=${RUNNER_TEMP}/gopath"
+            echo "GOLANGCI_LINT_CACHE=${RUNNER_TEMP}/golangci-lint"
+            echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker"
+            echo "GOTOOLCHAIN=local"
+          } >>"$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: Go telemetry off
+        run: go telemetry off
+      - name: gofmt
+        run: make fmt-check
+      - name: golangci-lint (GOOS=linux)
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
+        env:
+          GOOS: linux
+        with:
+          version: v2.15.0
+      - name: golangci-lint (GOOS=linux, kipple_permanent tag)
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
+        env:
+          GOOS: linux
+        with:
+          version: v2.15.0
+          args: --build-tags kipple_permanent
+      - name: Snapshot the runner home
+        # Path, type, mode, owner, group, size, mtime, ctime and inode, as
+        # test/linux/run.sh does. The workspace and $RUNNER_TEMP (under
+        # ~/work) and the runner's own logs (_diag) change by design.
+        run: |
+          find ~ -xdev \( -path "$HOME/work" -o -name _diag \) -prune -o -printf '%p %y %m %U %G %s %T@ %C@ %i\n' |
+            LC_ALL=C sort >"${RUNNER_TEMP}/home-before.txt"
+          wc -l <"${RUNNER_TEMP}/home-before.txt"
+      - name: go vet
+        run: go vet ./...
+      - name: No real home
+        run: make check-no-real-home
+      - name: go test -race
+        run: go test -race -count=1 ./...
+      - name: go test -race (kipple_permanent tag)
+        run: go test -race -count=1 -tags kipple_permanent ./internal/apply/... ./cmd/...
+      - name: go build
+        run: go build ./...
+      - name: README agent flow with a cgo-free binary against a fixture
+        env:
+          CGO_ENABLED: "0"
+        run: scripts/agent-flow-check.sh
+      - name: Real mounts in a privileged container (fixture only)
+        # Fails, never passes silently, if Docker refuses --privileged.
+        run: make test-linux-mounts
+      - name: Runner home unchanged
+        run: |
+          find ~ -xdev \( -path "$HOME/work" -o -name _diag \) -prune -o -printf '%p %y %m %U %G %s %T@ %C@ %i\n' |
+            LC_ALL=C sort >"${RUNNER_TEMP}/home-after.txt"
+          if ! cmp -s "${RUNNER_TEMP}/home-before.txt" "${RUNNER_TEMP}/home-after.txt"; then
+            echo "::error::the runner home folder changed during the tests (hard rule 1):"
+            diff "${RUNNER_TEMP}/home-before.txt" "${RUNNER_TEMP}/home-after.txt" || true
+            exit 1
+          fi
+          echo "Runner home unchanged."
+      # The GUI is macOS-only in v0.3.0 (design L11), but it must keep
+      # compiling on Linux, and on Linux it must refuse to start.
+      - name: GUI build dependencies
+        # glfw 3.4 also compiles its Wayland backend, hence the last two.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+      - name: go vet -tags gui
+        run: go vet -tags gui ./cmd/kipple-gui/...
+      - name: go build -tags gui
+        run: go build -tags gui -o "${RUNNER_TEMP}/kipple-gui" ./cmd/kipple-gui
+      - name: GUI started on Linux refuses
+        run: go test -count=1 -v -tags gui -run 'TestLinuxRefusal' ./cmd/kipple-gui/...
