@@ -21,7 +21,7 @@ func TestGUIRelease(t *testing.T) {
 	if strings.Count(gr, "glob: ./dist/kipple-gui_*_darwin_universal.app.zip") != 2 {
 		t.Error("the .app zip is not in both checksum.extra_files and release.extra_files")
 	}
-	if !strings.Contains(gr, "ids: [kipple, kipple-universal]") {
+	if !strings.Contains(gr, "ids: [kipple, kipple-universal, kipple-linux]") {
 		t.Error("the CLI archives no longer name exactly the CLI builds")
 	}
 	app := readRepoFile(t, "scripts/build-app.sh")

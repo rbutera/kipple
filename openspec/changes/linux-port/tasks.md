@@ -98,7 +98,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
   - CI compiles `go build -tags gui ./cmd/kipple-gui` on Ubuntu with `libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev` installed.
 
   Verify: "GUI started on Linux" in CI (`go test -tags gui -run TestLinuxRefusal`), "No Linux GUI artifact" in the snapshot release, and `TestDefaultBuildHasNoFyne` still passing on both OSes.
-- [ ] 3.4 Add the `kipple-linux` build and archives to `.goreleaser.yaml`: linux amd64 and arm64, `CGO_ENABLED=0`, `-trimpath`, the same ldflags, and LICENSE, README and docs/safety.md in the archive. They share `checksums.txt` and the cosign signing. Verify: "Linux archives in the signed checksums" via `make release-snapshot`; `file` reports static binaries; and the arm64 tarball's binary, run in the container, prints `os: linux` in `kipple version --json`.
+- [x] 3.4 Add the `kipple-linux` build and archives to `.goreleaser.yaml`: linux amd64 and arm64, `CGO_ENABLED=0`, `-trimpath`, the same ldflags, and LICENSE, README and docs/safety.md in the archive. They share `checksums.txt` and the cosign signing. Verify: "Linux archives in the signed checksums" via `make release-snapshot`; `file` reports static binaries; and the arm64 tarball's binary, run in the container, prints `os: linux` in `kipple version --json`.
 - [ ] 3.5 Update the README:
   - Linux install: tarball with checksum and cosign verification, plus `go install`;
   - a "Linux" section: Trash location, file-manager restore, differences from macOS, NFS and container limits;

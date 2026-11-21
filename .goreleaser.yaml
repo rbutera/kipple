@@ -5,7 +5,8 @@
 #
 # The release workflow (.github/workflows/release.yml) runs this on a v* tag
 # once CI is green for the same commit, and signs checksums.txt with cosign
-# keyless (GitHub OIDC). The CLI ships as tar.gz archives; the optional GUI
+# keyless (GitHub OIDC). The CLI ships as tar.gz archives for macOS (cgo,
+# ad-hoc signed) and Linux (static, cgo off); the optional macOS-only GUI
 # ships separately as kipple-gui_<version>_darwin_universal.app.zip, built by
 # scripts/build-app.sh from the universal kipple-gui binary (ad-hoc signed,
 # not notarised), and listed in checksums.txt like every other artifact.
@@ -40,6 +41,22 @@ builds:
         # roadmap; until then macOS may still ask before the first run.
         - cmd: codesign --force --sign - "{{ .Path }}"
           output: true
+
+  # Linux CLI (openspec/changes/linux-port design L13): cross-compiled on
+  # the macOS runner with cgo off, so the binaries are static; nothing on
+  # Linux needs cgo. No codesign hook. The GUI is macOS-only in v0.3.x.
+  - id: kipple-linux
+    main: ./cmd/kipple
+    binary: kipple
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }} -X main.date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
   # The optional GUI (design D13): built only with the gui tag, released
   # only as the .app zip below, never inside the CLI archives.
@@ -85,9 +102,10 @@ universal_binaries:
 
 archives:
   - id: kipple
-    ids: [kipple, kipple-universal]
+    ids: [kipple, kipple-universal, kipple-linux]
     formats: [tar.gz]
-    # kipple_0.1.0_darwin_arm64.tar.gz, ..._amd64, ..._universal
+    # kipple_0.1.0_darwin_arm64.tar.gz, ..._amd64, ..._universal,
+    # kipple_0.1.0_linux_amd64.tar.gz, ..._arm64
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}
     files:
