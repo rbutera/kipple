@@ -144,9 +144,48 @@ func Resolve(rt Runtime) (Home, error) {
 	if h.GOOS == "linux" {
 		h.UserDirs = loadUserDirs(home, id)
 		h.Warnings = append(h.Warnings, h.UserDirs.Warnings...)
+		if !fromEnv {
+			h.Warnings = append(h.Warnings, XDGWarnings(rt.Getenv, home)...)
+		}
 	}
 	return h, nil
 }
+
+// xdgVars are the XDG base directory variables kipple does not follow,
+// with their default home-relative locations (design L6).
+var xdgVars = []struct{ name, def string }{
+	{"XDG_CACHE_HOME", ".cache"},
+	{"XDG_DATA_HOME", ".local/share"},
+	{"XDG_CONFIG_HOME", ".config"},
+	{"XDG_STATE_HOME", ".local/state"},
+}
+
+// XDGWarnings returns a plan warning for every XDG_*_HOME variable set to
+// an absolute path other than its default: kipple scans only the default
+// locations, never one outside home, and for XDG_DATA_HOME the desktop's
+// Trash may be elsewhere. cmd/ calls it only for the real home: with
+// KIPPLE_HOME the variables are ignored entirely.
+func XDGWarnings(getenv func(string) string, home string) []string {
+	var out []string
+	for _, v := range xdgVars {
+		val := getenv(v.name)
+		if val == "" || !filepath.IsAbs(val) || filepath.Clean(val) == home+"/"+v.def {
+			continue
+		}
+		w := fmt.Sprintf("%s is set to %s, but kipple does not follow it: it scans only the default location ~/%s", v.name, filepath.Clean(val), v.def)
+		if !strings.HasPrefix(filepath.Clean(val)+"/", home+"/") {
+			w += ", and never looks outside your home folder"
+		}
+		if v.name == "XDG_DATA_HOME" {
+			w += "; your desktop's Trash may be under it, so put items back with kipple restore rather than the file manager"
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// Supported reports whether kipple runs on goos (design: macOS and Linux).
+func Supported(goos string) bool { return goos == "darwin" || goos == "linux" }
 
 // loadUserDirs reads ~/.config/user-dirs.dirs relative to the approved
 // home's descriptor; anything wrong with it is a warning in the result.

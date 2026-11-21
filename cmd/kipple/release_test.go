@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -144,7 +145,10 @@ func TestTaggedBuild(t *testing.T) {
 func TestVersionReportsTrashFallback(t *testing.T) {
 	code, out, _ := cli(t, "version")
 	want := "Trash fallback (Apple's Trash API): built in"
-	if !trash.FinderAvailable {
+	switch {
+	case runtime.GOOS != "darwin":
+		want = "Trash: ~/.local/share/Trash (freedesktop.org)"
+	case !trash.FinderAvailable:
 		want = "Trash fallback (Apple's Trash API): not built in"
 	}
 	if code != exitOK || !strings.Contains(out, want) {

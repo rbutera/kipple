@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -55,6 +56,8 @@ const (
 	// codeMountsUnavailable: mount points cannot be determined (Linux), so
 	// apply moves nothing.
 	codeMountsUnavailable = "mounts_unavailable"
+	// codeUnsupportedPlatform: kipple runs on macOS and Linux only.
+	codeUnsupportedPlatform = "unsupported_platform"
 )
 
 // runtimeEnv is the process environment, injectable for tests.
@@ -261,7 +264,10 @@ func (a *app) rootCommand() *cobra.Command {
 			}
 			return c.Help()
 		},
-		PersistentPreRunE: func(*cobra.Command, []string) error {
+		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
+			if goos := a.goos(); !launch.Supported(goos) && c.Name() != "version" && c.Name() != "help" {
+				return fail(codeUnsupportedPlatform, "kipple runs on macOS and Linux only, not on %s; nothing was read or changed", goos)
+			}
 			if a.level != "" && a.level != rules.LevelSafe && a.level != rules.LevelReview {
 				return usageErr("--level must be %q or %q, not %q", rules.LevelSafe, rules.LevelReview, a.level)
 			}
@@ -351,6 +357,14 @@ func launchErr(err error) error {
 		return fail(le.Code, "%s", le.Msg)
 	}
 	return err
+}
+
+// goos is the platform kipple acts as: the running one, or a test's.
+func (a *app) goos() string {
+	if a.rt.goos != "" {
+		return a.rt.goos
+	}
+	return rules.Platform()
 }
 
 func (a *app) resolve() (homeEnv, error) {
@@ -559,6 +573,10 @@ type versionDocument struct {
 	// (cgo on macOS), used when ~/.Trash cannot be opened.
 	TrashFallback bool   `json:"trash_fallback"`
 	Home          string `json:"home,omitempty"`
+	// OS and Arch are the platform the binary was built for, in Go's
+	// names (darwin, linux; amd64, arm64).
+	OS   string `json:"os"`
+	Arch string `json:"arch"`
 }
 
 func (a *app) versionCommand() *cobra.Command {
@@ -567,7 +585,7 @@ func (a *app) versionCommand() *cobra.Command {
 		Short: "Print the version, commit and document schema version",
 		Args:  noArgs,
 		RunE: func(*cobra.Command, []string) error {
-			doc := versionDocument{Version: version, Commit: commit, Date: date, SchemaVersion: plan.SchemaVersion, TrashFallback: trash.FinderAvailable}
+			doc := versionDocument{Version: version, Commit: commit, Date: date, SchemaVersion: plan.SchemaVersion, TrashFallback: trash.FinderAvailable, OS: runtime.GOOS, Arch: runtime.GOARCH}
 			// version needs no home, so without KIPPLE_HOME it prints none.
 			// With KIPPLE_HOME set every output names the effective home
 			// (spec "Test home override"), so a refused one is an error here
@@ -584,11 +602,16 @@ func (a *app) versionCommand() *cobra.Command {
 				if doc.Date != "" {
 					built = ", built " + doc.Date
 				}
-				fallback := "built in"
-				if !doc.TrashFallback {
-					fallback = "not built in (built without cgo): without Full Disk Access, clean --apply stops with trash_access"
+				var trashLine string
+				switch {
+				case doc.OS != "darwin":
+					trashLine = "Trash: ~/.local/share/Trash (freedesktop.org)"
+				case doc.TrashFallback:
+					trashLine = "Trash fallback (Apple's Trash API): built in"
+				default:
+					trashLine = "Trash fallback (Apple's Trash API): not built in (built without cgo): without Full Disk Access, clean --apply stops with trash_access"
 				}
-				_, err := fmt.Fprintf(w, "kipple %s (commit %s%s, schema_version %d)\nTrash fallback (Apple's Trash API): %s\n", doc.Version, doc.Commit, built, doc.SchemaVersion, fallback)
+				_, err := fmt.Fprintf(w, "kipple %s (commit %s%s, schema_version %d)\nPlatform: %s/%s\n%s\n", doc.Version, doc.Commit, built, doc.SchemaVersion, doc.OS, doc.Arch, trashLine)
 				if err == nil && doc.Home != "" {
 					_, err = fmt.Fprintf(w, "home %s\n", output.SafeText(doc.Home))
 				}
