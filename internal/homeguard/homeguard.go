@@ -138,6 +138,17 @@ func RelateID(fsys FS, candidate, real string) (Relation, ID, error) {
 			return Inside, c[0], nil
 		}
 	}
+	// A candidate holding a bind mount of the real home or of part of it
+	// (on the mount point's ".." chain) contains that part of home.
+	for _, mp := range append(append([]string(nil), al.Real...), al.Inside...) {
+		chain, err := fsys.Chain(mp, false)
+		if err != nil {
+			return Separate, c[0], fmt.Errorf("cannot identify %q: %w", mp, err)
+		}
+		if contains(chain[1:], c[0]) {
+			return Contains, c[0], nil
+		}
+	}
 	return Separate, c[0], nil
 }
 

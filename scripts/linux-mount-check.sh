@@ -156,6 +156,55 @@ if [ "$entries" -eq 1 ] && [ -e "$fx/.local/share/Trash/files/plain/blob" ]; the
 after="$(tree "$fx")"
 if [ "$before" = "$after" ]; then ok "nothing else in the fixture changed (sha256 tree)"; else fail "the fixture changed:"; diff <(echo "$before") <(echo "$after") || true; fi
 
+# 3. A btrfs home (wave 2 red-team R5): stat's device is per subvolume and
+#    never mountinfo's, which made every KIPPLE_HOME refused. A loop btrfs
+#    image with a subvolume @home mounted at /bh stands in for the real
+#    home (HOME=/bh/kh). Only the loop device attached here is detached.
+btrfs_check() {
+	local img=/tmp/btrfs.img lo
+	truncate -s 300M "$img"
+	mkfs.btrfs -q "$img" >/dev/null
+	lo="$(losetup -f --show "$img")"
+	mkdir -p /tmp/bt /tmp/bh
+	mount "$lo" /tmp/bt
+	btrfs -q subvolume create /tmp/bt/@home
+	mkdir -p /tmp/bt/@home/kh
+	mount -o subvol=@home "$lo" /tmp/bh
+	btrfs -q subvolume create /tmp/bh/fx
+	mkfile /tmp/bh/fx/.cache/a/blob "a"
+	btrfs -q subvolume create /tmp/bh/fx/.cache/sub
+	mkfile /tmp/bh/fx/.cache/sub/blob "s"
+	mkdir -p /tmp/bh/fx/.local/share/Trash/files /tmp/bh/fx/.local/share/Trash/info /tmp/btfx /tmp/btstate
+	mkfile /tmp/btfx/.cache/b/blob "b"
+	chmod 700 /tmp/bh/fx/.local/share/Trash /tmp/bh/fx/.local/share/Trash/files /tmp/bh/fx/.local/share/Trash/info
+	chown -R 1000:1000 /tmp/bt /tmp/bh /tmp/btfx /tmp/btstate
+	find /tmp/bh/fx /tmp/btfx -exec touch -h -d "$old" {} +
+	bt_user() {
+		setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
+			env HOME="$1" PATH=/usr/bin:/bin KIPPLE_HOME="$2" KIPPLE_STATE_DIR=/tmp/btstate "${@:3}"
+	}
+	set +e
+	bt_user /tmp/bh/kh /tmp/btfx "$K" scan --json >"$work/bt1.json" 2>"$work/bt1.err"
+	c1=$?
+	bt_user /tmp/bh/kh /tmp/bt/@home/kh "$K" scan --json >"$work/bt2.json" 2>"$work/bt2.err"
+	c2=$?
+	bt_user /tmp/btfx /tmp/bh/fx "$K" scan --json >"$work/bt3.json" 2>"$work/bt3.err"
+	c3=$?
+	bt_user /tmp/btfx /tmp/bh/fx "$K" clean --apply --json >"$work/bt4.json" 2>"$work/bt4.err"
+	c4=$?
+	set -e
+	if [ "$c1" -eq 0 ]; then ok "btrfs home: a separate KIPPLE_HOME fixture is accepted"; else fail "btrfs home: fixture refused (exit $c1): $(cat "$work/bt1.err")"; fi
+	if [ "$c2" -eq 1 ] && grep -q "real home" "$work/bt2.err"; then ok "btrfs home: the home through the top-level mount is refused"; else fail "btrfs home: alias accepted (exit $c2)"; fi
+	r="$(jq -r '[.items[] | select(.path == "/tmp/bh/fx/.cache/sub") | .reasons[]] | join(",")' "$work/bt3.json")"
+	if [ "$c3" -eq 0 ] && { [ -z "$r" ] || [[ "$r" == *different_device* ]]; }; then ok "btrfs fixture: a subvolume item is not offered (${r:-not listed})"; else fail "btrfs fixture: subvolume item reasons [$r] (exit $c3)"; fi
+	if [ -e /tmp/bh/fx/.local/share/Trash/files/a/blob ] && [ -e /tmp/bh/fx/.cache/sub/blob ]; then ok "btrfs fixture: the plain item moved, the subvolume stayed (exit $c4)"; else fail "btrfs fixture: clean --apply exit $c4: $(cat "$work/bt4.err")"; fi
+	umount /tmp/bh
+	umount /tmp/bt
+	losetup -d "$lo"
+	rm -f "$img"
+}
+btrfs_check
+
 if [ "$failures" -ne 0 ]; then
 	echo "linux-mount-check: $failures failure(s)"
 	exit 1
