@@ -13,6 +13,8 @@ See proposal.md for why. kipple v0.2.0 is macOS-only, but design D17 of kipple-v
 - `rules.Catalogue()` is one macOS list; D17 promised tagging of macOS-only rules, which was not done.
 - The state directory is `~/Library/Application Support/kipple`.
 
+Baseline (team lead, 2026-11-21): the current suite run in Docker (`golang:1.23`, linux/arm64, repo read-only, `HOME=/tmp/h`) passes 14 packages and fails 10 (`cmd/kipple`, `internal/{apply,guimodel,policy,receipt,scan,sizes,testutil,trash,tui}`), 92 tests. Almost all of them fail with "trash: not supported on this platform or build" or on the missing move and procs seams. A few are policy and session device-identity tests, and the chmod-based permission tests (`TestPermissionDenied`, `TestUnreadable*`, `TestReadOnlyDirectoryItem`) failed because that container ran as root, where permission bits do not apply. Most failing CLI, TUI and restore tests go through apply into the platform Trash. So making the whole default suite pass on Linux needs the Trash, apply, restore and `/proc` mechanics, and the wave order follows from that (see Migration Plan).
+
 Constraints: AGENTS.md hard rules apply unchanged on Linux. No test, script or harness may touch the real home of any machine, including the CI runner's `/home/runner` and the colima VM. kipple refuses to run as root, so the container harness must run tests as a non-root user. No new dependencies.
 
 ## Goals / Non-Goals
@@ -223,6 +225,7 @@ Alternative: ship the Linux GUI in v0.3.0 (rejected for the reasons above).
 ### L12. Testing
 
 - **Fixtures only.** Every test still builds homes with `testutil.NewHome` in `t.TempDir()` and sets `KIPPLE_HOME` and `KIPPLE_STATE_DIR`. The Trash in every apply test is the fixture's own `.local/share/Trash` or a `DirTrasher` on a fixture folder.
+- **Never as root.** kipple refuses euid 0, and chmod-based permission tests prove nothing as root, so the suite must run unprivileged. `testutil.GuardedMain`, which every package's `TestMain` already calls, fails the package before any test when the effective UID is 0, and `TestSuiteIsNotRoot` in `internal/testutil` asserts it by name. This holds on macOS, in the container and on CI.
 - **`make test-linux`.** It builds `test/linux/Dockerfile`: `FROM golang:1.23-bookworm@sha256:<pinned>`, which already has git and gcc for `-race`, adds a user `kipple` (uid 1000) with home `/home/kipple`, and sets `USER kipple`. It then runs:
   ```
   docker run --rm \
@@ -234,7 +237,7 @@ Alternative: ship the Linux GUI in v0.3.0 (rejected for the reasons above).
     -e GOMODCACHE=/gomod -e GOCACHE=/cache/go-build -e HOME=/home/kipple -e TMPDIR=/tmp \
     kipple-linux-test test/linux/run.sh
   ```
-  `run.sh` refuses to run as uid 0. It snapshots `find $HOME -printf '%p %s %T@ %i\n'`, runs `go vet ./...`, `go test -race -count=1 ./...`, `scripts/check-no-real-home.sh` and `scripts/agent-flow-check.sh`, then fails if the `$HOME` snapshot changed (hard rule 1, proven on Linux). The host home is never mounted, the repository is read-only, and the module cache is read-only with `GOPROXY=off`. If the read-only module cache turns out to need writes, `make test-linux-prime` copies it into the named volume once and the run uses that. A preflight in `run.sh` sets a `user.` attribute in `$TMPDIR` and fails with a clear message if tmpfs lacks support (kernel before 6.6). colima's Ubuntu 24.04 VM runs 6.8.
+  A Dockerfile user is preferred over `docker run --user $(id -u):$(id -g)`: the host UID (501 on macOS) has no passwd entry in the image, and the home must be writable and container-local. `run.sh` refuses to run as uid 0. It snapshots `find $HOME -printf '%p %s %T@ %i\n'`, runs `go vet ./...`, `go test -race -count=1 ./...`, `scripts/check-no-real-home.sh` and `scripts/agent-flow-check.sh`, then fails if the `$HOME` snapshot changed (hard rule 1, proven on Linux). The host home is never mounted, the repository is read-only, and the module cache is read-only with `GOPROXY=off`. If the read-only module cache turns out to need writes, `make test-linux-prime` copies it into the named volume once and the run uses that. A preflight in `run.sh` sets a `user.` attribute in `$TMPDIR` and fails with a clear message if tmpfs lacks support (kernel before 6.6). colima's Ubuntu 24.04 VM runs 6.8.
 - **`make test-linux-mounts`.** Real mounts need privileges, which ordinary tests do not have. `scripts/linux-mount-check.sh` runs in a throwaway `--privileged` container of the same image. Only the repo is mounted (read-only); the host home is not, and on colima it lives in the VM anyway. As root, the script builds the `kipple` binary to `/tmp`, builds a fixture home under `/tmp/fx`, and creates real mounts inside the fixture only: a bind mount of the fixture's `Documents` at `.cache/foo/docs`, a bind mount at `.cache/bar` itself, a tmpfs at `.cache/baz/t`, and an overlay mount whose lower-layer directory is a cache item. It then drops to uid 1000 with `setpriv` and runs `kipple scan --json` and `kipple clean --apply --json --only ...` with `KIPPLE_HOME=/tmp/fx`. It asserts `contains_mount`, `different_device` and that nothing was copied or moved, and checks a sha256 tree of the fixture before and after.
 - **Unit tests on any host.** The mountinfo parser, alias computation, `/proc` reader, `.trashinfo` encoder and decoder, user-dirs parser, catalogue resolution and denylist are pure functions with injected inputs, run on macOS too.
 - **Ubuntu CI job** (L13) runs the suite with `-race` on amd64; colima covers arm64.
@@ -264,6 +267,14 @@ Alternative: ship the Linux GUI in v0.3.0 (rejected for the reasons above).
 - [Unprivileged user namespaces blocked on Ubuntu 24.04 runners (AppArmor)] → real-mount tests run only in the privileged container harness locally; CI covers them with stubs and runs the privileged script in a `docker run --privileged` step on the Ubuntu runner, where Docker is available.
 
 ## Migration Plan
+
+Wave order (tasks.md):
+- **Wave 1** ports the mechanics so the whole default suite passes on Linux in the container as a non-root user. That means the harness, the darwin-only tags, `renameat2`, the tag, the freedesktop Trash, apply and restore wiring, `/proc` and the Linux state dir. darwin-only tests are tagged with a build constraint, never skipped at run time.
+- **Wave 2** adds what is specific to Linux safety and content: mount boundaries, home-guard aliases, denylist additions, user-dirs protections, the per-platform catalogue, the XDG policy, platform reporting, and real-mount checks.
+- **Wave 3** covers CI, release, the GUI decision and docs.
+
+Wave 1 is not releasable on its own, because same-device bind mounts are not yet a boundary. Nothing is tagged before wave 3.
+
 
 No data migration. macOS users upgrading see the same catalogue and behaviour, plus `os` and `arch` in `kipple version`. Receipts written by v0.2.0 on macOS keep working (`mover: rename`). Rollback is installing v0.2.0; Linux receipts are only read by v0.3.0+.
 

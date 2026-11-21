@@ -42,11 +42,15 @@ The repository SHALL carry an MIT `LICENSE`, a README with install (binary downl
 ## ADDED Requirements
 
 ### Requirement: Container test harness
-The repository SHALL provide `make test-linux`, which runs `go vet`, the full race-enabled test suite, the no-real-home check and the README agent flow inside a Linux container as a non-root user. The repository SHALL be mounted read-only, no host home folder is mounted, and the container's home is container-local. The run SHALL fail if the container user's home changed. It SHALL also provide `make test-linux-mounts`, which in a throwaway privileged container creates real bind, tmpfs and overlay mounts inside a fixture home only, and checks as a non-root user that kipple marks or refuses them and moves nothing across them. Neither target may create, change or remove anything under any real home folder. Dry run is the default and the Trash the only destination in every check.
+The repository SHALL provide `make test-linux`, which runs `go vet`, the full race-enabled test suite, the no-real-home check and the README agent flow inside a Linux container as a non-root user (the test suite itself SHALL refuse to run as root). The repository SHALL be mounted read-only, no host home folder is mounted, and the container's home is container-local. The run SHALL fail if the container user's home changed. It SHALL also provide `make test-linux-mounts`, which in a throwaway privileged container creates real bind, tmpfs and overlay mounts inside a fixture home only, and checks as a non-root user that kipple marks or refuses them and moves nothing across them. Neither target may create, change or remove anything under any real home folder. Dry run is the default and the Trash the only destination in every check.
 
 #### Scenario: Harness refuses root
 - **WHEN** the harness's test script starts as uid 0
 - **THEN** it exits non-zero before running any test
+
+#### Scenario: Test suite refuses root
+- **WHEN** `go test ./...` runs with effective UID 0 on any platform
+- **THEN** every package fails in its test main before running a test, naming root as the reason
 
 #### Scenario: Container home unchanged
 - **WHEN** `make test-linux` finishes
