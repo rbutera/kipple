@@ -248,7 +248,7 @@ func TestNoRenameNoReplace(t *testing.T) {
 		return &homeTrash{dir: d, mover: noReplaceMover{&calls}, name: plan.MoverFreedesktop, close: d.Close}, nil
 	}
 	res, err := Run(context.Background(), o)
-	if !errors.Is(err, ErrTrashAccess) || !strings.Contains(err.Error(), "tmpfs") || !strings.Contains(err.Error(), "RENAME_NOREPLACE") {
+	if !errors.Is(err, ErrTrashAccess) || !strings.Contains(err.Error(), fsName(t, f.home)) || !strings.Contains(err.Error(), "RENAME_NOREPLACE") {
 		t.Fatalf("err = %v, want ErrTrashAccess naming the file system", err)
 	}
 	if calls != 1 || len(res.Moved) != 0 || len(res.Skipped) != 2 {
@@ -305,7 +305,7 @@ func TestFreedesktopTag(t *testing.T) {
 		t.Cleanup(func() { fsetxattr = unix.Fsetxattr })
 		res := f.run(o)
 		s, ok := skipFor(res, it.Path)
-		if !ok || s.Reason != plan.SkipMoveFailed || !strings.Contains(s.Detail, "tmpfs") || !exists(it.Path) || ExitCode(res) != ExitPartial {
+		if !ok || s.Reason != plan.SkipMoveFailed || !strings.Contains(s.Detail, fsName(t, f.home)) || !exists(it.Path) || ExitCode(res) != ExitPartial {
 			t.Fatalf("exit %d skipped %+v", ExitCode(res), res.Skipped)
 		}
 		if entries, _ := os.ReadDir(f.abs(".local/share/Trash/info")); len(entries) != 0 {
@@ -594,4 +594,17 @@ func TestTrashInfoFolderIsABindMount(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fsName is the name kipple gives the file system of path (tmpfs in the
+// container's /tmp, ext4 or btrfs elsewhere), so the tests hold wherever
+// TMPDIR is.
+func fsName(t *testing.T, path string) string {
+	t.Helper()
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	return trash.FileSystemName(fd)
 }

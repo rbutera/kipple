@@ -178,11 +178,17 @@ func TestFreedesktopRestore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Same name, same Path, another file (another inode).
-		if err := os.Remove(info); err != nil {
+		// Same name, same Path, another file (another inode). It is
+		// written under a temporary name first and renamed over the
+		// original, so it cannot get the original's inode number back:
+		// ext4 and xfs reuse a freed inode number at once, and the recorded
+		// inode alone cannot tell such a recreated file apart (a limit of
+		// the check; the decoded Path is checked too).
+		tmp := info + ".new"
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(info, b, 0o600); err != nil {
+		if err := os.Rename(tmp, info); err != nil {
 			t.Fatal(err)
 		}
 		res := f.restore(e, true, m.ID)

@@ -327,6 +327,36 @@ nostatx_check() {
 }
 nostatx_check
 
+# 6. Wave 2 re-attack F3: the apply tests (cross-compiled next to the
+#    binary) pass when TMPDIR is on ext4 or btrfs, not only tmpfs (ext4
+#    reuses inode numbers at once; the file system's name differs).
+apply_tests_on() {
+	local fs="$1" img="/tmp/$1.img" mnt="/tmp/$1-tmp" lo out
+	local tests
+	tests="$(dirname "$K")/apply.test"
+	if [ ! -x "$tests" ]; then
+		fail "$tests is missing (make test-linux-mounts builds it)"
+		return
+	fi
+	truncate -s 400M "$img"
+	"mkfs.$fs" -q "$img" >/dev/null 2>&1
+	lo="$(losetup -f --show "$img")"
+	mkdir -p "$mnt"
+	mount "$lo" "$mnt"
+	chmod 1777 "$mnt"
+	set +e
+	out="$(cd /tmp && setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env \
+		env HOME=/home/kipple PATH=/usr/bin:/bin TMPDIR="$mnt" "$tests" -test.count=1 2>&1)"
+	local code=$?
+	set -e
+	if [ "$code" -eq 0 ]; then ok "internal/apply tests pass with TMPDIR on $fs"; else fail "internal/apply tests with TMPDIR on $fs (exit $code):"; echo "$out" | grep -E -- "--- FAIL|_test.go" | head -20; fi
+	umount "$mnt"
+	losetup -d "$lo"
+	rm -f "$img"
+}
+apply_tests_on ext4
+apply_tests_on btrfs
+
 if [ "$failures" -ne 0 ]; then
 	echo "linux-mount-check: $failures failure(s)"
 	exit 1

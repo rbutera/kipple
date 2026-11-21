@@ -123,7 +123,8 @@ test-linux-prime: linux-image
 .PHONY: test-linux-mounts
 test-linux-mounts: linux-image
 	@arch="$$($(DOCKER) version --format '{{.Server.Arch}}')" && \
-	CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) build -trimpath -o dist/linux-mount-check/kipple ./cmd/kipple
+	CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) build -trimpath -o dist/linux-mount-check/kipple ./cmd/kipple && \
+	CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) test -c -o dist/linux-mount-check/apply.test ./internal/apply
 	@$(DOCKER) run --rm --privileged --network none $(LINUX_IMAGE) true >/dev/null 2>&1 || \
 		{ echo "test-linux-mounts: this Docker cannot run --privileged containers, so the real-mount check cannot run (the stub-based mount tests in make test-linux remain the contract)" >&2; exit 1; }
 	$(DOCKER) run --rm --privileged --network none --user 0 -v "$(CURDIR)":/src:ro -w /src \
