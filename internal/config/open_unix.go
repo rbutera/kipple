@@ -23,3 +23,9 @@ func describeOpenError(path string, err error) error {
 	}
 	return err
 }
+
+// openFollowNonBlocking opens path following symlinks, without blocking on
+// a FIFO or device (readConfig then requires a regular file).
+func openFollowNonBlocking(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+}

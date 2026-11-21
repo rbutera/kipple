@@ -45,7 +45,7 @@ func LoadUserDirs(home string, open func(rel string) (*os.File, error)) UserDirs
 		// Dotfile managers (GNU stow, yadm) link this file. It can only
 		// add protections, so reading it through the link cannot weaken
 		// anything: follow it, and still require a regular file.
-		data, err = readConfig(path, func() (*os.File, error) { return os.Open(path) })
+		data, err = readConfig(path, func() (*os.File, error) { return openFollowNonBlocking(path) })
 	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return UserDirs{}

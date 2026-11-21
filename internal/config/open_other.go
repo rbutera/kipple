@@ -23,3 +23,6 @@ func openConfig(path string) (*os.File, error) {
 
 // describeOpenError returns err unchanged here.
 func describeOpenError(_ string, err error) error { return err }
+
+// openFollowNonBlocking opens path following symlinks.
+func openFollowNonBlocking(path string) (*os.File, error) { return os.Open(path) }
