@@ -339,9 +339,11 @@ can be moved; it is also `manual`, so it moves only when you name it. A
   move, so nothing moves (the detail says `/proc` is not available).
 - A mount made inside a folder after kipple has walked it again in the
   Trash is not seen: it would need a privileged process mounting onto the
-  folder's new place in the Trash in that instant. Emptying the Trash with a
-  tool that stays on one file system (for example `rm -r --one-file-system`)
-  is safe either way.
+  folder's new place in the Trash in that instant. Before emptying the
+  Trash, run `findmnt -R ~/.local/share/Trash` and unmount anything it
+  lists. Do not rely on `rm -r --one-file-system`: a bind mount of a folder
+  from the same file system (say `~/.ssh`) does not change the device, so
+  it is followed and its contents deleted.
 - Mounts made in another mount namespace (a sandboxed app, a container, a
   process started with `unshare -m`) are invisible to kipple, which sees
   only its own namespace's mounts. An item holding such a mount moves to
@@ -472,7 +474,10 @@ rule: it is `safe`, so its items are pre-selected, but only a child of
 `~/.cache` untouched for 7 days is offered, every item is checked again just
 before it moves, it goes to the Trash, and the receipt lets you put it back.
 These children of `~/.cache` are never offered by it, because another rule
-owns them or because they hold state that is not a cache:
+owns them or because they hold state that is not a cache. The names match
+direct children of `~/.cache` only (case folded): a folder of the same name
+deeper inside another child, such as `~/.cache/foo/zsh`, goes with that
+child.
 
 <!-- xdg-cache-excludes:start -->
 | Child of `~/.cache` | Why it is never offered |
