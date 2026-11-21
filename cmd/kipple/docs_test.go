@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rbutera/kipple/cmd/internal/launch"
+	"github.com/rbutera/kipple/internal/output"
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
 	"github.com/rbutera/kipple/internal/policy"
@@ -176,4 +178,66 @@ func TestSafetyDoc(t *testing.T) {
 			t.Errorf("skip reason %q is not documented in docs/safety.md", r)
 		}
 	}
+}
+
+// Task 3.5 (wave 3 brief, "docs/safety.md consistency check by test"):
+// the Linux facts the README, docs/safety.md, llms.txt and SECURITY.md
+// state come from the code: the Trash folder, the default state folder,
+// the receipt mover, the new error codes, and the post-move advice.
+func TestLinuxDocsMatchBehaviour(t *testing.T) {
+	trashDir := output.PhrasesFor("linux").TrashFolder
+	state := launch.DefaultStateDir("linux", "~") + "/receipts"
+	docs := map[string][]string{
+		"README.md": {trashDir, state, `"mover":` + "\n" + `"freedesktop"`, codeMountsUnavailable, codeUnsupportedPlatform,
+			"findmnt -R ~/.local/share/Trash", "user.com.rbutera.kipple", "already_restored", "XDG_CACHE_HOME", "`kipple tui`",
+			"sha256sum --check --ignore-missing checksums.txt", `kipple_${VERSION}_linux_${ARCH}.tar.gz`, "Platform: linux/amd64"},
+		"docs/safety.md": {trashDir, "~/.local/state/kipple/receipts", "`" + codeMountsUnavailable + "`", "findmnt -R ~/.local/share/Trash",
+			"user.com.rbutera.kipple", "RENAME_NOREPLACE", "246 to 255 bytes", "already_restored"},
+		"llms.txt":    {"`" + plan.MoverFreedesktop + "`", "`" + codeMountsUnavailable + "`", "`" + codeUnsupportedPlatform + "`", "`info_ino`", "~/.local/state/kipple", "`os` and `arch`"},
+		"SECURITY.md": {"`" + plan.MoverFreedesktop + "`", "~/.local/state/kipple/receipts", "findmnt -R"},
+	}
+	for file, wants := range docs {
+		text := readRepoFile(t, file)
+		for _, w := range wants {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s lacks %q", file, w)
+			}
+		}
+	}
+	// The Linux state folder in the docs is the one the code uses.
+	if state != "~/.local/state/kipple/receipts" {
+		t.Fatalf("DefaultStateDir on Linux is %s; update the docs", state)
+	}
+}
+
+// Spec scenario "Linux install documented" (distribution), README side:
+// the Linux steps verify the signature and the checksum before installing
+// and end with kipple version; make test-linux-tarball runs them.
+func TestLinuxInstallDocumented(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+	i := strings.Index(readme, "### Release binary on Linux")
+	if i < 0 {
+		t.Fatal("README has no Linux install section")
+	}
+	block := regexp.MustCompile("(?s)```sh\n(.*?)```").FindStringSubmatch(readme[i:])
+	if block == nil {
+		t.Fatal("the Linux install section has no sh block")
+	}
+	steps := block[1]
+	order := []string{"cosign verify-blob", "sha256sum --check --ignore-missing checksums.txt", `tar -xzf "kipple_${VERSION}_linux_${ARCH}.tar.gz" kipple`, "kipple version"}
+	last := -1
+	for _, s := range order {
+		k := strings.Index(steps, s)
+		if k <= last {
+			t.Fatalf("the Linux steps lack %q or have it out of order", s)
+		}
+		last = k
+	}
+	if !strings.HasSuffix(strings.TrimSpace(steps), "kipple version") {
+		t.Fatal("the Linux steps do not end with kipple version")
+	}
+	mk := readRepoFile(t, "Makefile")
+	mustContain(t, "Makefile", mk, "test-linux-tarball:", "scripts/linux-tarball-check.sh dist")
+	sc := readRepoFile(t, "scripts/linux-tarball-check.sh")
+	mustContain(t, "scripts/linux-tarball-check.sh", sc, "### Release binary on Linux", "Platform: linux/$ARCH", "scan --json")
 }

@@ -96,7 +96,7 @@ LINUX_RUN = $(DOCKER) run --rm --network none \
 	-e GOFLAGS="-buildvcs=false -mod=readonly" -e GOPROXY=off -e GOTOOLCHAIN=local \
 	-e GOCACHE=/cache/go-build -e GOPATH=/tmp/gopath -e HOME=/home/kipple -e TMPDIR=/tmp
 
-.PHONY: linux-image test-linux test-linux-prime
+.PHONY: linux-image test-linux test-linux-prime test-linux-tarball
 
 linux-image:
 	$(DOCKER) build -q -t $(LINUX_IMAGE) test/linux >/dev/null
@@ -105,6 +105,13 @@ linux-image:
 # the agent flow, as uid 1000; fails if the container home changed.
 test-linux: linux-image
 	$(LINUX_RUN) $(LINUX_IMAGE) test/linux/run.sh
+
+# After make release-snapshot: the README's Linux install steps (checksum,
+# unpack, install, kipple version) against the snapshot archive for this
+# Docker's architecture, then version --json and a fixture scan with the
+# installed binary, as uid 1000 with the home-unchanged check.
+test-linux-tarball: linux-image
+	$(LINUX_RUN) $(LINUX_IMAGE) test/linux/run.sh scripts/linux-tarball-check.sh dist
 
 # Fallback when the read-only host module cache cannot be used: downloads the
 # modules once into the named volume (network on for this step only). Then

@@ -11,11 +11,18 @@ Do not open a public issue for anything that could cause data loss.
 
 Useful details:
 
-- the kipple version (`kipple version --json`) and macOS version
+- the kipple version (`kipple version --json`, which names the operating
+  system and architecture) and the macOS version, or the Linux distribution,
+  kernel (`uname -r`) and the file system of your home folder
 - the rule ID and the path involved (redact personal names if you like)
-- how the item was moved (the receipt's `mover`: `rename` into `~/.Trash`,
-  or `nsfilemanager` for Apple's Trash API)
+- how the item was moved (the receipt's `mover`: `rename` into `~/.Trash`
+  or `nsfilemanager` for Apple's Trash API on macOS, `freedesktop` into
+  `~/.local/share/Trash` on Linux)
 - the receipt file from the state directory, if one was written
+  (`~/Library/Application Support/kipple/receipts` on macOS,
+  `~/.local/state/kipple/receipts` on Linux, or `KIPPLE_STATE_DIR`)
+- on Linux, the output of `findmnt -R` for the folders involved, if mounts
+  play a part
 
 You should get an acknowledgement within seven days. Fixes for paths that
 escape the policy are released as soon as they are ready, with a note in the
@@ -29,7 +36,9 @@ Only the latest release receives fixes until v1.0.0.
 
 In scope: anything that lets kipple list, move, delete or restore a path the
 policy should refuse (denylisted paths, symlink traversal, paths outside home,
-paths on another volume), running as root, or network access.
+paths on another volume, or on Linux across a mount point such as a bind
+mount), anything that writes or removes a Trash info file kipple did not
+create, running as root, or network access.
 
 Out of scope: disk space that kipple does not reclaim. Refusing to touch
 something is the intended failure mode.

@@ -3,16 +3,17 @@
 # kipple
 
 kipple finds the caches, build folders and leftovers that AI coding tools,
-local models and developer toolchains pile up in your Mac's home folder,
-explains each one, and moves only what you approve to the Trash. It is a
-single MIT-licensed Go binary with a JSON contract that agents can drive, a
-terminal UI for people, an optional Mac app, and nothing it does happens
-without `--apply` or a confirmation.
+local models and developer toolchains pile up in your home folder on macOS
+or Linux, explains each one, and moves only what you approve to the Trash.
+It is a single MIT-licensed Go binary with a JSON contract that agents can
+drive, a terminal UI for people, an optional Mac app, and nothing it does
+happens without `--apply` or a confirmation.
 
 - [What it cleans](#what-it-cleans)
 - [The safety model](#the-safety-model)
 - [Install](#install)
 - [Usage](#usage)
+- [Linux](#linux)
 - [For agents](#for-agents)
 - [How it compares](#how-it-compares)
 - [Roadmap](#roadmap)
@@ -30,6 +31,15 @@ happens if it goes" for each). Every rule has a tier:
 | `review` | Rebuilds, but costs time or needs a condition. Selected with `--level review`. | Go module cache, Xcode device support unused for 90 days, `node_modules`, Rust `target`, Python virtualenvs and `.next` in projects untouched for 30 days whose git state is committed and pushed |
 | `manual` | Never selected for you. Moved only when you name the item. | Xcode Archives, the Hugging Face hub cache, Codex worktrees (committed and pushed only), installers in Downloads older than two weeks |
 | `info` | Measured and reported, never moved. kipple shows the owner's own command instead. | Ollama models (`ollama rm`), Docker's disk image, Claude Code and Codex session history, simulator runtimes |
+
+The table shows the macOS catalogue. On Linux the Xcode, simulator and
+`~/Library` rules do not exist, and these come in: other apps' caches in
+`~/.cache` untouched for a week (`safe`), JetBrains IDE caches, the Maven
+repository and Flatpak app caches (`review`), downloaded AI models
+(`manual`), and rootless Docker, Podman, Flatpak and Snap data (`info`). The
+tool caches (npm, pip, Cargo, Go and the rest) are found where each tool
+keeps them on Linux. `kipple rules` lists the catalogue of the system it
+runs on.
 
 ## The safety model
 
@@ -53,21 +63,24 @@ in step with the code.
   Documents, Desktop, Pictures, Movies, Music, iCloud Drive and cloud
   storage, Mail, Messages, Photos libraries, keychains, Preferences,
   `~/.ssh`, `~/.gnupg`, `~/.aws`, `.env` files, Claude Code and Codex
-  history, memory, plans and skills, and more. An item that merely
-  contains something protected is refused too.
+  history, memory, plans and skills, and more; on Linux also the keyrings,
+  browser profiles, password managers, `~/.local/state` and the folders
+  named in `~/.config/user-dirs.dirs`. An item that merely contains
+  something protected is refused too.
 - **Receipts and restore.** Every `--apply` run writes a receipt before the
   first move and updates it item by item. `kipple restore <receipt>` puts
   things back, checking that each Trash entry is the very object kipple
   moved and that nothing now occupies its old path.
-- **What kipple refuses outright:** anything outside your home folder or on
-  another disk, following a symbolic link anywhere, running as root or with
+- **What kipple refuses outright:** anything outside your home folder, on
+  another disk or behind a mount point, following a symbolic link anywhere, running as root or with
   `sudo`, copying and deleting when a move is not possible, replacing an
   existing file, writing to a git repository, and the network. There is no
   telemetry.
 
 ### Full Disk Access and the Trash
 
-macOS lets only apps with Full Disk Access open `~/.Trash`, and a terminal
+This part is about macOS; Linux has no Full Disk Access (see
+[Linux](#linux)). macOS lets only apps with Full Disk Access open `~/.Trash`, and a terminal
 does not have it by default. kipple handles both cases:
 
 - **With Full Disk Access**, kipple moves each item straight into
@@ -90,7 +103,8 @@ Full Disk Access and add your terminal app.
 
 ## Install
 
-kipple is for macOS, on Apple silicon and Intel.
+kipple is for macOS, on Apple silicon and Intel, and for Linux on x86-64
+and arm64.
 
 ### Release binary (recommended)
 
@@ -102,7 +116,7 @@ detached signature and certificate (`checksums.txt.sig`, `checksums.txt.pem`).
 Verify before you run:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.3.0
 BASE=https://github.com/rbutera/kipple/releases/download/v$VERSION
 curl -fsSLO "$BASE/kipple_${VERSION}_darwin_universal.tar.gz"
 curl -fsSLO "$BASE/checksums.txt"
@@ -146,6 +160,40 @@ browser, macOS may block the first run; remove the quarantine flag with
 `sudo` above is only for copying into `/usr/local/bin`. kipple itself refuses
 to run as root.
 
+### Release binary on Linux
+
+The Linux archives hold one static binary (built without cgo, so it needs
+no particular C library) and are listed in the same signed `checksums.txt`:
+
+```sh
+VERSION=0.3.0
+ARCH=amd64   # or arm64; uname -m says x86_64 for amd64, aarch64 for arm64
+BASE=https://github.com/rbutera/kipple/releases/download/v$VERSION
+curl -fsSLO "$BASE/kipple_${VERSION}_linux_${ARCH}.tar.gz"
+curl -fsSLO "$BASE/checksums.txt"
+curl -fsSLO "$BASE/checksums.txt.sigstore.json"
+
+# 1. The checksums were signed by the release workflow of rbutera/kipple.
+cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/rbutera/kipple/.github/workflows/release.yml@refs/tags/v$VERSION" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+
+# 2. The archive matches its signed checksum.
+sha256sum --check --ignore-missing checksums.txt
+
+# 3. Install into a folder on your PATH (~/.local/bin needs no sudo).
+tar -xzf "kipple_${VERSION}_linux_${ARCH}.tar.gz" kipple
+install -D -m 0755 kipple ~/.local/bin/kipple
+kipple version
+```
+
+`kipple version` prints `Platform: linux/amd64` (or `linux/arm64`) on its
+second line. The cosign 2 commands with the detached `.sig` and `.pem` work the
+same way. `make test-linux-tarball` runs steps 2 and 3, as written here,
+against a snapshot build in the Linux test container.
+
 ### With Go
 
 ```sh
@@ -159,6 +207,9 @@ still move items into `~/.Trash` when your terminal has Full Disk Access,
 but without it `clean --apply` stops with `trash_access`. Check with
 `kipple version`, which prints whether the fallback is built in. A
 `go install` build reports its version as `dev`.
+
+On Linux nothing needs cgo, so `go install` gives the same kipple with or
+without a C compiler.
 
 ### Homebrew
 
@@ -328,6 +379,10 @@ Found 9 items · 11.3 MB                                               Selected 
 
 ### The app (optional)
 
+The app is macOS-only for now. On Linux `kipple-gui` exits at once and
+points to `kipple tui`, which offers the same review; a Linux app is planned
+for v0.3.1.
+
 kipple also comes as a Mac app for people who would rather not use a
 terminal. It is the same program underneath: it scans with the same rules,
 pre-selects exactly what `kipple scan --level safe` selects, explains every
@@ -387,7 +442,7 @@ shortcut (see the menus). It is not yet usable with VoiceOver; the CLI and
 | `kipple tui` | Interactive review and apply. |
 | `kipple rules` | The rule catalogue. |
 | `kipple schema plan\|receipt\|rules\|result` | The JSON Schema of a document. |
-| `kipple version` | Version, commit and `schema_version`. |
+| `kipple version` | Version, commit, `schema_version`, and the platform (`os`, `arch`). |
 
 | Flag | Applies to | Meaning |
 |---|---|---|
@@ -404,13 +459,84 @@ selection level), `protect` (extra folders kipple must never touch) and
 `project_roots` (where to look for project build folders). It can add
 protections, never remove one.
 
+## Linux
+
+kipple runs on Linux with the same model as on macOS: one gate, dry run by
+default, the Trash as the only destination, receipts and restore, home only,
+never through a symbolic link, never as root. The details are in
+[docs/safety.md, On Linux](docs/safety.md#on-linux); this is the short
+version.
+
+**The Trash** is the freedesktop.org one, `~/.local/share/Trash`. Each item
+goes to `files/` with an `info/<name>.trashinfo` file naming where it came
+from, so GNOME Files, Dolphin and other file managers show it and can
+restore it. There is no Full Disk Access on Linux. From a fixture home at
+`/home/you`:
+
+```console
+$ kipple clean --apply --yes --only b2p5penllvv2,qot4bmdii4u2
+Moved 2 items to the Trash (1.2 MB; emptying the Trash frees 1.2 MB).
+  moved    b2p5penllvv2  /home/you/.cache/pip/http
+      -> /home/you/.local/share/Trash/files/http
+  moved    qot4bmdii4u2  /home/you/.cache/com.example.viewer
+      -> /home/you/.local/share/Trash/files/com.example.viewer
+They are in your Trash (~/.local/share/Trash, visible in your file manager).
+
+Receipt 20261121T160628Z-vl2cnn (/home/you/.local/state/kipple/receipts/20261121T160628Z-vl2cnn.json).
+To put the items back: kipple restore 20261121T160628Z-vl2cnn --apply
+Restore in your file manager's Trash puts an item back too.
+```
+
+**Putting things back** works either way. `kipple restore` moves the item
+back and removes its info file; Restore in the file manager does the same,
+and a later `kipple restore` then reports `already_restored` instead of
+moving anything. Receipts live in `~/.local/state/kipple/receipts`. Each
+moved item carries the extended attribute `user.com.rbutera.kipple`, which
+restore checks; on a file system without user extended attributes (tmpfs
+before Linux 6.6, some FUSE file systems) kipple leaves the item where it
+is.
+
+**What else differs from macOS:**
+
+- **XDG variables are not followed.** kipple scans the default `~/.cache`,
+  `~/.local/share`, `~/.config` and `~/.local/state` only, never anything
+  outside your home folder. If `XDG_CACHE_HOME`, `XDG_DATA_HOME`,
+  `XDG_CONFIG_HOME` or `XDG_STATE_HOME` points elsewhere, scan and clean say
+  so in a warning. With `KIPPLE_HOME` they are ignored.
+- **Mount points are boundaries**, bind mounts included: an item that is or
+  contains one is never moved (`contains_mount`). If kipple cannot tell
+  where mount points are, nothing moves (error `mounts_unavailable`).
+- **Your own folders** named in `~/.config/user-dirs.dirs` (a localised
+  `~/Dokumente`, say) are protected like Documents.
+- **Running apps** are found in `/proc`, for your own processes only.
+- **The app** is not available yet; use `kipple tui`.
+
+**Known limits:**
+
+- A home on NFS or on a FUSE file system without atomic no-replace renames
+  is scan-only: `clean --apply` stops before anything moves.
+- kipple sees only its own PID and mount namespaces. An agent running on
+  the host is invisible to kipple inside a container, and a mount made in
+  another namespace (a sandboxed app, a container, `unshare -m`) is not
+  seen, so an item holding one could move.
+- A mount made inside a folder after kipple has checked it again in the
+  Trash is not seen. Before emptying the Trash, run
+  `findmnt -R ~/.local/share/Trash` and unmount anything it lists.
+- Names of 246 to 255 bytes cannot get a `.trashinfo` file, so those items
+  stay where they are.
+- overlayfs lower layers and btrfs subvolumes count as another device
+  (`different_device`) and are never copied.
+
 ## For agents
 
 kipple is designed to be driven by a coding agent: scan, inspect, approve a
 subset by ID, apply, audit, undo. Every command takes `--json`, writes exactly
 one JSON document to stdout and everything else to stderr, never prompts when
 `--json` is set or stdout is not a terminal, and uses fixed exit codes. The
-flow below is run, line for line, against a fixture in CI by
+flow and the documents are the same on macOS and Linux: `kipple version
+--json` reports `os` and `arch`, and a Linux receipt records `"mover":
+"freedesktop"`. The flow below is run, line for line, against a fixture in
+CI on both systems by
 [`scripts/agent-flow-check.sh`](scripts/agent-flow-check.sh).
 
 ```sh
@@ -447,7 +573,7 @@ candidates and re-checks everything against a fresh scan.
 | Code | Meaning |
 |---|---|
 | 0 | Success. |
-| 1 | Error. With `--json`, stdout is `{"error":{"code":"...","message":"..."}}`. |
+| 1 | Error. With `--json`, stdout is `{"error":{"code":"...","message":"..."}}`. Codes include `trash_access`, `mounts_unavailable` (Linux: mount points cannot be determined) and `unsupported_platform` (any system but macOS and Linux). |
 | 2 | Usage error: unknown command, flag or argument (including `--permanent` in v0.1.0). |
 | 3 | Nothing to do: `clean --apply` had nothing selected, or `restore` (with or without `--apply`) found nothing in the receipt to put back. `scan` and a `clean` dry run exit 0 even when nothing is selected. |
 | 4 | Partial: some items were skipped or failed; each skip has a machine-readable `reason`. |
@@ -479,7 +605,7 @@ compares only the overlap. Facts as of November 2026.
 | | kipple | [ElfClean](https://elfclean.app) | [Mole](https://github.com/tw93/Mole) | [Dusty](https://github.com/yagcioglutoprak/dusty) |
 |---|---|---|---|---|
 | Licence | MIT | Closed source; free scan, one-time unlock for bulk cleaning | GPL-3.0 CLI; paid Mac app | MIT |
-| Form | Go CLI and terminal UI; optional Mac app (Fyne) | Sandboxed Mac App Store app | `mo` CLI (Bash and Go) | SwiftUI menu bar app with a `dusty` CLI inside the bundle |
+| Form | Go CLI and terminal UI for macOS and Linux; optional Mac app (Fyne) | Sandboxed Mac App Store app | `mo` CLI (Bash and Go) | SwiftUI menu bar app with a `dusty` CLI inside the bundle |
 | Command line | Yes | No | Yes | Yes |
 | JSON | Every command, with published schemas | No | `analyze`, `status` and `history` | `scan --json` |
 | Default action | Dry run; `--apply` moves to the Trash | Trash | `clean`, `purge` and `installer` delete permanently; `uninstall` uses the Trash | Permanent unless `--trash`; `clean` needs `--yes` |
@@ -488,10 +614,13 @@ compares only the overlap. Facts as of November 2026.
 
 ## Roadmap
 
-- **Linux.** The platform-specific parts (the Trash, process checks, the
-  no-replace rename) sit behind small interfaces, so a port is new files:
-  XDG rule roots, the freedesktop.org Trash, `/proc` checks, and Linux
-  release builds. Target v0.3.0.
+- **The Linux app** in v0.3.1, released next to the Mac app.
+- **Linux packages:** AUR first, then deb, rpm and Nix.
+- **Trash on other Linux disks:** the per-disk `.Trash-<uid>` folders, so
+  items on another file system under home can be moved too.
+- **Following `XDG_*` variables** that point inside your home folder.
+- **The Maven and JetBrains rules on macOS** in v0.3.1 (Linux has them in
+  v0.3.0; the macOS catalogue is unchanged in v0.3.0).
 - **The app with VoiceOver.** The Mac app's controls carry accessibility
   labels; turning on Fyne's macOS accessibility bridge waits until it is
   verified with VoiceOver.

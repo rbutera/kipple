@@ -1,6 +1,6 @@
 # kipple
 
-> kipple is an MIT macOS command-line disk cleaner for caches and leftovers from AI coding tools, local models and developer toolchains under the home folder. Every command is a dry run unless --apply is given, the only destination is the Trash, and every move is recorded in a receipt that kipple restore can undo. Built to be driven by agents.
+> kipple is an MIT command-line disk cleaner for macOS (arm64, amd64) and Linux (amd64, arm64) for caches and leftovers from AI coding tools, local models and developer toolchains under the home folder. Every command is a dry run unless --apply is given, the only destination is the Trash, and every move is recorded in a receipt that kipple restore can undo. Built to be driven by agents.
 
 ## CLI contract
 
@@ -12,9 +12,13 @@
 - --only selects review and manual items (naming one is consent to its tier); info items are never moved. Anything else blocking an item (too_recent, git_dirty, contains_protected, owner_running, ...) still skips it.
 - `kipple clean --plan plan.json --apply --json` treats a saved plan as untrusted candidates and re-checks them against a fresh scan.
 - `kipple schema plan|receipt|rules|result` prints the JSON Schema, generated from the encoding types. schema_version is 1 and stays 1 within a kipple major version.
-- `kipple version --json` has `trash_fallback`: whether Apple's Trash API fallback (cgo) is built in.
+- `kipple version --json` has `os` and `arch` (the platform the binary runs on) and `trash_fallback`: whether Apple's Trash API fallback (cgo, macOS) is built in.
+- Error codes are additive within schema_version 1. Besides trash_access and the others in docs/plan-schema.md: `mounts_unavailable` (Linux: mount points cannot be determined, so nothing moves) and `unsupported_platform` (any system but macOS and Linux; every command except version and help refuses).
+- Receipts record `mover`: `rename` (into ~/.Trash) or `nsfilemanager` (Apple's Trash API) on macOS, `freedesktop` on Linux (renameat2 RENAME_NOREPLACE into ~/.local/share/Trash/files with a .trashinfo file whose inode is the item's `info_ino`).
+- State (receipts): macOS ~/Library/Application Support/kipple, Linux ~/.local/state/kipple; KIPPLE_STATE_DIR overrides both. Linux uses the default XDG locations and does not follow XDG_* variables (it warns when one is set elsewhere).
+- The catalogue differs per platform; `kipple rules --json` lists the one for the running system.
 - `kipple tui` is interactive only (needs a terminal; with --json it is a usage error).
-- The optional Mac app (kipple-gui, a separate .app download) is for people; it pre-selects exactly what `kipple scan --level safe` selects and moves through the same code. Agents use the CLI.
+- The optional Mac app (kipple-gui, a separate .app download, macOS only; on Linux it exits and points to kipple tui) is for people; it pre-selects exactly what `kipple scan --level safe` selects and moves through the same code. Agents use the CLI.
 - KIPPLE_HOME and KIPPLE_STATE_DIR point kipple at a fixture home and receipts folder for tests; kipple refuses a KIPPLE_HOME that is, contains or is inside the real home.
 
 ## Safety rules
@@ -22,8 +26,8 @@
 - Dry run is the only default; the Trash is the only destination. --permanent is refused (usage error, exit 2) in v0.1.0.
 - One policy function approves every path; apply re-checks policy, rule conditions and item identity (dev, ino) immediately before each move.
 - Hard-coded denylist (Documents, Desktop, Pictures, Mail, Messages, Photos, keychains, Preferences, cloud storage, .ssh, .gnupg, .aws, .env files, agent history, memory, plans and skills, ...). Config may add protections, never remove them.
-- Never outside the home folder, never on another disk, never through a symbolic link, never as root, no sudo, no network, no telemetry.
-- Moving into ~/.Trash needs Full Disk Access; without it kipple uses Apple's Trash API (receipt mover "nsfilemanager"), else it stops with error code trash_access. kipple restore --apply always needs Full Disk Access.
+- Never outside the home folder, never on another disk, never across a mount point (Linux bind mounts included: contains_mount), never through a symbolic link, never as root, no sudo, no network, no telemetry.
+- macOS: moving into ~/.Trash needs Full Disk Access; without it kipple uses Apple's Trash API (receipt mover "nsfilemanager"), else it stops with error code trash_access. kipple restore --apply always needs Full Disk Access. Linux has no Full Disk Access: items go to the freedesktop.org Trash, and a file manager's Restore works too (kipple restore then reports already_restored).
 
 ## Docs
 
