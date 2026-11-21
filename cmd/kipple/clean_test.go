@@ -655,7 +655,7 @@ func TestStopPartwayCLI(t *testing.T) {
 	code, out, _ := cliWith(t, rt, "clean", "--apply", "--json")
 	var env errorEnvelope
 	exactlyOneJSON(t, out, &env)
-	if code != exitError || env.Error.Code != codeMountsUnavailable || strings.Contains(env.Error.Message, "nothing was moved") || !strings.Contains(env.Error.Message, "after 1 moves") {
+	if code != exitError || env.Error.Code != codeMountsUnavailable || strings.Contains(env.Error.Message, "nothing was moved") || !strings.Contains(env.Error.Message, "after moving 1 item to the Trash") {
 		t.Fatalf("exit %d %+v", code, env)
 	}
 	if env.Result == nil || len(env.Result.Moved) != 1 || !strings.Contains(env.Error.Message, env.Result.ReceiptID) {

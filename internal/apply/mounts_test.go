@@ -273,7 +273,7 @@ func TestStopPartwayReportsMoves(t *testing.T) {
 	if !errors.Is(err, ErrStoppedPartway) || !errors.Is(err, ErrMountsUnavailable) || !strings.Contains(err.Error(), res.ReceiptID) {
 		t.Fatalf("err = %v", err)
 	}
-	if len(res.Moved) != 3 || !strings.Contains(err.Error(), "after 3 moves") {
+	if len(res.Moved) != 3 || !strings.Contains(err.Error(), "after moving 3 items to the Trash") || !strings.Contains(err.Error(), "--apply puts those back") || strings.Contains(err.Error(), "cannot be put back") {
 		t.Fatalf("moved %d: %v", len(res.Moved), err)
 	}
 	e, lerr := f.store.Load(res.ReceiptID)

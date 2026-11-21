@@ -320,9 +320,8 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 			ErrReceipt, path, len(res.Moved), a.saveErr, rc.ID)
 	}
 	if a.stopErr != nil {
-		if n := len(res.Moved) + len(res.Displaced); n > 0 {
-			return res, fmt.Errorf("%w after %d moves (receipt %s, %s); kipple restore %s --apply puts them back: %w",
-				ErrStoppedPartway, n, rc.ID, path, rc.ID, a.stopErr)
+		if did, advice := stoppedAfter(res, rc.ID); did != "" {
+			return res, fmt.Errorf("%w after %s (receipt %s, %s); %s: %w", ErrStoppedPartway, did, rc.ID, path, advice, a.stopErr)
 		}
 		return res, a.stopErr
 	}
@@ -330,9 +329,56 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 }
 
 // ErrStoppedPartway: the run stopped (mount points could no longer be
-// determined, the Trash became unusable) after some items had moved; the
-// error says how many and names the receipt, and the result lists them.
-var ErrStoppedPartway = errors.New("kipple stopped moving items")
+// determined, the Trash became unusable) after something had already
+// happened: items moved to the Trash, deleted permanently, or partly
+// deleted. The error says what, names the receipt, and promises restore
+// only for what is in the Trash; the result lists everything.
+var ErrStoppedPartway = errors.New("kipple stopped")
+
+// stoppedAfter says what a run that stopped had already done ("" when it
+// did nothing) and what can be done about it. Items in the Trash can be
+// restored; permanently deleted ones (whole or partly) cannot, and the
+// advice never suggests they can.
+func stoppedAfter(res plan.Result, id string) (did, advice string) {
+	trashed, deleted, partly := len(res.Displaced), 0, 0
+	for _, m := range res.Moved {
+		if m.Permanent {
+			deleted++
+		} else {
+			trashed++
+		}
+	}
+	for _, s := range res.Skipped {
+		if s.Partial {
+			partly++
+		}
+	}
+	var done, after []string
+	if trashed > 0 {
+		done = append(done, "moving "+countOf(trashed)+" to the Trash")
+		after = append(after, "kipple restore "+id+" --apply puts those back")
+	}
+	if deleted > 0 {
+		done = append(done, "deleting "+countOf(deleted)+" permanently")
+	}
+	if partly > 0 {
+		done = append(done, "partly deleting "+countOf(partly))
+	}
+	if len(done) == 0 {
+		return "", ""
+	}
+	if deleted+partly > 0 {
+		after = append(after, "what was deleted permanently cannot be put back")
+	}
+	return strings.Join(done, ", "), strings.Join(after, "; ")
+}
+
+func countOf(n int) string {
+	if n == 1 {
+		return "1 item"
+	}
+	return fmt.Sprintf("%d items", n)
+}
 
 // ErrMountsUnavailable: mount points cannot be determined (Linux without
 // the statx mount-root attribute and without a readable mount table), so

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -201,5 +202,62 @@ func TestPermanentStopsWhenMountTableUnreadable(t *testing.T) {
 	s, ok := skipFor(res, item)
 	if !ok || s.Reason != plan.ReasonContainsMount || !exists(filepath.Join(item, "aaa", "blob")) || !exists(filepath.Join(item, "zzz", "data")) {
 		t.Fatalf("skipped %+v moved %+v", res.Skipped, res.Moved)
+	}
+}
+
+// Wave 2 confirmation G2: a run that stops on a mount-table failure in the
+// middle of a permanent delete says what was deleted, names the receipt,
+// never says "nothing was moved", and never offers restore for what was
+// deleted permanently.
+func TestPermanentStopSaysWhatWasDeleted(t *testing.T) {
+	tree := func(item string) []testutil.File {
+		return []testutil.File{
+			{Path: item + "/aaa/blob", Size: 4096, MTime: old},
+			{Path: item + "/zzz/data", Size: 4096, MTime: old},
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		items []string
+		want  []string
+	}{
+		{"partly deleted only", []string{"Library/Caches/com.example.a"}, []string{"after partly deleting 1 item (receipt "}},
+		{"deleted and partly deleted", []string{"Library/Caches/com.example.a", "Library/Caches/com.example.b"}, []string{"deleting 1 item permanently, partly deleting 1 item (receipt "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var spec testutil.Spec
+			for _, it := range tc.items {
+				spec.Files = append(spec.Files, tree(it)...)
+				spec.Dirs = append(spec.Dirs, testutil.Dir{Path: it + "/aaa", MTime: old}, testutil.Dir{Path: it + "/zzz", MTime: old}, testutil.Dir{Path: it, MTime: old})
+			}
+			f := newFx(t, spec)
+			o := f.opts(f.scan(""))
+			o.Permanent = true
+			prechecks, armed := 0, 0
+			o.Env.Mounts = policy.StubMounts{OnRefresh: func() error {
+				if prechecks == len(tc.items) {
+					// Last item: the folder, aaa (blob and aaa go), then zzz.
+					if armed++; armed == 3 {
+						return fmt.Errorf("%w: mountinfo vanished", policy.ErrMountsUnavailable)
+					}
+				}
+				return nil
+			}}
+			afterPrecheck = func() { prechecks++ }
+			defer func() { afterPrecheck = nil }()
+			res, err := Run(context.Background(), o)
+			if !errors.Is(err, ErrStoppedPartway) || !errors.Is(err, policy.ErrMountsUnavailable) {
+				t.Fatalf("err = %v", err)
+			}
+			msg := err.Error()
+			for _, w := range append(tc.want, res.ReceiptID, "what was deleted permanently cannot be put back") {
+				if !strings.Contains(msg, w) {
+					t.Fatalf("%q lacks %q", msg, w)
+				}
+			}
+			if strings.Contains(msg, "restore") || strings.Contains(msg, "nothing was moved") || strings.Contains(msg, "to the Trash") {
+				t.Fatalf("%q", msg)
+			}
+		})
 	}
 }
