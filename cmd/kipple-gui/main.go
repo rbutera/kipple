@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -28,6 +29,11 @@ var (
 )
 
 func main() {
+	// Before anything reads home or Fyne starts (design L11 of linux-port).
+	if msg := platformRefusal(runtime.GOOS); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		os.Exit(1)
+	}
 	o := guilaunch.Options{Runtime: launch.System(), Geteuid: os.Geteuid, Version: version, Procs: procs.New()}
 	m := guilaunch.Model(o)
 	// With KIPPLE_HOME set, Fyne's preferences and font cache go to the

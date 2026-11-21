@@ -92,7 +92,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
 
   Verify: `actionlint` passes locally; the orchestrator checks the first run, in which a scratch commit that writes under `$HOME` from a test makes the job fail; and a green run on the branch.
 - [x] 3.2 Add a CI step that runs `make test-linux-mounts` on the Ubuntu runner (privileged container, fixture only). Verify with `actionlint` and the job's output listing the "Real mounts checked" assertions.
-- [ ] 3.3 Apply the GUI decision (design L11):
+- [x] 3.3 Apply the GUI decision (design L11):
   - `cmd/kipple-gui` exits 1 on Linux before Fyne starts, with a message naming `kipple tui`;
   - the GUI tests are `gui && darwin`, except the refusal test;
   - CI compiles `go build -tags gui ./cmd/kipple-gui` on Ubuntu with `libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev` installed.
