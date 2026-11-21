@@ -124,15 +124,21 @@ func TestContributing(t *testing.T) {
 		"## Adding a rule", "What", "IfRemoved", "rules.Validate", "TestCatalogueCount",
 		"TestAddARuleSteps", "go test ./internal/rules -run TestGoldenRulesJSON -update",
 		"command make check", "## Review process",
+		"## Testing on Linux", "make test-linux", "make test-linux-mounts", "make test-linux-tarball",
+		"exits non-zero and says so", "stub-based mount tests", "### Rules on macOS and Linux",
+		"linuxOverrides", "macOSOnly", "linuxOnly", "rules.ValidateFor", "TestLinuxCatalogueCount",
+		"TestAddARuleWithALinuxOverride", "testdata/rules_darwin.json",
 	)
 	sources := map[string][]string{
-		"internal/rules/rules_test.go":  {"func TestCatalogueCount(", "func TestGoldenRulesJSON(", `flag.Bool("update"`},
-		"internal/scan/addrule_test.go": {"func TestAddARuleSteps("},
-		"internal/rules/validate.go":    {"func Validate("},
-		"internal/testutil/guard.go":    {"func GuardedMain("},
-		"internal/testutil/home.go":     {"func NewHome("},
-		"Makefile":                      {"\ncheck:", "agent-flow-check:", "release-snapshot:"},
-		"internal/rules/catalogue.go":   {"var children = Match{Kind: MatchChildren}"},
+		"internal/rules/rules_test.go":            {"func TestCatalogueCount(", "func TestGoldenRulesJSON(", `flag.Bool("update"`},
+		"internal/scan/addrule_test.go":           {"func TestAddARuleSteps("},
+		"internal/rules/addrule_override_test.go": {"func TestAddARuleWithALinuxOverride("},
+		"internal/rules/platforms.go":             {"var linuxOverrides = ", "var macOSOnly = ", "func CatalogueFor("},
+		"internal/rules/validate.go":              {"func Validate(", "func ValidateFor("},
+		"internal/testutil/guard.go":              {"func GuardedMain("},
+		"internal/testutil/home.go":               {"func NewHome("},
+		"Makefile":                                {"\ncheck:", "agent-flow-check:", "release-snapshot:"},
+		"internal/rules/catalogue.go":             {"var children = Match{Kind: MatchChildren}"},
 	}
 	for file, wants := range sources {
 		text := readRepoFile(t, file)

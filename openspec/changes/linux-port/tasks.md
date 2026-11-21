@@ -106,7 +106,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
   - a roadmap: Linux GUI in v0.3.1; AUR, then deb, rpm and Nix packaging; top-directory Trash; following `XDG_*` under home; enabling the Maven and JetBrains rules on macOS.
 
   Update `llms.txt` and `SECURITY.md` too. Verify: "Linux install documented" by running the README's Linux steps against the snapshot tarball in the container, and the agent-flow check passing in the macOS and Ubuntu CI jobs.
-- [ ] 3.6 CONTRIBUTING.md: document `make test-linux` (unprivileged; the suite refuses root), `make test-linux-mounts` and its fallback (where Docker cannot run privileged containers the target exits non-zero saying so, and the stub-based mount tests remain the contract; CI always runs it), how to add a rule with per-platform roots, and that both catalogues' invariants must pass. Verify: the existing add-a-rule test passes on both platforms with a scratch rule that has a Linux override.
+- [x] 3.6 CONTRIBUTING.md: document `make test-linux` (unprivileged; the suite refuses root), `make test-linux-mounts` and its fallback (where Docker cannot run privileged containers the target exits non-zero saying so, and the stub-based mount tests remain the contract; CI always runs it), how to add a rule with per-platform roots, and that both catalogues' invariants must pass. Verify: the existing add-a-rule test passes on both platforms with a scratch rule that has a Linux override.
 - [ ] 3.7 Release readiness check:
   - `command make check`, `make test-linux`, `make test-linux-mounts` and `make release-snapshot` are green;
   - `openspec validate linux-port --strict` passes;

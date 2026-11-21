@@ -35,8 +35,9 @@ delete anything in a real home folder, yours included.**
 
 ## Building and checking
 
-You need Go 1.23 and the Xcode command line tools (the Trash fallback uses
-cgo), plus [golangci-lint](https://golangci-lint.run) v2.
+You need Go 1.23 and [golangci-lint](https://golangci-lint.run) v2. On
+macOS you also need the Xcode command line tools (the Trash fallback uses
+cgo); on Linux a C compiler is needed only for the race detector.
 
 ```sh
 command make check   # gofmt, go vet, golangci-lint, no-real-home, tests with -race (both builds), build
@@ -44,7 +45,41 @@ make agent-flow-check  # the README's agent commands against a fixture
 make release-snapshot  # the release archives into dist/, unsigned (needs goreleaser)
 ```
 
-`make check` must pass before you open a pull request. Use
+`make check` must pass before you open a pull request. kipple supports macOS
+and Linux, so a change must also pass on Linux; the next section shows how
+to check that from a Mac.
+
+## Testing on Linux
+
+The Linux checks run in Docker (on a Mac, [colima](https://github.com/abiosoft/colima)
+works), from `test/linux/Dockerfile`, a pinned Go 1.23 image with a user
+`kipple` (uid 1000) whose home exists only inside the container. Your home
+folder is never mounted, and the repository is mounted read-only.
+
+```sh
+command make test-linux          # go vet, the race suite, no-real-home and the agent flow, as uid 1000
+command make test-linux-mounts   # real bind, tmpfs, overlay and btrfs mounts inside a fixture home
+make release-snapshot && make test-linux-tarball   # the README's Linux install steps on the snapshot archive
+```
+
+- **`make test-linux`** runs everything as the unprivileged user. The test
+  suite itself refuses root: `testutil.GuardedMain` fails every package
+  before any test when the effective user is root, because kipple refuses
+  root and permission tests prove nothing as root. The run lists the
+  container user's home before and after, and fails naming anything that
+  changed. If the read-only module cache cannot be used, run
+  `make test-linux-prime` once and then `make test-linux LINUX_GOMOD=primed`.
+- **`make test-linux-mounts`** needs real mounts, so it starts a throwaway
+  `--privileged` container. As root it builds mounts inside a fixture home
+  only, then runs kipple as uid 1000 and checks that it marks or refuses
+  them and moves nothing across them. Where Docker cannot run privileged
+  containers, the target exits non-zero and says so; it never passes
+  without running. The stub-based mount tests in `make test-linux` (an
+  injected mount oracle and the mountinfo parser) remain the contract on
+  such a machine, and CI always runs the real check.
+- **`make test-linux-tarball`**, after `make release-snapshot`, runs the
+  README's Linux install steps as written against the snapshot archive,
+  then `kipple version --json` and a fixture scan with the installed binary. Use
 `GOTOOLCHAIN=local` with `go get` and `go mod tidy` so the module stays on
 `go 1.23`. New dependencies need a maintainer's agreement first: the
 approved set is cobra, Bubble Tea, bubbles, lipgloss, BurntSushi/toml,
@@ -98,6 +133,31 @@ list reviewable and impossible to extend at run time.
 5. Mention the location in the README's "What it cleans" table if people
    would look for it there, then run `command make check`.
 
+### Rules on macOS and Linux
+
+There is one catalogue per platform, resolved by `rules.CatalogueFor` from
+`internal/rules`:
+
+- A rule that exists on both systems is written once in `catalogue.go`,
+  with its macOS roots. If anything differs on Linux (roots, excludes, file
+  extensions, the owning app's process names, or the `What` sentence), add
+  an entry for its ID to `linuxOverrides` in `platforms.go`; the ID stays
+  the same, so item IDs and receipts mean the same thing on both.
+- A rule that exists only on macOS also goes in `macOSOnly`; one that
+  exists only on Linux goes in `linuxOnly` instead of `catalogue.go`.
+- Both catalogues must pass `rules.ValidateFor` and the invariants
+  (`TestCatalogueInvariants` checks each): Linux roots off the Linux
+  denylist and not inside another Linux rule's root (`~/.cache` belongs to
+  `xdg.cache`, so a rule there needs an entry in its exclude table in
+  `xdgcache.go`). Add the rule to `TestCatalogueCount` (macOS) and
+  `TestLinuxCatalogueCount` (Linux) as it applies.
+- The macOS catalogue is frozen in v0.3.x: `testdata/rules_darwin.json`
+  must not change, and `-update` only rewrites `testdata/rules_linux.json`.
+- `TestAddARuleWithALinuxOverride` in `internal/rules` walks these steps on
+  a scratch rule with a Linux override, and scans it on the system it runs
+  on. Run the rule tests on both systems: `go test ./internal/rules
+  ./internal/scan` on your machine and `command make test-linux`.
+
 ## Reporting a path that escaped
 
 If kipple lists, moves or restores something the policy should have refused,
@@ -111,8 +171,10 @@ cases that cannot cause data loss or are already public.
    whether any test or script touches a real home folder; the answer must be
    no.
 2. CI runs lint, vet, the full test suite with the race detector, the
-   no-real-home check, the README agent flow and a build on macOS. It must be
-   green.
+   no-real-home check, the README agent flow and a build on macOS and on
+   Ubuntu. The Ubuntu job also runs the privileged mount check, compiles the
+   GUI, and fails if anything under the runner's home folder changed during
+   the tests. It must be green; the release waits for it.
 3. A maintainer reviews every change to `internal/policy`, `internal/apply`,
    `internal/trash`, `internal/receipt` or the rule catalogue line by line,
    with the safety model in mind, and may ask for a red-team pass (someone
