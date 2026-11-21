@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package procs
 
@@ -6,8 +6,8 @@ import "context"
 
 type unsupported struct{}
 
-// New returns an Inspector whose every answer is unknown (ErrUnsupported).
-// A Linux port reads /proc instead (design D17).
+// New returns an Inspector whose every answer is unknown (ErrUnsupported):
+// kipple supports macOS and Linux only.
 func New() Inspector { return unsupported{} }
 
 func (unsupported) RunningBundleIDs(context.Context) (map[string]bool, error) {

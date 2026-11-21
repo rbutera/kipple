@@ -1,7 +1,7 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package trash
 
-// MoveNoReplace is unsupported here. A Linux port implements it with
-// renameat2(RENAME_NOREPLACE) in move_linux.go (design D17).
+// MoveNoReplace is unsupported here: kipple supports macOS (move_darwin.go)
+// and Linux (move_linux.go) only.
 func MoveNoReplace(int, string, int, string) error { return ErrUnsupported }

@@ -141,12 +141,19 @@ func openHomeTrash(sess *policy.Session, home string) (*trash.DirTrasher, error)
 	return trash.NewDirTrasher(e.Dir, path)
 }
 
+// errSpecialFile: the item is a device node, FIFO or socket, which cannot
+// carry the tag on this platform; it is refused without being opened.
+var errSpecialFile = errors.New("the item is a device, FIFO or socket; kipple does not open or move it")
+
 // tagTarget returns a descriptor of the approved item to tag: the held
 // folder, or the file opened from its verified parent (never following a
 // symlink, never blocking on a FIFO) and checked to be (dev, ino).
 func tagTarget(f *policy.Fresh, dev, ino uint64, dir *os.File) (int, func(), error) {
 	if dir != nil {
 		return int(dir.Fd()), func() {}, nil
+	}
+	if !taggableMode(f.Info.Mode()) {
+		return -1, nil, errSpecialFile
 	}
 	fd, err := unix.Openat(f.ParentFd, f.Name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {

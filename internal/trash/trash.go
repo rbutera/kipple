@@ -20,9 +20,15 @@
 //     kept for parity with Finder's own Trash handling and is not apply's
 //     default.
 //
-// MoveNoReplace (move_darwin.go) is the one no-clobber move every caller
-// uses: renameatx_np with RENAME_EXCL on macOS; other platforms return
-// ErrUnsupported until a port supplies renameat2 RENAME_NOREPLACE.
+//   - FreedesktopTrasher (freedesktop_linux.go) moves items into the
+//     freedesktop.org home Trash on Linux (~/.local/share/Trash): it reserves
+//     info/<name>.trashinfo exclusively, writes and syncs it, then renames
+//     the item into files/<name>, so file managers can restore it.
+//
+// MoveNoReplace is the one no-clobber move every caller uses: renameatx_np
+// with RENAME_EXCL on macOS (move_darwin.go), renameat2 with
+// RENAME_NOREPLACE on Linux (move_linux.go); other platforms return
+// ErrUnsupported.
 package trash
 
 import (
@@ -47,6 +53,11 @@ var (
 	ErrItemChanged = errors.New("trash: the item changed while it was being moved")
 	// ErrInvalidName: the item name is empty, "." or "..", or has a slash.
 	ErrInvalidName = errors.New("trash: invalid item name")
+	// ErrNoReplaceUnsupported: the file system cannot rename without
+	// replacing (Linux renameat2 RENAME_NOREPLACE is missing: NFS, some
+	// FUSE file systems, old kernels). Nothing moved, and kipple never
+	// falls back to a rename that could replace something.
+	ErrNoReplaceUnsupported = errors.New("trash: the file system cannot rename without replacing (no RENAME_NOREPLACE)")
 )
 
 // Trasher moves one item to a Trash.

@@ -155,17 +155,9 @@ func (d *DirTrasher) trash(parentFd int, name string, want *[2]uint64) (string, 
 	if uint64(pst.Dev) != d.dev || uint64(ist.Dev) != d.dev {
 		return "", ErrDifferentDevice
 	}
-	stem, ext := name, ""
-	if ist.Mode&unix.S_IFMT == unix.S_IFREG {
-		if e := filepath.Ext(name); e != "" && e != name {
-			stem, ext = strings.TrimSuffix(name, e), e
-		}
-	}
+	regular := ist.Mode&unix.S_IFMT == unix.S_IFREG
 	for i := 1; i < maxCollisions; i++ {
-		cand := name
-		if i > 1 {
-			cand = fmt.Sprintf("%s %d%s", stem, i, ext)
-		}
+		cand := candidateName(name, regular, i)
 		err := MoveNoReplace(parentFd, name, d.fd, cand)
 		switch {
 		case err == nil:
@@ -186,6 +178,22 @@ func (d *DirTrasher) trash(parentFd int, name string, want *[2]uint64) (string, 
 		}
 	}
 	return "", fmt.Errorf("trash: too many items named %q in %s", name, d.path)
+}
+
+// candidateName is the i-th name tried for name in a Trash, the way Finder
+// names collisions: name, then "name 2", "name 3"; a regular file keeps its
+// extension last ("report 2.pdf"). A dotfile has no extension.
+func candidateName(name string, regular bool, i int) string {
+	if i <= 1 {
+		return name
+	}
+	stem, ext := name, ""
+	if regular {
+		if e := filepath.Ext(name); e != "" && e != name {
+			stem, ext = strings.TrimSuffix(name, e), e
+		}
+	}
+	return fmt.Sprintf("%s %d%s", stem, i, ext)
 }
 
 // checkArrived confirms the object now at cand in the Trash is the one

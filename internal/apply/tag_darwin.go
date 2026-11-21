@@ -17,6 +17,10 @@ import (
 // entry's identity cannot restore it.
 const tagName = "com.rbutera.kipple"
 
+// taggableMode reports whether an item of this type may be opened to tag
+// it. macOS tags every type apply moves (the open never blocks).
+func taggableMode(fs.FileMode) bool { return true }
+
 // setTag sets the tag on the object open at fd. A read-only object gets
 // owner write permission for the call (macOS needs it to write an extended
 // attribute), restored afterwards through the same descriptor.
