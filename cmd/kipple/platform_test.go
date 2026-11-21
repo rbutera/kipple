@@ -69,6 +69,9 @@ func realHomeEnv(t *testing.T, home string, env map[string]string) runtimeEnv {
 		if v, ok := env[k]; ok {
 			return v
 		}
+		if strings.HasPrefix(k, "XDG_") {
+			return "" // only what the test sets: the host's own must not leak in
+		}
 		return os.Getenv(k)
 	}
 	return rt
