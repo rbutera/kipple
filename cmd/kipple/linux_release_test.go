@@ -112,4 +112,13 @@ func TestReleaseNotesV030(t *testing.T) {
 	mustContain(t, "docs/release-notes/v0.3.0.md", notes,
 		"runs on Linux", "`kipple tui`", "A larger denylist", "`os` and `arch`", `"mover": "freedesktop"`,
 		"The Mac app stays macOS-only", "`mounts_unavailable`", "`unsupported_platform`", "kipple_0.3.0_linux_amd64.tar.gz")
+	// The release uses docs/release-notes/<tag>.md as its body and fails
+	// before building anything when the file is missing.
+	rel := readRepoFile(t, ".github/workflows/release.yml")
+	mustContain(t, "release.yml", rel,
+		"args: release --clean --release-notes docs/release-notes/${{ github.ref_name }}.md",
+		"NOTES: docs/release-notes/${{ github.ref_name }}.md", `if [ ! -s "$NOTES" ]; then`)
+	if strings.Index(rel, `if [ ! -s "$NOTES" ]`) > strings.Index(rel, "goreleaser/goreleaser-action@") {
+		t.Error("the release-notes check does not run before goreleaser")
+	}
 }
