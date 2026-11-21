@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -557,6 +558,29 @@ func TestMissingOrPermissionDenied(t *testing.T) {
 	} {
 		if got := missingOr(err); got != want {
 			t.Errorf("missingOr(%v) = %q, want %q", err, got, want)
+		}
+	}
+}
+
+// A directory changed within the file system's timestamp granularity keeps
+// equal mtime and ctime across two changes (Linux stamps them from the
+// kernel tick), so its listing is never cached until it is older than
+// racyWindow; a ctime in the future is never cached either.
+func TestNameCacheSkipsRecentChanges(t *testing.T) {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		changed time.Time
+		want    bool
+	}{
+		{"changed just now", now, false},
+		{"changed within the window", now.Add(-racyWindow / 2), false},
+		{"changed exactly at the window", now.Add(-racyWindow), false},
+		{"changed before the window", now.Add(-racyWindow - time.Millisecond), true},
+		{"changed in the future", now.Add(time.Hour), false},
+	} {
+		if got := cacheable(tc.changed, now); got != tc.want {
+			t.Errorf("%s: cacheable = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

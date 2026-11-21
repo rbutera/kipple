@@ -504,9 +504,11 @@ func (s *Session) stored(dirfd int, name string, cache bool) (bool, error) {
 	for _, n := range names {
 		set[n] = struct{}{}
 	}
-	// Cache only if the directory did not change while it was read.
+	// Cache only if the directory did not change while it was read, and
+	// its last change is old enough that a later change must show a
+	// different ctime (cacheable).
 	var after unix.Stat_t
-	if err := fstat(dirfd, &after); err == nil && after.Mtim == st.Mtim && after.Ctim == st.Ctim {
+	if err := fstat(dirfd, &after); err == nil && after.Mtim == st.Mtim && after.Ctim == st.Ctim && cacheable(time.Unix(st.Ctim.Unix()), time.Now()) {
 		s.mu.Lock()
 		if s.dirs != nil {
 			s.dirs[id] = &dirNames{mtime: st.Mtim, ctime: st.Ctim, names: set}
@@ -515,6 +517,22 @@ func (s *Session) stored(dirfd int, name string, cache bool) (bool, error) {
 	}
 	_, hit := set[name]
 	return hit, nil
+}
+
+// racyWindow is how recent a directory's last change may be for its
+// listing to be cached. File systems stamp mtime and ctime from a coarse
+// clock (Linux: the kernel tick, a few milliseconds; some file systems:
+// seconds), so two changes within one tick leave both timestamps equal and
+// a cached listing would go stale unnoticed. A listing is cached only when
+// the directory last changed more than racyWindow ago: any later change
+// then stamps a ctime at least that much newer (the "racy git" rule).
+const racyWindow = 2 * time.Second
+
+// cacheable reports whether a directory whose ctime is changed may have its
+// listing cached at now. A ctime in the future (clock adjustments) is never
+// cacheable.
+func cacheable(changed, now time.Time) bool {
+	return now.Sub(changed) > racyWindow
 }
 
 // readNames lists the directory open at dirfd through a fresh descriptor, so
