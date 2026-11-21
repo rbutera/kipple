@@ -3,6 +3,7 @@ package procs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"slices"
 	"testing"
@@ -21,6 +22,7 @@ type fakeProcess struct {
 	cwd     string
 	err     error // returned by every read of this process
 	cwdErr  error
+	state   string // the status file's State value; "" means no status file
 }
 
 func (f fakeProc) PIDs() ([]int, error) {
@@ -58,6 +60,10 @@ func (f fakeProc) ReadFile(pid int, name string) ([]byte, error) {
 		return []byte(p.comm + "\n"), nil
 	case "cmdline":
 		return []byte(p.cmdline), nil
+	case "status":
+		if p.state != "" {
+			return []byte(fmt.Sprintf("Name:\t%s\nState:\t%s\nUid:\t%d\t%d\t%d\t%d\n", p.comm, p.state, p.uid, p.uid, p.uid, p.uid)), nil
+		}
 	}
 	return nil, fs.ErrNotExist
 }
@@ -190,6 +196,23 @@ func TestProcLinuxMatching(t *testing.T) {
 		cwds, err := p.ProcessCwds(ctx, []string{"claude"})
 		if err != nil || !slices.Equal(cwds, []string{"/home/me/dev/app"}) {
 			t.Fatalf("cwds %q, %v", cwds, err)
+		}
+	})
+	// Ubuntu CI follow-up: "does not exist" for the working directory of a
+	// process that is still running is unknown, not absent; a zombie has
+	// none and is skipped.
+	t.Run("Working directory missing while running", func(t *testing.T) {
+		p := Proc{UID: me, FS: fakeProc{procs: map[int]fakeProcess{
+			10: {uid: me, comm: "claude", cmdline: "claude\x00", cwdErr: fs.ErrNotExist, state: "S (sleeping)"},
+		}}}
+		if _, err := p.ProcessCwds(ctx, []string{"claude"}); !errors.Is(err, ErrUnknown) {
+			t.Fatalf("err = %v, want ErrUnknown", err)
+		}
+		p.FS = fakeProc{procs: map[int]fakeProcess{
+			10: {uid: me, comm: "claude", cmdline: "claude\x00", cwdErr: fs.ErrNotExist, state: "Z (zombie)"},
+		}}
+		if cwds, err := p.ProcessCwds(ctx, []string{"claude"}); err != nil || len(cwds) != 0 {
+			t.Fatalf("zombie: %q, %v", cwds, err)
 		}
 	})
 	t.Run("Bundle IDs are unsupported", func(t *testing.T) {

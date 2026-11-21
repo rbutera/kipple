@@ -76,7 +76,7 @@ func (p Proc) ProcessCwds(ctx context.Context, names []string) ([]string, error)
 		}
 		cwd, err := p.FS.Readlink(pid, "cwd")
 		switch {
-		case gone(err):
+		case gone(err) && p.exited(pid):
 			return nil
 		case err != nil:
 			return fmt.Errorf("%w: the working directory of process %d: %v", ErrUnknown, pid, err)
@@ -165,6 +165,30 @@ func matches(name, comm, argv0 string) bool {
 		return true
 	}
 	return len(name) < commLen && comm == name
+}
+
+// exited reports whether process pid has really ended (or is a zombie,
+// which has no working directory any more), after a read of it said it does
+// not exist. A process whose status still reads as running has not: an
+// agent whose working directory cannot be read is unknown, never absent.
+func (p Proc) exited(pid int) bool {
+	b, err := p.FS.ReadFile(pid, "status")
+	if err != nil {
+		return gone(err)
+	}
+	st := statusField(b, "State:")
+	return strings.HasPrefix(st, "Z") || strings.HasPrefix(st, "X")
+}
+
+// statusField returns the value of the line starting with key in a
+// /proc/<pid>/status file, without leading space, or "".
+func statusField(status []byte, key string) string {
+	for _, line := range strings.Split(string(status), "\n") {
+		if v, ok := strings.CutPrefix(line, key); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // gone reports whether err means the process exited during the walk.
