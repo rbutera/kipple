@@ -109,9 +109,13 @@ test-linux: linux-image
 # After make release-snapshot: the README's Linux install steps (checksum,
 # unpack, install, kipple version) against the snapshot archive for this
 # Docker's architecture, then version --json and a fixture scan with the
-# installed binary, as uid 1000 with the home-unchanged check.
+# installed binary, as uid 1000 with the home-unchanged check; then the
+# same README steps on BusyBox in Alpine (pinned below), as uid 1000.
+ALPINE_IMAGE ?= alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 test-linux-tarball: linux-image
 	$(LINUX_RUN) $(LINUX_IMAGE) test/linux/run.sh scripts/linux-tarball-check.sh dist
+	$(DOCKER) run --rm --network none --user 1000:1000 -v "$(CURDIR)":/src:ro -w /src \
+		--tmpfs /tmp:rw,exec,mode=1777 -e HOME=/tmp/home $(ALPINE_IMAGE) sh scripts/linux-tarball-steps.sh dist /tmp/work
 
 # Fallback when the read-only host module cache cannot be used: downloads the
 # modules once into the named volume (network on for this step only). Then

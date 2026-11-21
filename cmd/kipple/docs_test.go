@@ -190,7 +190,7 @@ func TestLinuxDocsMatchBehaviour(t *testing.T) {
 	docs := map[string][]string{
 		"README.md": {trashDir, state, `"mover":` + "\n" + `"freedesktop"`, codeMountsUnavailable, codeUnsupportedPlatform,
 			"findmnt -R ~/.local/share/Trash", "user.com.rbutera.kipple", "already_restored", "XDG_CACHE_HOME", "`kipple tui`",
-			"sha256sum --check --ignore-missing checksums.txt", `kipple_${VERSION}_linux_${ARCH}.tar.gz`, "Platform: linux/amd64"},
+			`grep " kipple_${VERSION}_linux_${ARCH}.tar.gz\$" checksums.txt | sha256sum -c -`, `kipple_${VERSION}_linux_${ARCH}.tar.gz`, "Platform: linux/amd64"},
 		"docs/safety.md": {trashDir, "~/.local/state/kipple/receipts", "`" + codeMountsUnavailable + "`", "findmnt -R ~/.local/share/Trash",
 			"user.com.rbutera.kipple", "RENAME_NOREPLACE", "246 to 255 bytes", "already_restored"},
 		"llms.txt":    {"`" + plan.MoverFreedesktop + "`", "`" + codeMountsUnavailable + "`", "`" + codeUnsupportedPlatform + "`", "`info_ino`", "~/.local/state/kipple", "`os` and `arch`"},
@@ -224,7 +224,7 @@ func TestLinuxInstallDocumented(t *testing.T) {
 		t.Fatal("the Linux install section has no sh block")
 	}
 	steps := block[1]
-	order := []string{"cosign verify-blob", "sha256sum --check --ignore-missing checksums.txt", `tar -xzf "kipple_${VERSION}_linux_${ARCH}.tar.gz" kipple`, "kipple version"}
+	order := []string{"cosign verify-blob", "| sha256sum -c -", `tar -xzf "kipple_${VERSION}_linux_${ARCH}.tar.gz" kipple`, "kipple version"}
 	last := -1
 	for _, s := range order {
 		k := strings.Index(steps, s)
@@ -239,5 +239,8 @@ func TestLinuxInstallDocumented(t *testing.T) {
 	mk := readRepoFile(t, "Makefile")
 	mustContain(t, "Makefile", mk, "test-linux-tarball:", "scripts/linux-tarball-check.sh dist")
 	sc := readRepoFile(t, "scripts/linux-tarball-check.sh")
-	mustContain(t, "scripts/linux-tarball-check.sh", sc, "### Release binary on Linux", "Platform: linux/$ARCH", "scan --json")
+	mustContain(t, "scripts/linux-tarball-check.sh", sc, "linux-tarball-steps.sh", "scan --json")
+	stepsScript := readRepoFile(t, "scripts/linux-tarball-steps.sh")
+	mustContain(t, "scripts/linux-tarball-steps.sh", stepsScript, "#!/bin/sh", "### Release binary on Linux", "Platform: linux/$ARCH")
+	mustContain(t, "Makefile", mk, "ALPINE_IMAGE ?= alpine:3.20@sha256:", "sh scripts/linux-tarball-steps.sh dist")
 }

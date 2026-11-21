@@ -180,8 +180,8 @@ cosign verify-blob \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 
-# 2. The archive matches its signed checksum.
-sha256sum --check --ignore-missing checksums.txt
+# 2. The archive matches its signed checksum (GNU or BusyBox sha256sum).
+grep " kipple_${VERSION}_linux_${ARCH}.tar.gz\$" checksums.txt | sha256sum -c -
 
 # 3. Install into a folder on your PATH (~/.local/bin needs no sudo).
 tar -xzf "kipple_${VERSION}_linux_${ARCH}.tar.gz" kipple
