@@ -231,8 +231,15 @@ user_in() {
 #    item while clean --apply runs. A bind that rides into the Trash with an
 #    item must be found after the rename and the item put back: no mount
 #    may be left under the Trash.
+# put_back counts the items a post-move check caught and put back. The
+# race checks require at least one, or they would pass without the race
+# ever reaching the post-move check (standards addendum B).
+put_back() {
+	jq '[.skipped[]? | select(.reason == "contains_mount" and (.detail | contains("it was put back where it was")))] | length' "$1"
+}
+
 race_check() {
-	local r=/tmp/race n=150 i targets="" moved skipped left
+	local r=/tmp/race n=150 i targets="" moved skipped left back
 	many_fixture "$r" "$n"
 	user_in "$r" "$K" scan --json >"$r/out/plan.json"
 	for i in $(seq -w 1 "$n"); do targets="$targets $r/home/.cache/c$i/m"; done
@@ -250,10 +257,11 @@ race_check() {
 	left="$(mounts_under "$r/home/.local/share/Trash")"
 	moved="$(jq '.moved | length' "$r/out/res.json")"
 	skipped="$(jq -r '[.skipped[]?.reason] | group_by(.) | map("\(.[0])=\(length)") | join(" ")' "$r/out/res.json")"
-	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ]; then
-		ok "binds flipping during apply: no mount left in the Trash (moved $moved; skipped $skipped)"
+	back="$(put_back "$r/out/res.json")"
+	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ] && [ "$back" -gt 0 ]; then
+		ok "binds flipping during apply: no mount left in the Trash, $back caught after the move and put back (moved $moved; skipped $skipped)"
 	else
-		fail "binds flipping during apply: $left mounts under the Trash (moved $moved; skipped $skipped)"
+		fail "binds flipping during apply: $left mounts under the Trash, $back put back after the move (moved $moved; skipped $skipped)"
 	fi
 	unmount_under "$r/home"
 }
@@ -263,7 +271,7 @@ race_check
 #     unreadable (mode 000), so a walk that ignored partial results would
 #     call the item clean. No mount may be left under the Trash.
 race_unreadable_check() {
-	local r=/tmp/race2 n=150 i targets="" left
+	local r=/tmp/race2 n=150 i targets="" left back
 	many_fixture "$r" "$n"
 	for i in $(seq -w 1 "$n"); do mkdir -p "$r/home/.cache/c$i/d/m"; done
 	chown -R 1000:1000 "$r/home/.cache"
@@ -282,10 +290,11 @@ race_unreadable_check() {
 	wait "$fp" || true
 	rm -f /tmp/flipstop
 	left="$(mounts_under "$r/home/.local/share/Trash")"
-	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ]; then
-		ok "binds below folders made unreadable during apply: no mount left in the Trash (moved $(jq '.moved | length' "$r/out/res.json"))"
+	back="$(put_back "$r/out/res.json")"
+	if [ "$left" -eq 0 ] && [ -e "$r/home/.ssh/id_ed25519" ] && [ "$back" -gt 0 ]; then
+		ok "binds below folders made unreadable during apply: no mount left in the Trash, $back put back after the move (moved $(jq '.moved | length' "$r/out/res.json"))"
 	else
-		fail "binds below unreadable folders: $left mounts under the Trash"
+		fail "binds below unreadable folders: $left mounts under the Trash, $back put back after the move"
 	fi
 	find "$r" -type d -exec chmod u+rwx {} + 2>/dev/null || true
 	unmount_under "$r/home"
