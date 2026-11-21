@@ -246,7 +246,7 @@ func TestNoPlatformOnlySymbolOutsideItsFiles(t *testing.T) {
 		}
 	}
 	linuxOnly := onlyOn(files, "linux", "darwin")
-	for dir, sym := range map[string]string{"internal/procs": "procDir", "internal/trash": "renameat2", "internal/policy": "procSelfFd"} {
+	for dir, sym := range map[string]string{"internal/procs": "procDir", "internal/trash": "FreedesktopTrasher", "internal/policy": "procSelfFd"} {
 		if !linuxOnly[dir][sym] {
 			t.Errorf("%s.%s should be declared only in linux files", dir, sym)
 		}
