@@ -78,6 +78,9 @@ type runtimeEnv struct {
 	saveReceipt func(plan.Receipt) error
 	// mounts, in tests, replaces the platform's mount oracle.
 	mounts policy.MountOracle
+	// goos, in tests, chooses the platform whose catalogue, state folder
+	// and user folders kipple uses ("" means the running one).
+	goos string
 	// beforeScan, when set, runs after home is resolved and guarded and
 	// before the scan opens it. Tests use it to swap the directory.
 	beforeScan func(home string)
@@ -338,7 +341,7 @@ type homeEnv = launch.Home
 
 // launch is the part of the runtime environment home resolution uses.
 func (rt runtimeEnv) launch() launch.Runtime {
-	return launch.Runtime{Getenv: rt.getenv, UserHome: rt.userHome, RealHomes: rt.realHomes, GuardFS: rt.guardFS, Mounts: rt.mounts}
+	return launch.Runtime{Getenv: rt.getenv, UserHome: rt.userHome, RealHomes: rt.realHomes, GuardFS: rt.guardFS, Mounts: rt.mounts, GOOS: rt.goos}
 }
 
 // launchErr maps a launch error to a CLI error with the same code.
@@ -406,7 +409,7 @@ func scanError(err error) error {
 
 func titles() map[string]string {
 	out := map[string]string{}
-	for _, r := range rules.Catalogue() {
+	for _, r := range append(rules.CatalogueFor(rules.PlatformDarwin), rules.CatalogueFor(rules.PlatformLinux)...) {
 		out[r.ID] = r.Title
 	}
 	return out
@@ -485,6 +488,13 @@ func (a *app) explainCommand() *cobra.Command {
 						return output.ExplainRule(w, r)
 					})
 				}
+			}
+			if ps := rules.PlatformsOf(id); len(ps) > 0 {
+				var names []string
+				for _, p := range ps {
+					names = append(names, rules.PlatformName(p))
+				}
+				return usageErr("rule %s exists on %s only, not on %s (kipple rules lists this platform's rules)", id, strings.Join(names, " and "), rules.PlatformName(h.GOOS))
 			}
 			if !itemIDPattern.MatchString(id) {
 				return fail(codeNotFound, "no rule or item %q (rule IDs are listed by kipple rules; item IDs by kipple scan)", id)

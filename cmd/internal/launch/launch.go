@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -70,12 +69,13 @@ type Runtime struct {
 	GOOS string
 }
 
-// goos is rt.GOOS or the running platform.
+// goos is rt.GOOS or the running platform (rules.Platform, which is
+// runtime.GOOS outside tests).
 func (rt Runtime) goos() string {
 	if rt.GOOS != "" {
 		return rt.GOOS
 	}
-	return runtime.GOOS
+	return rules.Platform()
 }
 
 // System is the real process environment.
@@ -188,7 +188,11 @@ func (h Home) PolicyEnv() policy.Env {
 // Rules is the effective catalogue: the built-in rules with the config's
 // project roots.
 func (h Home) Rules() []rules.Rule {
-	return scan.EffectiveRules(rules.Catalogue(), h.Config.EffectiveProjectRoots())
+	goos := h.GOOS
+	if goos == "" {
+		goos = rules.Platform()
+	}
+	return scan.EffectiveRules(rules.CatalogueFor(goos), h.Config.EffectiveProjectRoots())
 }
 
 // ScanOptions are the scan options every front end starts from.
@@ -261,7 +265,11 @@ func StateDir(rt Runtime, h Home) (string, error) {
 		}
 		return filepath.Clean(d), nil
 	}
-	return DefaultStateDir(runtime.GOOS, h.Path), nil
+	goos := h.GOOS
+	if goos == "" {
+		goos = rt.goos()
+	}
+	return DefaultStateDir(goos, h.Path), nil
 }
 
 // DefaultStateDir is where kipple keeps its receipts under home on goos:

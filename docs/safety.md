@@ -316,6 +316,48 @@ can be moved; it is also `manual`, so it moves only when you name it. A
   folder that is one is refused. (The v0.3.0 development snapshots before
   this check could move a bind mount that lived on home's device.)
 
+## On Linux
+
+kipple runs on Linux with the same model: one gate, dry run by default, the
+Trash only, receipts and restore, no symlink followed, home only, never root.
+What differs is described here.
+
+### The ~/.cache rule (`xdg.cache`)
+
+On Linux, `~/.cache` is where the XDG standard puts data that apps can
+recreate, and `xdg.cache` is the Linux twin of the macOS `caches.user`
+rule: it is `safe`, so its items are pre-selected, but only a child of
+`~/.cache` untouched for 7 days is offered, every item is checked again just
+before it moves, it goes to the Trash, and the receipt lets you put it back.
+These children of `~/.cache` are never offered by it, because another rule
+owns them or because they hold state that is not a cache:
+
+<!-- xdg-cache-excludes:start -->
+| Child of `~/.cache` | Why it is never offered |
+|---|---|
+| `pip` | Another rule owns it, with its own tier and conditions. |
+| `uv` | Another rule owns it, with its own tier and conditions. |
+| `go-build` | Another rule owns it, with its own tier and conditions. |
+| `yarn` | Another rule owns it, with its own tier and conditions. |
+| `pnpm` | Another rule owns it, with its own tier and conditions. |
+| `pypoetry` | Another rule owns it, with its own tier and conditions. |
+| `huggingface` | Another rule owns it, with its own tier and conditions. |
+| `JetBrains` | Another rule owns it, with its own tier and conditions. |
+| `Homebrew` | Another rule owns it, with its own tier and conditions. |
+| `keyring*` | Older GNOME keyring versions keep their control directory here; it is session state for the password store, not a cache. |
+| `gnome-keyring` | Older GNOME keyring versions keep their control directory here; it is session state for the password store, not a cache. |
+| `sessions` | Xfce and LXDE save the open-application session here; removing it loses the saved session. |
+| `evolution` | Evolution's offline mail store can hold messages and drafts not yet synchronised to the server. |
+| `rclone` | rclone's mount write-back cache can hold file changes not yet uploaded. |
+| `zellij` | zellij keeps session-resurrection layouts here, which are user state. |
+| `keepassxc` | KeePassXC keeps its recent-database and key-file list here, which belongs to a password manager. |
+| `ibus` | Some input methods (ibus-libpinyin, ibus-typing-booster) keep the phrases they learned from your typing here. |
+<!-- xdg-cache-excludes:end -->
+
+A child whose name is on the denylist (such as `.env*`, `.git`, `*.kdbx` or
+`*.pem`) is refused by the policy anyway, and protected names inside an item
+make it `contains_protected`, as everywhere.
+
 <a id="permanent"></a>
 ## Permanent deletion
 

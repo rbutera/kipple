@@ -1,7 +1,9 @@
 // Command mkfixture writes a small fixture home folder for
 // scripts/agent-flow-check.sh: a few caches and logs, a Go module cache, an
 // Xcode archive, an old installer, an Ollama model and an empty .Trash, all
-// with modification times 200 days ago. It writes only inside the folder it
+// with modification times 200 days ago. On Linux it writes the Linux
+// catalogue's twin of the same layout (~/.cache folders, a .deb installer,
+// no Xcode, and no Trash, which the first clean --apply creates). It writes only inside the folder it
 // is given, which must not exist yet or be empty.
 //
 // With -gui it writes a larger, realistic home for scripts/gui-screenshots.sh
@@ -16,13 +18,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
-var files = []struct {
+type fixtureFile struct {
 	path string
 	size int
-}{
+}
+
+// linuxFiles is the Linux layout: two safe items (a ~/.cache folder and a
+// pip cache entry), a review item, a manual item and an info item.
+var linuxFiles = []fixtureFile{
+	{".cache/com.example.app/blob", 64 << 10},
+	{".cache/pip/http/ab/blob", 4 << 10},
+	{"go/pkg/mod/github.com/x/y.go", 4 << 10},
+	{"Downloads/old.deb", 16 << 10},
+	{".ollama/models/blobs/sha256-aa", 16 << 10},
+}
+
+var files = []fixtureFile{
 	{"Library/Caches/com.example.app/blob", 64 << 10},
 	{"Library/Logs/app/log.txt", 4 << 10},
 	{"Library/Developer/Xcode/DerivedData/MyApp-bxkq/Build/out.o", 32 << 10},
@@ -56,12 +71,15 @@ func build(root string) error {
 	if entries, err := os.ReadDir(root); err == nil && len(entries) > 0 {
 		return fmt.Errorf("%s is not empty", root)
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".Trash"), 0o700); err != nil {
+	layout := files
+	if runtime.GOOS == "linux" {
+		layout = linuxFiles
+	} else if err := os.MkdirAll(filepath.Join(root, ".Trash"), 0o700); err != nil {
 		return err
 	}
 	old := time.Now().Add(-200 * 24 * time.Hour)
 	var dirs []string
-	for _, f := range files {
+	for _, f := range layout {
 		p := filepath.Join(root, filepath.FromSlash(f.path))
 		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 			return err

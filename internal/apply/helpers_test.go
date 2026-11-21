@@ -18,7 +18,14 @@ import (
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
-func TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }
+// These tests are written against the macOS catalogue's fixtures
+// (Library/Caches, Library/Logs, Xcode) and test mechanics, not catalogue
+// contents, so they use that catalogue on every host. The Linux catalogue
+// has its own tests (internal/rules, and the Linux scenario tests).
+func TestMain(m *testing.M) {
+	rules.UseCatalogueOf(rules.PlatformDarwin)
+	os.Exit(testutil.GuardedMain(m))
+}
 
 var (
 	now = time.Now()

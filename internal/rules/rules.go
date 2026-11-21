@@ -180,24 +180,9 @@ var defaultProjectRoots = []string{"dev", "code", "projects", "src", "Developer"
 // DefaultProjectRoots returns a copy of the default project roots.
 func DefaultProjectRoots() []string { return append([]string(nil), defaultProjectRoots...) }
 
-// Catalogue returns a deep copy of every rule, in a stable order.
-func Catalogue() []Rule {
-	out := make([]Rule, len(catalogue))
-	for i, r := range catalogue {
-		out[i] = r.clone()
-	}
-	return out
-}
-
-// Lookup returns the rule with the given ID.
-func Lookup(id string) (Rule, bool) {
-	for _, r := range catalogue {
-		if r.ID == id {
-			return r.clone(), true
-		}
-	}
-	return Rule{}, false
-}
+// Lookup returns the rule with the given ID in the running platform's
+// catalogue.
+func Lookup(id string) (Rule, bool) { return LookupFor(platform, id) }
 
 func (r Rule) clone() Rule {
 	c := r

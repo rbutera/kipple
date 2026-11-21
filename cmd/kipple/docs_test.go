@@ -10,6 +10,7 @@ import (
 	"github.com/rbutera/kipple/internal/plan"
 	"github.com/rbutera/kipple/internal/plan/plantest"
 	"github.com/rbutera/kipple/internal/policy"
+	"github.com/rbutera/kipple/internal/rules"
 )
 
 // Task 2.6: the example in docs/plan-schema.md validates against the schema
@@ -65,6 +66,43 @@ func denylistSection() string {
 	}
 	b.WriteString("<!-- denylist:end -->")
 	return b.String()
+}
+
+// xdgCacheExcludesSection renders rules.XDGCacheExcludes() as the
+// docs/safety.md table.
+func xdgCacheExcludesSection() string {
+	var b strings.Builder
+	b.WriteString("<!-- xdg-cache-excludes:start -->\n")
+	b.WriteString("| Child of `~/.cache` | Why it is never offered |\n|---|---|\n")
+	for _, e := range rules.XDGCacheExcludes() {
+		b.WriteString("| `" + e.Pattern + "` | " + e.Why + " |\n")
+	}
+	b.WriteString("<!-- xdg-cache-excludes:end -->")
+	return b.String()
+}
+
+// Spec scenario "Excludes documented": every xdg.cache exclude is in
+// docs/safety.md with its reason, generated from the rule's table.
+func TestXDGCacheExcludesDocumented(t *testing.T) {
+	const path = "../../docs/safety.md"
+	doc, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := regexp.MustCompile(`(?s)<!-- xdg-cache-excludes:start -->.*?<!-- xdg-cache-excludes:end -->`)
+	if !section.Match(doc) {
+		t.Fatal("docs/safety.md has no xdg.cache exclude section markers")
+	}
+	want := xdgCacheExcludesSection()
+	if *updateDocs {
+		doc = section.ReplaceAll(doc, []byte(want))
+		if err := os.WriteFile(path, doc, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := string(section.Find(doc)); got != want {
+		t.Fatalf("docs/safety.md xdg.cache excludes differ from rules.XDGCacheExcludes() (go test ./cmd/kipple -run TestXDGCacheExcludesDocumented -update-docs):\n%s", want)
+	}
 }
 
 // Task 3.8: the denylist in docs/safety.md is generated from

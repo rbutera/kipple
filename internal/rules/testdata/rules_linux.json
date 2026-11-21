@@ -1,0 +1,840 @@
+[
+  {
+    "id": "homebrew.cache",
+    "title": "Homebrew download cache",
+    "tier": "safe",
+    "roots": [
+      ".cache/Homebrew"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Homebrew"
+    },
+    "what": "Bottles, source archives and index files that Homebrew downloaded while installing or upgrading packages.",
+    "if_removed": "Installed packages keep working, and Homebrew downloads files again only when you reinstall or upgrade."
+  },
+  {
+    "id": "npm.cache",
+    "title": "npm cache",
+    "tier": "safe",
+    "roots": [
+      ".npm/_cacache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "npm"
+    },
+    "what": "npm's cache of every package archive it has downloaded.",
+    "if_removed": "The next install fetches packages from the registry again, so it is slower and needs a network connection."
+  },
+  {
+    "id": "pnpm.store",
+    "title": "pnpm store",
+    "tier": "safe",
+    "roots": [
+      ".local/share/pnpm/store",
+      ".cache/pnpm"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "pnpm"
+    },
+    "what": "The shared store that pnpm copies or links every project's packages from.",
+    "if_removed": "Existing node_modules folders keep working, and the next install downloads packages into a fresh store."
+  },
+  {
+    "id": "yarn.cache",
+    "title": "Yarn classic cache",
+    "tier": "safe",
+    "roots": [
+      ".cache/yarn"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Yarn"
+    },
+    "what": "Yarn 1's offline copy of every package it has downloaded.",
+    "if_removed": "The next yarn install downloads packages again from the registry."
+  },
+  {
+    "id": "bun.cache",
+    "title": "Bun install cache",
+    "tier": "safe",
+    "roots": [
+      ".bun/install/cache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Bun"
+    },
+    "what": "Packages that bun install has downloaded and keeps for reuse across projects.",
+    "if_removed": "The next bun install downloads packages again."
+  },
+  {
+    "id": "pip.cache",
+    "title": "pip cache",
+    "tier": "safe",
+    "roots": [
+      ".cache/pip"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "pip"
+    },
+    "what": "Python packages and built wheels that pip downloaded or compiled.",
+    "if_removed": "pip downloads or rebuilds packages again the next time you install them."
+  },
+  {
+    "id": "uv.cache",
+    "title": "uv cache",
+    "tier": "safe",
+    "roots": [
+      ".cache/uv"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "uv"
+    },
+    "what": "Python packages, wheels and source builds that uv keeps to make environments fast to create.",
+    "if_removed": "Existing environments keep working, and uv downloads or rebuilds packages the next time it needs them."
+  },
+  {
+    "id": "poetry.cache",
+    "title": "Poetry cache",
+    "tier": "safe",
+    "roots": [
+      ".cache/pypoetry/cache",
+      ".cache/pypoetry/artifacts"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Poetry"
+    },
+    "what": "Package metadata and downloaded archives that Poetry caches, not including its virtual environments.",
+    "if_removed": "Poetry downloads package information and archives again on the next install or lock."
+  },
+  {
+    "id": "cargo.registry",
+    "title": "Cargo registry cache and sources",
+    "tier": "safe",
+    "roots": [
+      ".cargo/registry/cache",
+      ".cargo/registry/src"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Cargo"
+    },
+    "what": "Downloaded Rust crate archives and the unpacked source Cargo builds them from.",
+    "if_removed": "Cargo downloads and unpacks crates again the next time a project builds."
+  },
+  {
+    "id": "go.build-cache",
+    "title": "Go build cache",
+    "tier": "safe",
+    "roots": [
+      ".cache/go-build"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Go"
+    },
+    "what": "Compiled packages and test results the Go toolchain reuses to make builds fast.",
+    "if_removed": "The next go build or go test recompiles everything once, so it is slower that time."
+  },
+  {
+    "id": "gradle.caches",
+    "title": "Gradle caches",
+    "tier": "safe",
+    "roots": [
+      ".gradle/caches"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Gradle"
+    },
+    "what": "Dependencies, build outputs and transformed files that Gradle shares across projects.",
+    "if_removed": "The next Gradle build downloads dependencies and rebuilds outputs again, which can take a while."
+  },
+  {
+    "id": "editor.cursor",
+    "title": "Cursor caches",
+    "tier": "safe",
+    "roots": [
+      ".config/Cursor/Cache",
+      ".config/Cursor/CachedData",
+      ".config/Cursor/Code Cache",
+      ".config/Cursor/GPUCache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Cursor",
+      "processes": [
+        "cursor"
+      ]
+    },
+    "what": "Web, code and graphics caches the Cursor editor keeps to open windows and extensions faster.",
+    "if_removed": "Cursor rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched."
+  },
+  {
+    "id": "editor.vscode",
+    "title": "VS Code caches",
+    "tier": "safe",
+    "roots": [
+      ".config/Code/Cache",
+      ".config/Code/CachedData",
+      ".config/Code/Code Cache",
+      ".config/Code/GPUCache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Visual Studio Code",
+      "processes": [
+        "code"
+      ]
+    },
+    "what": "Web, code and graphics caches VS Code keeps to open windows and extensions faster.",
+    "if_removed": "VS Code rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched."
+  },
+  {
+    "id": "editor.windsurf",
+    "title": "Windsurf caches",
+    "tier": "safe",
+    "roots": [
+      ".config/Windsurf/Cache",
+      ".config/Windsurf/CachedData",
+      ".config/Windsurf/Code Cache",
+      ".config/Windsurf/GPUCache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Windsurf",
+      "processes": [
+        "windsurf"
+      ]
+    },
+    "what": "Web, code and graphics caches the Windsurf editor keeps to open windows and extensions faster.",
+    "if_removed": "Windsurf rebuilds them on its next launch, which may be slightly slower, and your settings and extensions are untouched."
+  },
+  {
+    "id": "claude.shell-snapshots",
+    "title": "Claude Code shell snapshots",
+    "tier": "safe",
+    "roots": [
+      ".claude/shell-snapshots"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 7,
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Claude Code",
+      "processes": [
+        "claude"
+      ]
+    },
+    "what": "Copies of your shell setup that Claude Code saves when a session starts so its commands run in a familiar environment.",
+    "if_removed": "New sessions save a fresh snapshot, and snapshots older than a week belong to sessions that have ended."
+  },
+  {
+    "id": "claude.debug",
+    "title": "Claude Code debug logs",
+    "tier": "safe",
+    "roots": [
+      ".claude/debug"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 7
+    },
+    "owner": {
+      "name": "Claude Code",
+      "processes": [
+        "claude"
+      ]
+    },
+    "what": "Debug logs Claude Code writes for each session.",
+    "if_removed": "You lose old debug output that is only useful when reporting a Claude Code bug."
+  },
+  {
+    "id": "codex.log",
+    "title": "Codex logs",
+    "tier": "safe",
+    "roots": [
+      ".codex/log"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 7
+    },
+    "owner": {
+      "name": "Codex",
+      "processes": [
+        "codex"
+      ]
+    },
+    "what": "Log files the Codex CLI and app write while they run.",
+    "if_removed": "You lose old log output that is only useful when reporting a Codex bug."
+  },
+  {
+    "id": "xdg.cache",
+    "title": "App caches",
+    "tier": "safe",
+    "roots": [
+      ".cache"
+    ],
+    "exclude": [
+      "pip",
+      "uv",
+      "go-build",
+      "yarn",
+      "pnpm",
+      "pypoetry",
+      "huggingface",
+      "JetBrains",
+      "Homebrew",
+      "keyring*",
+      "gnome-keyring",
+      "sessions",
+      "evolution",
+      "rclone",
+      "zellij",
+      "keepassxc",
+      "ibus"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 7
+    },
+    "owner": {
+      "name": "Linux apps"
+    },
+    "what": "Folders that apps keep in your ~/.cache folder, which the XDG standard reserves for data apps can recreate, untouched for a week.",
+    "if_removed": "Apps may start a little slower the first time while they rebuild or re-download what they need, and no documents or settings are lost."
+  },
+  {
+    "id": "go.mod-cache",
+    "title": "Go module cache",
+    "tier": "review",
+    "roots": [
+      "go/pkg/mod"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Go"
+    },
+    "what": "Source code of every Go module your projects have downloaded, the same folder go clean -modcache empties.",
+    "if_removed": "Every Go project downloads its dependencies again on the next build, which needs a network connection and can take a while."
+  },
+  {
+    "id": "project.node-modules",
+    "title": "Project node_modules",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        "node_modules"
+      ],
+      "markers": [
+        "package.json"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "Installed JavaScript packages inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The project needs npm, pnpm, Yarn or Bun install before it runs or builds again."
+  },
+  {
+    "id": "project.target",
+    "title": "Project Rust target",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        "target"
+      ],
+      "markers": [
+        "Cargo.toml"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "Rust build output inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The next cargo build of that project compiles everything from scratch."
+  },
+  {
+    "id": "project.venv",
+    "title": "Project Python virtualenv",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        ".venv",
+        "venv"
+      ],
+      "markers": [
+        "pyproject.toml",
+        "requirements.txt"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "A Python virtual environment inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The project needs its virtual environment recreated and packages reinstalled before it runs again."
+  },
+  {
+    "id": "project.next",
+    "title": "Project Next.js build",
+    "tier": "review",
+    "roots": [
+      "dev",
+      "code",
+      "projects",
+      "src",
+      "Developer",
+      "repos"
+    ],
+    "match": {
+      "kind": "project_artifact",
+      "names": [
+        ".next"
+      ],
+      "markers": [
+        "next.config.js",
+        "next.config.mjs",
+        "next.config.ts",
+        "next.config.cjs"
+      ]
+    },
+    "conditions": {
+      "requires_idle_project": true,
+      "idle_days": 30,
+      "requires_clean_git": true,
+      "skip_if_agent_in_project": true
+    },
+    "owner": {
+      "name": "Project build tools",
+      "processes": [
+        "claude",
+        "codex",
+        "cursor-agent"
+      ]
+    },
+    "what": "Next.js build output and cache inside a project you have not touched for 30 days and whose git state is committed and pushed.",
+    "if_removed": "The next dev server start or build of that project is slower while Next.js rebuilds it."
+  },
+  {
+    "id": "jetbrains.caches",
+    "title": "JetBrains IDE caches",
+    "tier": "review",
+    "roots": [
+      ".cache/JetBrains"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "min_age_days": 30,
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "JetBrains IDEs",
+      "processes": [
+        "idea",
+        "pycharm",
+        "goland",
+        "webstorm",
+        "clion",
+        "rustrover",
+        "rider",
+        "phpstorm",
+        "datagrip",
+        "rubymine"
+      ]
+    },
+    "what": "Indexes, caches and the Local History of one JetBrains IDE version (IntelliJ IDEA, PyCharm, GoLand and others), untouched for 30 days.",
+    "if_removed": "The IDE re-indexes your projects the next time it opens them, and its Local History of past edits in that version is gone."
+  },
+  {
+    "id": "maven.repository",
+    "title": "Maven local repository",
+    "tier": "review",
+    "roots": [
+      ".m2/repository"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Maven"
+    },
+    "what": "Java libraries Maven and Gradle downloaded into the local repository, plus anything you installed there with mvn install.",
+    "if_removed": "Builds download their dependencies again, and snapshot versions you only installed locally must be rebuilt from their source."
+  },
+  {
+    "id": "flatpak.app-cache",
+    "title": "Flatpak app caches",
+    "tier": "review",
+    "roots": [
+      ".var/app/*/cache"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Flatpak apps"
+    },
+    "what": "Cache folders that Flatpak apps keep inside their own data folder under ~/.var/app.",
+    "if_removed": "Each app rebuilds what it needs on its next start, and its documents and settings in the same folder are untouched."
+  },
+  {
+    "id": "huggingface.hub",
+    "title": "Hugging Face hub cache",
+    "tier": "manual",
+    "roots": [
+      ".cache/huggingface/hub"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Hugging Face libraries"
+    },
+    "what": "Model weights and datasets downloaded by Hugging Face libraries such as transformers and diffusers.",
+    "if_removed": "Each model downloads again, often several gigabytes, the next time code loads it."
+  },
+  {
+    "id": "codex.worktrees",
+    "title": "Codex worktrees",
+    "tier": "manual",
+    "roots": [
+      ".codex/worktrees"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {
+      "requires_clean_git": true,
+      "skip_if_owner_running": true
+    },
+    "owner": {
+      "name": "Codex",
+      "processes": [
+        "codex"
+      ]
+    },
+    "what": "Separate git checkouts that Codex creates so tasks can run in parallel without touching your main checkout.",
+    "if_removed": "Any uncommitted or unpushed work in that checkout leaves your disk with it, and git keeps listing the worktree until you run git worktree prune."
+  },
+  {
+    "id": "downloads.installers",
+    "title": "Old installers in Downloads",
+    "tier": "manual",
+    "roots": [
+      "Downloads"
+    ],
+    "match": {
+      "kind": "extensions",
+      "extensions": [
+        ".deb",
+        ".rpm",
+        ".AppImage",
+        ".iso",
+        ".run"
+      ]
+    },
+    "conditions": {
+      "min_age_days": 14
+    },
+    "owner": {
+      "name": "You"
+    },
+    "what": "Installer packages and disk images (.deb, .rpm, .AppImage, .iso, .run) in your Downloads folder that are more than two weeks old.",
+    "if_removed": "You would need to download an installer again to reinstall that app."
+  },
+  {
+    "id": "ollama.models",
+    "title": "Ollama models",
+    "tier": "info",
+    "roots": [
+      ".ollama/models"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Ollama",
+      "processes": [
+        "ollama"
+      ]
+    },
+    "owner_command": "ollama rm <model>",
+    "what": "Local language models that Ollama downloaded, often several gigabytes each.",
+    "if_removed": "Ollama has to download a model again before you can run it, so remove models with Ollama itself."
+  },
+  {
+    "id": "claude.projects",
+    "title": "Claude Code session history",
+    "tier": "info",
+    "roots": [
+      ".claude/projects"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Claude Code",
+      "processes": [
+        "claude"
+      ]
+    },
+    "owner_command": "set cleanupPeriodDays in ~/.claude/settings.json",
+    "what": "Transcripts of your Claude Code conversations, grouped by project, which also hold the context for resuming a session.",
+    "if_removed": "You can no longer resume or search those conversations, so let Claude Code expire them itself."
+  },
+  {
+    "id": "codex.sessions",
+    "title": "Codex session history",
+    "tier": "info",
+    "roots": [
+      ".codex/sessions"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Codex",
+      "processes": [
+        "codex"
+      ]
+    },
+    "owner_command": "archive or delete old sessions from within Codex",
+    "what": "Recorded Codex sessions, which Codex uses to resume and review past work.",
+    "if_removed": "You can no longer resume or review those sessions, so manage them from Codex itself."
+  },
+  {
+    "id": "docker.raw",
+    "title": "Docker Desktop disk image",
+    "tier": "info",
+    "roots": [
+      ".docker/desktop/vms/0/data"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Docker Desktop",
+      "processes": [
+        "com.docker.backend"
+      ]
+    },
+    "owner_command": "docker system prune",
+    "what": "The single disk image file that holds all of Docker Desktop's images, containers and volumes.",
+    "if_removed": "Every image, container and volume is lost at once, so reclaim space with Docker's own prune commands instead."
+  },
+  {
+    "id": "docker.rootless",
+    "title": "Rootless Docker data",
+    "tier": "info",
+    "roots": [
+      ".local/share/docker"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Docker (rootless)",
+      "processes": [
+        "dockerd"
+      ]
+    },
+    "owner_command": "docker system prune",
+    "what": "The images, containers, volumes and build cache of rootless Docker.",
+    "if_removed": "Images, containers and volumes would be lost or corrupted, so reclaim space with Docker's own prune commands instead."
+  },
+  {
+    "id": "podman.storage",
+    "title": "Podman storage",
+    "tier": "info",
+    "roots": [
+      ".local/share/containers/storage"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Podman",
+      "processes": [
+        "podman"
+      ]
+    },
+    "owner_command": "podman system prune",
+    "what": "The images, containers and volumes of rootless Podman.",
+    "if_removed": "Images, containers and volumes would be lost or corrupted, so reclaim space with Podman's own prune command instead."
+  },
+  {
+    "id": "flatpak.user",
+    "title": "Flatpak user installation",
+    "tier": "info",
+    "roots": [
+      ".local/share/flatpak"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Flatpak"
+    },
+    "owner_command": "flatpak uninstall --unused",
+    "what": "Flatpak apps and runtimes installed for your user only.",
+    "if_removed": "Installed apps would stop working, so remove apps and unused runtimes with Flatpak itself."
+  },
+  {
+    "id": "snap.data",
+    "title": "Snap data",
+    "tier": "info",
+    "roots": [
+      "snap"
+    ],
+    "match": {
+      "kind": "children"
+    },
+    "conditions": {},
+    "owner": {
+      "name": "Snap"
+    },
+    "owner_command": "snap list --all, then snap remove --purge <name>",
+    "what": "The per-user data folders of snap packages, one per app and revision.",
+    "if_removed": "Snap apps would lose their settings and files, so remove snaps and their old revisions with snap itself."
+  }
+]

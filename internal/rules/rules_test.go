@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,7 +15,12 @@ import (
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
-func TestMain(m *testing.M) { os.Exit(testutil.GuardedMain(m)) }
+// Catalogue() and Lookup are the macOS catalogue in these tests on every
+// host; the Linux one is checked through CatalogueFor.
+func TestMain(m *testing.M) {
+	rules.UseCatalogueOf(rules.PlatformDarwin)
+	os.Exit(testutil.GuardedMain(m))
+}
 
 var update = flag.Bool("update", false, "rewrite testdata golden files")
 
@@ -37,20 +43,58 @@ func TestMatchKindsAgreeWithPolicy(t *testing.T) {
 
 func hasMeta(s string) bool { return strings.ContainsAny(s, `*?[\`) }
 
-// TestCatalogueInvariants is the spec scenario "Invariant test": every failure
-// names the rule.
+// TestCatalogueInvariants is the spec scenario "Invariant test": every
+// platform's catalogue is checked on any host, and every failure names the
+// rule and the platform.
 func TestCatalogueInvariants(t *testing.T) {
-	cat := rules.Catalogue()
-	if len(cat) == 0 {
-		t.Fatal("catalogue is empty")
+	for _, goos := range rules.Platforms() {
+		t.Run(goos, func(t *testing.T) {
+			cat := rules.CatalogueFor(goos)
+			if len(cat) == 0 {
+				t.Fatal("catalogue is empty")
+			}
+			for _, err := range rules.ValidateFor(goos, cat) {
+				t.Error(err)
+			}
+			for _, r := range cat {
+				if (r.Tier == rules.TierInfo) == r.Movable() {
+					t.Errorf("%s: Movable() = %v for tier %s", r.ID, r.Movable(), r.Tier)
+				}
+			}
+		})
 	}
-	for _, err := range rules.Validate(cat) {
-		t.Error(err)
-	}
-	for _, r := range cat {
-		if (r.Tier == rules.TierInfo) == r.Movable() {
-			t.Errorf("%s: Movable() = %v for tier %s", r.ID, r.Movable(), r.Tier)
+}
+
+// Spec scenario "Nested root not excluded": a Linux catalogue whose
+// xdg.cache does not exclude pip fails, naming xdg.cache and linux.
+func TestNestedRootNotExcluded(t *testing.T) {
+	cat := rules.CatalogueFor(rules.PlatformLinux)
+	for i := range cat {
+		if cat[i].ID == "xdg.cache" {
+			var ex []string
+			for _, e := range cat[i].Exclude {
+				if e != "pip" {
+					ex = append(ex, e)
+				}
+			}
+			cat[i].Exclude = ex
 		}
+	}
+	errs := rules.ValidateFor(rules.PlatformLinux, cat)
+	found := false
+	for _, err := range errs {
+		found = found || (strings.Contains(err.Error(), "xdg.cache") && strings.Contains(err.Error(), "linux") && strings.Contains(err.Error(), "pip"))
+	}
+	if !found {
+		t.Fatalf("errors %v do not name xdg.cache, linux and pip", errs)
+	}
+	// A Linux rule with a bundle ID, or an owner check without a process.
+	bad := rules.CatalogueFor(rules.PlatformLinux)
+	bad[0].Owner.BundleIDs = []string{"com.example"}
+	bad[0].Owner.Processes = nil
+	bad[0].Conditions.SkipIfOwnerRunning = true
+	if errs := rules.ValidateFor(rules.PlatformLinux, bad); len(errs) != 2 {
+		t.Fatalf("errors %v, want the bundle ID and the missing process", errs)
 	}
 }
 
@@ -383,44 +427,46 @@ func TestLevels(t *testing.T) {
 	}
 }
 
-// TestGoldenRulesJSON pins the JSON encoding of the catalogue. Regenerate
-// with: go test ./internal/rules -run TestGoldenRulesJSON -update
+// TestGoldenRulesJSON pins the JSON encoding of each platform's catalogue
+// (testdata/rules_<goos>.json). The macOS one is the v0.2.0 golden, byte
+// for byte (spec scenario "macOS catalogue unchanged by the port"; it must
+// never be regenerated in v0.3.0). Regenerate the Linux one with:
+// go test ./internal/rules -run TestGoldenRulesJSON -update
 func TestGoldenRulesJSON(t *testing.T) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(rules.Catalogue()); err != nil {
-		t.Fatal(err)
-	}
-	golden := filepath.Join("testdata", "rules.json")
-	if *update {
-		if err := os.MkdirAll("testdata", 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(golden, buf.Bytes(), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("%v (run with -update to create it)", err)
-	}
-	if !bytes.Equal(buf.Bytes(), want) {
-		t.Fatalf("catalogue JSON differs from %s; if intended, rerun with -update and review the diff", golden)
-	}
-
-	// Every rule in the golden carries the fields the spec requires.
-	var decoded []map[string]any
-	if err := json.Unmarshal(want, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range decoded {
-		for _, k := range []string{"id", "title", "tier", "roots", "what", "if_removed", "owner"} {
-			if _, ok := r[k]; !ok {
-				t.Errorf("%v: golden JSON lacks %q", r["id"], k)
+	for _, goos := range rules.Platforms() {
+		t.Run(goos, func(t *testing.T) {
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetIndent("", "  ")
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(rules.CatalogueFor(goos)); err != nil {
+				t.Fatal(err)
 			}
-		}
+			golden := filepath.Join("testdata", "rules_"+goos+".json")
+			if *update && goos != rules.PlatformDarwin {
+				if err := os.WriteFile(golden, buf.Bytes(), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("%v (run with -update to create it)", err)
+			}
+			if !bytes.Equal(buf.Bytes(), want) {
+				t.Fatalf("%s catalogue JSON differs from %s; if intended (never for darwin), rerun with -update and review the diff", goos, golden)
+			}
+			var decoded []map[string]any
+			if err := json.Unmarshal(want, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			for _, r := range decoded {
+				for _, k := range []string{"id", "title", "tier", "roots", "what", "if_removed", "owner"} {
+					if _, ok := r[k]; !ok {
+						t.Errorf("%v: golden JSON lacks %q", r["id"], k)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -433,10 +479,111 @@ func TestPackageCacheRules(t *testing.T) {
 		"poetry.cache": true, "cargo.registry": true, "go.build-cache": true, "go.mod-cache": true,
 		"gradle.caches": true, "cocoapods.cache": true,
 	}
-	for _, r := range rules.Catalogue() {
+	want["maven.repository"] = true // Linux only in v0.3.0
+	for _, r := range append(rules.CatalogueFor(rules.PlatformDarwin), rules.CatalogueFor(rules.PlatformLinux)...) {
 		exp := want[r.ID] || r.Match.Kind == rules.MatchProjectArtifact
 		if r.PackageCache != exp || r.RulePackageCache() != exp {
 			t.Errorf("%s: PackageCache %v, want %v", r.ID, r.PackageCache, exp)
 		}
+	}
+}
+
+// Spec scenario "Linux catalogue count": every rule the spec lists is in
+// the Linux catalogue with its tier, nothing else, and no root is under
+// Library/.
+func TestLinuxCatalogueCount(t *testing.T) {
+	want := map[string]rules.Tier{
+		"npm.cache": rules.TierSafe, "pnpm.store": rules.TierSafe, "yarn.cache": rules.TierSafe,
+		"bun.cache": rules.TierSafe, "pip.cache": rules.TierSafe, "uv.cache": rules.TierSafe,
+		"poetry.cache": rules.TierSafe, "cargo.registry": rules.TierSafe, "go.build-cache": rules.TierSafe,
+		"gradle.caches": rules.TierSafe, "homebrew.cache": rules.TierSafe, "xdg.cache": rules.TierSafe,
+		"editor.vscode": rules.TierSafe, "editor.cursor": rules.TierSafe, "editor.windsurf": rules.TierSafe,
+		"claude.shell-snapshots": rules.TierSafe, "claude.debug": rules.TierSafe, "codex.log": rules.TierSafe,
+
+		"jetbrains.caches": rules.TierReview, "maven.repository": rules.TierReview, "flatpak.app-cache": rules.TierReview,
+		"go.mod-cache": rules.TierReview, "project.node-modules": rules.TierReview, "project.target": rules.TierReview,
+		"project.venv": rules.TierReview, "project.next": rules.TierReview,
+
+		"huggingface.hub": rules.TierManual, "codex.worktrees": rules.TierManual, "downloads.installers": rules.TierManual,
+
+		"ollama.models": rules.TierInfo, "claude.projects": rules.TierInfo, "codex.sessions": rules.TierInfo,
+		"docker.raw": rules.TierInfo, "docker.rootless": rules.TierInfo, "podman.storage": rules.TierInfo,
+		"flatpak.user": rules.TierInfo, "snap.data": rules.TierInfo,
+	}
+	got := map[string]rules.Rule{}
+	for _, r := range rules.CatalogueFor(rules.PlatformLinux) {
+		got[r.ID] = r
+		for _, root := range r.Roots {
+			if strings.HasPrefix(root, "Library/") {
+				t.Errorf("%s: root %q is under Library/", r.ID, root)
+			}
+		}
+		if len(r.Owner.BundleIDs) > 0 {
+			t.Errorf("%s: bundle IDs on Linux", r.ID)
+		}
+	}
+	for id, tier := range want {
+		if r, ok := got[id]; !ok || r.Tier != tier {
+			t.Errorf("%s: %+v, want tier %s", id, r.Tier, tier)
+		}
+	}
+	for id := range got {
+		if _, ok := want[id]; !ok {
+			t.Errorf("%s: in the Linux catalogue but not in this test's list", id)
+		}
+	}
+	if r := got["xdg.cache"]; r.Conditions.MinAgeDays != 7 || r.Roots[0] != ".cache" {
+		t.Errorf("xdg.cache: %+v", r)
+	}
+	if r := got["jetbrains.caches"]; r.Conditions.MinAgeDays != 30 || !r.Conditions.SkipIfOwnerRunning || len(r.Owner.Processes) == 0 {
+		t.Errorf("jetbrains.caches: %+v", r)
+	}
+	if r := got["downloads.installers"]; strings.Join(r.Match.Extensions, " ") != ".deb .rpm .AppImage .iso .run" || r.Conditions.MinAgeDays != 14 {
+		t.Errorf("downloads.installers: %+v", r)
+	}
+	for id, proc := range map[string]string{"editor.vscode": "code", "editor.cursor": "cursor", "editor.windsurf": "windsurf"} {
+		if r := got[id]; !slices.Contains(r.Owner.Processes, proc) || !strings.HasPrefix(r.Roots[0], ".config/") {
+			t.Errorf("%s: %+v", id, r)
+		}
+	}
+}
+
+// Spec scenarios "Shared rule ID" and "macOS-only rule on Linux".
+func TestPerPlatformRules(t *testing.T) {
+	l, ok1 := rules.LookupFor(rules.PlatformLinux, "pip.cache")
+	d, ok2 := rules.LookupFor(rules.PlatformDarwin, "pip.cache")
+	if !ok1 || !ok2 || l.Roots[0] != ".cache/pip" || d.Roots[0] != "Library/Caches/pip" {
+		t.Fatalf("pip.cache: linux %v darwin %v", l.Roots, d.Roots)
+	}
+	if _, ok := rules.LookupFor(rules.PlatformLinux, "xcode.deriveddata"); ok {
+		t.Fatal("xcode.deriveddata exists on Linux")
+	}
+	if got := rules.PlatformsOf("xcode.deriveddata"); !slices.Equal(got, []string{rules.PlatformDarwin}) {
+		t.Fatalf("PlatformsOf = %v", got)
+	}
+	if got := rules.PlatformsOf("xdg.cache"); !slices.Equal(got, []string{rules.PlatformLinux}) {
+		t.Fatalf("PlatformsOf = %v", got)
+	}
+	if got := rules.PlatformsOf("pip.cache"); len(got) != 2 {
+		t.Fatalf("PlatformsOf = %v", got)
+	}
+	if rules.CatalogueFor("freebsd") != nil {
+		t.Fatal("a catalogue for an unsupported platform")
+	}
+}
+
+// Every xdg.cache exclude has a pattern and a one-sentence reason, and the
+// rule excludes exactly the table.
+func TestXDGCacheExcludeTable(t *testing.T) {
+	r, _ := rules.LookupFor(rules.PlatformLinux, "xdg.cache")
+	var pats []string
+	for _, e := range rules.XDGCacheExcludes() {
+		if e.Pattern == "" || !strings.HasSuffix(e.Why, ".") {
+			t.Errorf("exclude %+v", e)
+		}
+		pats = append(pats, e.Pattern)
+	}
+	if !slices.Equal(pats, r.Exclude) {
+		t.Fatalf("rule excludes %v, table %v", r.Exclude, pats)
 	}
 }

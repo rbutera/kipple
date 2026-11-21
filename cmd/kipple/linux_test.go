@@ -16,6 +16,13 @@ import (
 // Spec scenarios of platform-support and clean-apply that run the CLI on
 // Linux against a fixture.
 func TestLinuxCLI(t *testing.T) {
+	cli := func(t *testing.T, args ...string) (int, string, string) {
+		t.Helper()
+		rt := testEnv(t)
+		rt.goos = "linux"
+		return cliWith(t, rt, args...)
+	}
+	cleanFixture := linuxFixture
 	t.Run("Linux state directory", func(t *testing.T) {
 		home := cleanFixture(t)
 		t.Setenv("KIPPLE_STATE_DIR", "")

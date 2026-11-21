@@ -191,3 +191,25 @@ func excludes(r Rule, name string) bool {
 	}
 	return false
 }
+
+// ValidateFor checks one platform's catalogue: every Validate invariant
+// and, on Linux, that no rule names an app bundle ID and that every rule
+// that skips while its owner runs names an owner process (or is review).
+// Each error names the rule and the platform.
+func ValidateFor(goos string, rs []Rule) []error {
+	var errs []error
+	for _, err := range Validate(rs) {
+		errs = append(errs, fmt.Errorf("%v (%s catalogue)", err, goos))
+	}
+	if goos == PlatformLinux {
+		for _, r := range rs {
+			if len(r.Owner.BundleIDs) > 0 {
+				errs = append(errs, fmt.Errorf("%s: names app bundle IDs, which Linux has none of (%s catalogue)", r.ID, goos))
+			}
+			if r.Conditions.SkipIfOwnerRunning && len(r.Owner.Processes) == 0 && r.Tier != TierReview {
+				errs = append(errs, fmt.Errorf("%s: skips while its owner runs but names no owner process (%s catalogue)", r.ID, goos))
+			}
+		}
+	}
+	return errs
+}
