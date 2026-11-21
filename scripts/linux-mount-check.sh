@@ -199,18 +199,20 @@ btrfs_check() {
 btrfs_check
 
 # 4 and 5 build many-item fixtures: <root>/home with .ssh and N aged items
-# .cache/cNNN/{blob,m/}, and a Trash.
+# .cache/cNNN/{blob,m/}, and a Trash. Every step checks its status, because
+# the race attempts call it where errexit is off (retry_race's || list): a
+# failed step must stop the attempt, not leave a half-built fixture.
 many_fixture() {
 	local root="$1" n="$2" i
-	mkfile "$root/home/.ssh/id_ed25519" "private key"
-	mkdir -p "$root/home/.local/share/Trash/files" "$root/home/.local/share/Trash/info" "$root/state" "$root/out"
+	mkfile "$root/home/.ssh/id_ed25519" "private key" || return 1
+	mkdir -p "$root/home/.local/share/Trash/files" "$root/home/.local/share/Trash/info" "$root/state" "$root/out" || return 1
 	for i in $(seq -w 1 "$n"); do
-		mkfile "$root/home/.cache/c$i/blob" "z"
-		mkdir -p "$root/home/.cache/c$i/m"
+		mkfile "$root/home/.cache/c$i/blob" "z" || return 1
+		mkdir -p "$root/home/.cache/c$i/m" || return 1
 	done
-	chmod 700 "$root/home/.ssh" "$root/home/.local/share/Trash" "$root/home/.local/share/Trash/files" "$root/home/.local/share/Trash/info"
-	chown -R 1000:1000 "$root"
-	find "$root/home" -exec touch -h -d "$old" {} +
+	chmod 700 "$root/home/.ssh" "$root/home/.local/share/Trash" "$root/home/.local/share/Trash/files" "$root/home/.local/share/Trash/info" || return 1
+	chown -R 1000:1000 "$root" || return 1
+	find "$root/home" -exec touch -h -d "$old" {} + || return 1
 }
 mounts_under() { awk '{print $5}' /proc/self/mountinfo | grep -c "^$1" || true; }
 unmount_under() {
@@ -257,8 +259,11 @@ retry_race() {
 
 race_once() {
 	local r="/tmp/race$1" n=150 i targets="" moved skipped left back
-	many_fixture "$r" "$n"
-	user_in "$r" "$K" scan --json >"$r/out/plan.json"
+	# errexit is off here (retry_race), so setup failures are checked.
+	if ! many_fixture "$r" "$n" || ! user_in "$r" "$K" scan --json >"$r/out/plan.json"; then
+		fail "binds flipping during apply: run $1 could not build or scan its fixture"
+		return 1
+	fi
 	for i in $(seq -w 1 "$n"); do targets="$targets $r/home/.cache/c$i/m"; done
 	rm -f /tmp/flipstop
 	# shellcheck disable=SC2086
@@ -290,13 +295,21 @@ retry_race "binds flipping during apply" race_once
 #     call the item clean. No mount may be left under the Trash. flip2
 #     toggles every FLIP_US microseconds; 20 reaches the put-back far more
 #     often than the old 200 (wave 2 confirmation G4).
+# unreadable_layout adds the d/m folders of the unreadable-folder race.
+unreadable_layout() {
+	local r="$1" n="$2" i
+	for i in $(seq -w 1 "$n"); do mkdir -p "$r/home/.cache/c$i/d/m" || return 1; done
+	chown -R 1000:1000 "$r/home/.cache" || return 1
+	find "$r/home/.cache" -exec touch -h -d "$old" {} + || return 1
+}
+
 race_unreadable_once() {
 	local r="/tmp/race2-$1" n=150 i targets="" left back
-	many_fixture "$r" "$n"
-	for i in $(seq -w 1 "$n"); do mkdir -p "$r/home/.cache/c$i/d/m"; done
-	chown -R 1000:1000 "$r/home/.cache"
-	find "$r/home/.cache" -exec touch -h -d "$old" {} +
-	user_in "$r" "$K" scan --json >"$r/out/plan.json"
+	# errexit is off here (retry_race), so setup failures are checked.
+	if ! many_fixture "$r" "$n" || ! unreadable_layout "$r" "$n" || ! user_in "$r" "$K" scan --json >"$r/out/plan.json"; then
+		fail "binds below unreadable folders: run $1 could not build or scan its fixture"
+		return 1
+	fi
 	for i in $(seq -w 1 "$n"); do targets="$targets $r/home/.cache/c$i"; done
 	rm -f /tmp/flipstop
 	# shellcheck disable=SC2086
