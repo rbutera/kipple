@@ -643,8 +643,9 @@ func (a *applier) afterMoveCheck(f *policy.Fresh, it plan.Item, dir *os.File, mo
 	if a.o.afterMove != nil {
 		a.o.afterMove(it)
 	}
-	if err := a.sess.RefreshMounts(); err != nil {
-		a.stopErr = fmt.Errorf("apply: %w", err)
+	refreshErr := a.sess.RefreshMounts()
+	if refreshErr != nil {
+		a.stopErr = fmt.Errorf("apply: %w", refreshErr)
 	}
 	// Not a.ctx: once the item has moved, stopping the run must not stop
 	// its check (an interrupted walk would put it back for no reason).
@@ -653,6 +654,9 @@ func (a *applier) afterMoveCheck(f *policy.Fresh, it plan.Item, dir *os.File, mo
 	inTrash := a.trashDir != nil && filepath.Dir(moved.TrashPath) == a.trashDir.Path()
 	var why string
 	switch {
+	case refreshErr != nil:
+		// Every entry's check fails then; that is not a mount inside.
+		why = "the mount table could not be read again after the move (" + refreshErr.Error() + ")"
 	case len(res.Mounts) > 0:
 		why = "a mount appeared inside it (" + strings.Join(res.Mounts, ", ") + ")"
 	case err != nil || res.Status == sizes.StatusPartial:
@@ -665,8 +669,6 @@ func (a *applier) afterMoveCheck(f *policy.Fresh, it plan.Item, dir *os.File, mo
 			w = err.Error()
 		}
 		why = "it could not be checked completely after the move (" + w + ")"
-	case a.stopErr != nil:
-		why = "mount points could no longer be determined (" + a.stopErr.Error() + ")"
 	case inTrash:
 		// The Trash entry itself must not have become a mount point.
 		if mr, merr := a.sess.MountRoot(a.trashDir.Fd(), name, moved.Dev, moved.Ino); mr || merr != nil {

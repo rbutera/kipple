@@ -247,3 +247,30 @@ func TestStopPartwayReportsMoves(t *testing.T) {
 		t.Fatalf("receipt %+v %v", e.Receipt, lerr)
 	}
 }
+
+// Standards addendum A: when the mount table cannot be read again after a
+// move, the item is put back with that reason, not "a mount appeared", and
+// no entries are listed.
+func TestRefreshFailureAfterTheMoveSaysSo(t *testing.T) {
+	f := newFx(t, testutil.Spec{Files: []testutil.File{{Path: "Library/Caches/foo/a/x", Content: "x", MTime: old}, {Path: "Library/Caches/foo/b", Content: "x", MTime: old}}})
+	calls := 0
+	f.env.Mounts = policy.StubMounts{OnRefresh: func() error {
+		calls++
+		if calls == 2 { // the refresh after the move
+			return fmt.Errorf("%w: mountinfo vanished", policy.ErrMountsUnavailable)
+		}
+		return nil
+	}}
+	p := f.scan("")
+	it := itemByRel(t, p, "Library/Caches/foo")
+	o := f.opts(p)
+	o.Only = []string{it.ID}
+	res, err := Run(context.Background(), o)
+	if !errors.Is(err, ErrMountsUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	s, ok := skipFor(res, it.Path)
+	if !ok || s.Reason != plan.ReasonContainsMount || !strings.Contains(s.Detail, "mount table could not be read again") || strings.Contains(s.Detail, "a mount appeared") || strings.Contains(s.Detail, "foo/a") || !exists(it.Path) {
+		t.Fatalf("%+v %v", res.Skipped, err)
+	}
+}
