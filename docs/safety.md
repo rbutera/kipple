@@ -337,6 +337,16 @@ can be moved; it is also `manual`, so it moves only when you name it. A
   long for the Trash.
 - Without `/proc`, kipple cannot confirm an item's folder just before the
   move, so nothing moves (the detail says `/proc` is not available).
+- A mount made inside a folder in the instant between kipple's last check
+  of it in the Trash and the end of its move is not seen; such a mount
+  needs a privileged process racing kipple. Emptying the Trash with a
+  tool that stays on one file system (for example `rm -r --one-file-system`)
+  is safe either way.
+- Mounts made in another mount namespace (a sandboxed app, a container, a
+  process started with `unshare -m`) are invisible to kipple, which sees
+  only its own namespace's mounts. An item holding such a mount moves to
+  the Trash, and emptying the Trash from inside that namespace would follow
+  the mount.
 
 ## On Linux
 
@@ -405,7 +415,13 @@ point, or lies below one, is refused with `different_device`; an item that
 contains one is `contains_mount` and never moves; a Trash folder that is a
 mount point is `trash_access`. If neither source can answer, scan marks
 every item `contains_mount` and `clean --apply` stops with
-`mounts_unavailable` before moving anything. With `KIPPLE_HOME`, the check
+`mounts_unavailable` before moving anything. Where kipple reads the mount
+table instead of asking the kernel, it reads it again before each item and
+after each move, so a mount made during the run is seen. After moving a
+folder, kipple walks it again in the Trash: if a mount appeared inside it
+during the move, it puts the folder back where it was (`contains_mount`);
+if that is impossible, the result and the receipt say so, and you should
+not empty the Trash until that mount is gone. With `KIPPLE_HOME`, the check
 that the folder is not your real home also looks through bind mounts
 listed in `/proc/self/mountinfo`, and refuses if that table cannot be read.
 
