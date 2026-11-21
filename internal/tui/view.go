@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -471,6 +472,9 @@ func moverNote(r plan.Result) string {
 	if movers[plan.MoverRename] {
 		parts = append(parts, "moved straight into ~/.Trash; kipple restore puts items back")
 	}
+	if movers[plan.MoverFreedesktop] {
+		parts = append(parts, "moved into your Trash (~/.local/share/Trash, visible in your file manager); kipple restore puts items back")
+	}
 	if movers[plan.MoverNSFileManager] {
 		parts = append(parts, "moved with Apple's Trash API (no Full Disk Access); Finder's Put Back and kipple restore both work")
 	}
@@ -488,7 +492,9 @@ func (m Model) errorBody() string {
 		out = append(out, th.title.Render("kipple could not finish the scan."))
 	}
 	out = append(out, "")
-	if errors.Is(err, apply.ErrTrashAccess) {
+	if errors.Is(err, apply.ErrTrashAccess) && runtime.GOOS != "darwin" {
+		out = append(out, wrapLines(th.text, output.SafeText(err.Error())+"; nothing was moved.", w)...)
+	} else if errors.Is(err, apply.ErrTrashAccess) {
 		out = append(out, wrapLines(th.text, "kipple cannot use your Trash folder: macOS lets only apps with Full Disk Access open it, so nothing was moved. Grant Full Disk Access to your terminal (System Settings > Privacy & Security > Full Disk Access) and try again.", w)...)
 	} else if err != nil {
 		out = append(out, wrapLines(th.text, output.SafeText(err.Error()), w)...)

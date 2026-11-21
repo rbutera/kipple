@@ -87,11 +87,24 @@ step 2 'kipple scan --json --bogus'
 step 1 'kipple restore 20990101T000000Z-aaaaaa --json'
 
 # The fixture is back where it started: nothing moved but the restored items.
+# The fixture's Trash: ~/.Trash on macOS, the freedesktop.org home Trash's
+# files folder on Linux.
+trash="$KIPPLE_HOME/.Trash"
+if [ "$(uname -s)" = Linux ]; then
+	trash="$KIPPLE_HOME/.local/share/Trash/files"
+fi
 moved=$(jq '.moved | length' result.json)
-left=$(find "$KIPPLE_HOME/.Trash" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+left=$(find "$trash" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
 if [ "$moved" -ne 2 ] || [ "$left" -ne 0 ]; then
 	echo "FAIL  moved $moved items (want 2), $left entries left in the fixture Trash (want 0)"
 	failures=$((failures + 1))
+fi
+if [ "$(uname -s)" = Linux ]; then
+	info=$(find "$KIPPLE_HOME/.local/share/Trash/info" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+	if [ "$info" -ne 0 ]; then
+		echo "FAIL  $info .trashinfo files left in the fixture Trash after restore (want 0)"
+		failures=$((failures + 1))
+	fi
 fi
 
 if [ "$failures" -ne 0 ]; then

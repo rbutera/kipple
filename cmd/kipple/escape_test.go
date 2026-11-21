@@ -44,7 +44,7 @@ func TestTerminalEscapesInPaths(t *testing.T) {
 			{Path: "Library/Caches/" + evilName + "/blob", Size: 4096, MTime: old},
 			{Path: "Library/Logs/app/log.txt", Size: 1024, MTime: old},
 		},
-		Dirs: []testutil.Dir{{Path: ".Trash", Mode: 0o700}, {Path: "Library/Caches/" + evilName, MTime: old}},
+		Dirs: append(testutil.TrashDirs(), testutil.Dir{Path: "Library/Caches/" + evilName, MTime: old}),
 	})
 	evilPath := filepath.Join(home, "Library/Caches", evilName)
 	_, out, _ := cli(t, "scan", "--json")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,11 @@ func (f fakeProcs) RunningNames(_ context.Context, names []string) (map[string]b
 
 func (f fakeProcs) ProcessCwds(context.Context, []string) ([]string, error) { return f.cwds, f.err }
 
-// fx is a fixture home with a .Trash folder, a pinned environment and a
+// homeMover is the receipt mover of a run into this platform's home
+// Trash.
+var homeMover = map[bool]string{true: plan.MoverFreedesktop, false: plan.MoverRename}[runtime.GOOS == "linux"]
+
+// fx is a fixture home with a Trash folder, a pinned environment and a
 // receipts store.
 type fx struct {
 	t     *testing.T
@@ -59,7 +64,7 @@ type fx struct {
 
 func newFx(t *testing.T, spec testutil.Spec) *fx {
 	t.Helper()
-	spec.Dirs = append(spec.Dirs, testutil.Dir{Path: ".Trash", Mode: 0o700})
+	spec.Dirs = append(spec.Dirs, testutil.TrashDirs()...)
 	home := testutil.NewHome(t, spec)
 	fi, err := os.Lstat(home)
 	if err != nil {
@@ -158,7 +163,7 @@ func exists(p string) bool {
 
 func trashEntries(t *testing.T, home string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(home, ".Trash"))
+	entries, err := os.ReadDir(filepath.Join(home, testutil.TrashRel))
 	if err != nil {
 		t.Fatal(err)
 	}

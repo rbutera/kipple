@@ -51,10 +51,7 @@ func fixtureSpec() testutil.Spec {
 			{Path: "Downloads/New.dmg", Size: 4096, MTime: time.Now()},
 			{Path: ".ollama/models/blobs/sha", Size: 4096, MTime: old},
 		},
-		Dirs: []testutil.Dir{
-			{Path: "Library/Caches/com.example.app", MTime: old},
-			{Path: ".Trash", Mode: 0o700},
-		},
+		Dirs: append(testutil.TrashDirs(), testutil.Dir{Path: "Library/Caches/com.example.app", MTime: old}),
 	}
 }
 
@@ -77,7 +74,7 @@ func newFx(t *testing.T, color bool) *fx {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := trash.OpenDirTrasher(testutil.Abs(home, ".Trash"))
+	tr, err := trash.OpenDirTrasher(testutil.Abs(home, testutil.TrashRel))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +385,7 @@ func TestApplyThroughDirTrasher(t *testing.T) {
 		if _, err := os.Lstat(mv.Path); !os.IsNotExist(err) {
 			t.Errorf("%s still at home", mv.Path)
 		}
-		if !strings.HasPrefix(mv.TrashPath, f.home+"/.Trash/") || mv.Mover != plan.MoverRename {
+		if !strings.HasPrefix(mv.TrashPath, testutil.Abs(f.home, testutil.TrashRel)+"/") || mv.Mover != plan.MoverRename {
 			t.Errorf("%s went to %s by %s", mv.Path, mv.TrashPath, mv.Mover)
 		}
 		if _, err := os.Lstat(mv.TrashPath); err != nil {

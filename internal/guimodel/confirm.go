@@ -3,6 +3,7 @@ package guimodel
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 
 	"github.com/rbutera/kipple/internal/apply"
@@ -20,6 +21,11 @@ const (
 	FallbackNote    = "kipple doesn't have Full Disk Access, so it will use macOS's own Trash command. Finder's Put Back works for these items."
 	UnavailableNote = "kipple can't use the Trash folder here, so it can't move anything. macOS lets only apps with Full Disk Access open it."
 )
+
+// fullDiskAccess: on macOS, failing to open the Trash for lack of
+// permission means no Full Disk Access. Elsewhere the error itself says
+// what is wrong with the Trash.
+var fullDiskAccess = runtime.GOOS == "darwin"
 
 // OpenConfirm opens the confirmation sheet, after asking apply how it would
 // reach the Trash. With nothing selected it only explains.
@@ -126,7 +132,7 @@ func (m *Model) Confirm() ConfirmView {
 		// The Full Disk Access copy only when access was what failed;
 		// otherwise say what the probe found.
 		v.Note = UnavailableNote
-		if m.trashErr != nil && !errors.Is(m.trashErr, apply.ErrTrashAccess) {
+		if m.trashErr != nil && (!errors.Is(m.trashErr, apply.ErrTrashAccess) || !fullDiskAccess) {
 			v.Note = "kipple can't use the Trash folder here, so it can't move anything: " + output.SafeText(m.trashErr.Error()) + "."
 		}
 	}

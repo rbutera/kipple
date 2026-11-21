@@ -66,10 +66,12 @@ func (m *Model) receiptCard() ReceiptCard {
 		c.How = words.Mover(plan.MoverNSFileManager)
 	case movers[plan.MoverRename]:
 		c.How = words.Mover(plan.MoverRename)
+	case movers[plan.MoverFreedesktop]:
+		c.How = words.Mover(plan.MoverFreedesktop)
 	}
 	// The home's own Trash, never the receipt's trash_dir: a receipt is a
 	// file on disk, and Open Trash must not open whatever it names.
-	c.TrashDir = m.cfg.Home + "/.Trash"
+	c.TrashDir = apply.HomeTrashDir(m.cfg.Home)
 	return c
 }
 
@@ -172,11 +174,14 @@ func (m *Model) Done() DoneView {
 	}
 	if r.ReceiptID != "" && (moved > 0 || len(r.Displaced) > 0) {
 		v.Command = "kipple restore " + id + " --apply"
-		rename := false
+		rename, freedesktop := false, false
 		for _, mv := range r.Moved {
-			rename = rename || mv.Mover == plan.MoverRename
+			rename = rename || mv.Mover == plan.MoverRename || mv.Mover == plan.MoverFreedesktop
+			freedesktop = freedesktop || mv.Mover == plan.MoverFreedesktop
 		}
-		if rename {
+		if freedesktop {
+			v.ChangedMind = "Put them back here, run " + v.Command + " in a terminal, or use Restore in your file manager's Trash."
+		} else if rename {
 			v.ChangedMind = "Finder's Put Back doesn't know about items kipple moved straight into the Trash folder. Put them back here, run " + v.Command + " in Terminal, or drag them out of the Trash."
 		} else {
 			v.ChangedMind = "Open the Trash, select an item and choose Put Back. " + v.Command + " also works."

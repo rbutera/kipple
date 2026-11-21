@@ -27,7 +27,7 @@ func readmeFixture(t *testing.T) string {
 			{Path: "Downloads/Installer.dmg", Size: 1 << 20, MTime: old},
 			{Path: ".ollama/models/blobs/sha256-aa", Size: 2 << 20, MTime: old},
 		},
-		Dirs: []testutil.Dir{{Path: ".Trash", Mode: 0o700}},
+		Dirs: testutil.TrashDirs(),
 	})
 }
 

@@ -1,7 +1,8 @@
 // Package receipt stores the receipts of kipple clean --apply runs (design
 // D8): one JSON file per run in <state>/receipts, where <state> is
-// $KIPPLE_STATE_DIR, defaulting to ~/Library/Application Support/kipple
-// (cmd/ resolves it; this package never reads the real home).
+// $KIPPLE_STATE_DIR, defaulting to ~/Library/Application Support/kipple on
+// macOS and ~/.local/state/kipple on Linux (cmd/ resolves it; this package
+// never reads the real home).
 //
 // A receipt is written before the first move and rewritten after every item
 // (Store.Save replaces it atomically), so an interrupted run still records

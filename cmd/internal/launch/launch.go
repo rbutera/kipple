@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -179,8 +180,8 @@ func (h Home) ApplyOptions(store receipt.Store, version string, pi procs.Inspect
 	return opts
 }
 
-// StateDir is $KIPPLE_STATE_DIR, or ~/Library/Application Support/kipple
-// under the effective home.
+// StateDir is $KIPPLE_STATE_DIR, or the platform's state folder under the
+// effective home (DefaultStateDir).
 func StateDir(rt Runtime, h Home) (string, error) {
 	if d := rt.Getenv("KIPPLE_STATE_DIR"); d != "" {
 		if !filepath.IsAbs(d) {
@@ -188,7 +189,17 @@ func StateDir(rt Runtime, h Home) (string, error) {
 		}
 		return filepath.Clean(d), nil
 	}
-	return filepath.Join(h.Path, "Library", "Application Support", "kipple"), nil
+	return DefaultStateDir(runtime.GOOS, h.Path), nil
+}
+
+// DefaultStateDir is where kipple keeps its receipts under home on goos:
+// ~/Library/Application Support/kipple on macOS, and the XDG default
+// ~/.local/state/kipple on Linux (XDG_STATE_HOME is not followed).
+func DefaultStateDir(goos, home string) string {
+	if goos == "linux" {
+		return filepath.Join(home, ".local", "state", "kipple")
+	}
+	return filepath.Join(home, "Library", "Application Support", "kipple")
 }
 
 // Store opens the receipt store in the state directory.

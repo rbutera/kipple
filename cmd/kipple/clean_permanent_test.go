@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rbutera/kipple/internal/plan"
+	"github.com/rbutera/kipple/internal/testutil"
 )
 
 // Tagged builds only (kipple_permanent): --permanent deletes safe items
@@ -20,7 +21,7 @@ func TestCleanPermanentOnReviewItem(t *testing.T) {
 	if code != exitPartial || len(res.Moved) != 2 || len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipPermanentNotAllowed {
 		t.Fatalf("exit %d result %+v", code, res)
 	}
-	if entries, _ := os.ReadDir(filepath.Join(home, ".Trash")); len(entries) != 0 {
+	if entries, _ := os.ReadDir(filepath.Join(home, testutil.TrashRel)); len(entries) != 0 {
 		t.Fatal("--permanent used the Trash")
 	}
 }

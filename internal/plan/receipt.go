@@ -83,6 +83,11 @@ const (
 	// to the approved object, used when ~/.Trash cannot be opened (no Full
 	// Disk Access).
 	MoverNSFileManager = "nsfilemanager"
+	// MoverFreedesktop: on Linux, renameat2 RENAME_NOREPLACE from the
+	// verified parent descriptor into the files folder of the
+	// freedesktop.org home Trash (~/.local/share/Trash), after writing
+	// info/<name>.trashinfo; restore removes that info file again.
+	MoverFreedesktop = "freedesktop"
 	// MoverDelete: --permanent.
 	MoverDelete = "delete"
 	// MoverNone: nothing needed moving.
@@ -104,7 +109,7 @@ type Receipt struct {
 	Level         string        `json:"level" jsonschema:"enum=safe,enum=review"`
 	Permanent     bool          `json:"permanent" jsonschema:"description=The run used --permanent: safe items were deleted, not moved to the Trash."`
 	TrashDir      string        `json:"trash_dir" jsonschema:"description=The Trash folder items were moved into."`
-	Mover         string        `json:"mover" jsonschema:"enum=rename,enum=nsfilemanager,enum=delete,enum=none,description=How items were moved."`
+	Mover         string        `json:"mover" jsonschema:"enum=rename,enum=nsfilemanager,enum=freedesktop,enum=delete,enum=none,description=How items were moved."`
 	PlanGenerated time.Time     `json:"plan_generated_at"`
 	Moved         []MovedItem   `json:"moved"`
 	Skipped       []SkippedItem `json:"skipped"`
@@ -141,7 +146,7 @@ type MovedItem struct {
 	// rename keeps; restore requires the Trash entry to match them too.
 	Size       int64      `json:"size"`
 	Mtime      time.Time  `json:"mtime"`
-	Mover      string     `json:"mover,omitempty" jsonschema:"enum=rename,enum=nsfilemanager,enum=delete"`
+	Mover      string     `json:"mover,omitempty" jsonschema:"enum=rename,enum=nsfilemanager,enum=freedesktop,enum=delete"`
 	MovedAt    time.Time  `json:"moved_at"`
 	Permanent  bool       `json:"permanent,omitempty"`
 	RestoredAt *time.Time `json:"restored_at,omitempty" jsonschema:"description=Set when kipple restore put the item back."`

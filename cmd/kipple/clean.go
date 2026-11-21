@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -234,6 +235,11 @@ const trashAccessHelp = "kipple cannot use your Trash folder: macOS lets only ap
 // applyError maps an error from apply.Run or apply.Restore to a CLI error.
 func (a *app) applyError(err error) error {
 	if errors.Is(err, apply.ErrTrashAccess) {
+		if runtime.GOOS != "darwin" {
+			// Not a Full Disk Access problem: the error says what is
+			// wrong with the Trash (a symlink, its mode, the file system).
+			return fail(codeTrashAccess, "%v; nothing was moved", err)
+		}
 		return fail(codeTrashAccess, "%s (%v)", trashAccessHelp, err)
 	}
 	if errors.Is(err, apply.ErrReceipt) {

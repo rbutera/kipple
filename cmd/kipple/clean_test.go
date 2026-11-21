@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func (idleProcs) RunningNames(context.Context, []string) (map[string]bool, error
 func (idleProcs) ProcessCwds(context.Context, []string) ([]string, error) { return nil, nil }
 
 // cleanFixture has two selected safe items, a review item, a manual item
-// and an info item, and a .Trash folder.
+// and an info item, and a Trash folder.
 func cleanFixture(t *testing.T) string {
 	t.Helper()
 	return testutil.NewHome(t, testutil.Spec{
@@ -54,7 +55,7 @@ func cleanFixture(t *testing.T) string {
 			{Path: "Downloads/Old.dmg", Size: 4096, MTime: old},
 			{Path: ".ollama/models/blobs/sha", Size: 4096, MTime: old},
 		},
-		Dirs: []testutil.Dir{{Path: ".Trash", Mode: 0o700}, {Path: "Library/Caches/com.example.app", MTime: old}},
+		Dirs: append(testutil.TrashDirs(), testutil.Dir{Path: "Library/Caches/com.example.app", MTime: old}),
 	})
 }
 
@@ -228,7 +229,7 @@ func TestEmptyHistory(t *testing.T) {
 // (history-restore) through the CLI, with restore's dry-run default.
 func TestRestoreCLI(t *testing.T) {
 	home := cleanFixture(t)
-	before := testutil.ContentChecksum(t, home, ".Trash")
+	before := testutil.ContentChecksum(t, home, testutil.TrashRoot)
 	_, out, _ := cli(t, "clean", "--apply", "--json")
 	var res plan.Result
 	exactlyOneJSON(t, out, &res)
@@ -259,7 +260,7 @@ func TestRestoreCLI(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("restore by item ID: exit %d", code)
 	}
-	if testutil.ContentChecksum(t, home, ".Trash") != before {
+	if testutil.ContentChecksum(t, home, testutil.TrashRoot) != before {
 		t.Fatal("the fixture is not as it was")
 	}
 	_, out, _ = cli(t, "history", "--json")
@@ -279,7 +280,7 @@ func TestRestoreCLI(t *testing.T) {
 // tree with the strict Checksum, directory mtimes included.
 func TestEndToEnd(t *testing.T) {
 	home := cleanFixture(t)
-	before := testutil.ContentChecksum(t, home, ".Trash")
+	before := testutil.ContentChecksum(t, home, testutil.TrashRoot)
 
 	code, out, _ := cli(t, "scan", "--json")
 	var p plan.Plan
@@ -308,7 +309,7 @@ func TestEndToEnd(t *testing.T) {
 	moved := []string{res.Moved[0].ID, res.Moved[1].ID}
 	slices.Sort(moved)
 	slices.Sort(ids)
-	if !slices.Equal(moved, ids) || testutil.ContentChecksum(t, home, ".Trash") == before {
+	if !slices.Equal(moved, ids) || testutil.ContentChecksum(t, home, testutil.TrashRoot) == before {
 		t.Fatal("clean did not move exactly the two items")
 	}
 
@@ -323,10 +324,10 @@ func TestEndToEnd(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("restore exit %d", code)
 	}
-	if testutil.ContentChecksum(t, home, ".Trash") != before {
+	if testutil.ContentChecksum(t, home, testutil.TrashRoot) != before {
 		t.Fatal("the fixture's checksum was not restored")
 	}
-	if entries, _ := os.ReadDir(filepath.Join(home, ".Trash")); len(entries) != 0 {
+	if entries, _ := os.ReadDir(filepath.Join(home, testutil.TrashRel)); len(entries) != 0 {
 		t.Fatalf("the Trash still holds %v", entries)
 	}
 	for path, sum := range strict {
@@ -433,17 +434,29 @@ func TestPlanDryRunRechecks(t *testing.T) {
 func TestTrashAccessError(t *testing.T) {
 	home := cleanFixture(t)
 	before := testutil.ContentChecksum(t, home)
-	if err := os.Chmod(filepath.Join(home, ".Trash"), 0); err != nil {
+	if err := os.Chmod(filepath.Join(home, testutil.TrashRel), 0); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errOut := cli(t, "clean", "--apply", "--json")
-	if err := os.Chmod(filepath.Join(home, ".Trash"), 0o700); err != nil {
+	if err := os.Chmod(filepath.Join(home, testutil.TrashRel), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var env errorEnvelope
 	exactlyOneJSON(t, out, &env)
-	if code != exitError || env.Error.Code != codeTrashAccess || !strings.Contains(env.Error.Message, "Full Disk Access") || !strings.Contains(errOut, "Full Disk Access") {
+	if code != exitError || env.Error.Code != codeTrashAccess {
 		t.Fatalf("exit %d error %+v", code, env)
+	}
+	// macOS explains Full Disk Access; Linux has no such thing and names
+	// the folder that cannot be used.
+	want := "Full Disk Access"
+	if runtime.GOOS == "linux" {
+		want = testutil.TrashRel
+		if strings.Contains(env.Error.Message, "Full Disk Access") {
+			t.Fatalf("the Linux message talks about Full Disk Access: %q", env.Error.Message)
+		}
+	}
+	if !strings.Contains(env.Error.Message, want) || !strings.Contains(errOut, want) {
+		t.Fatalf("message %q / stderr %q lacks %q", env.Error.Message, errOut, want)
 	}
 	if testutil.ContentChecksum(t, home) != before {
 		t.Fatal("something moved")
@@ -531,7 +544,7 @@ func TestReceiptSaveFailsBeforeAMove(t *testing.T) {
 func TestRestoreAPendingItem(t *testing.T) {
 	t.Run("Restore a pending item", func(t *testing.T) {
 		home := cleanFixture(t)
-		before := testutil.ContentChecksum(t, home, ".Trash")
+		before := testutil.ContentChecksum(t, home, testutil.TrashRoot)
 		rt := testEnv(t)
 		rt.saveReceipt = failingSave(t, 2)
 		_, out, _ := cliWith(t, rt, "clean", "--apply", "--json")
@@ -548,7 +561,7 @@ func TestRestoreAPendingItem(t *testing.T) {
 		if code != exitOK || !strings.Contains(rout, "pending 1") {
 			t.Fatalf("exit %d\n%s", code, rout)
 		}
-		if testutil.ContentChecksum(t, home, ".Trash") != before {
+		if testutil.ContentChecksum(t, home, testutil.TrashRoot) != before {
 			t.Fatal("not restored")
 		}
 	})
@@ -560,7 +573,7 @@ func TestRestoreAPendingItem(t *testing.T) {
 func TestRestoreFindsARenamedTrashEntry(t *testing.T) {
 	t.Run("Restore finds a renamed Trash entry by identity", func(t *testing.T) {
 		home := cleanFixture(t)
-		before := testutil.ContentChecksum(t, home, ".Trash")
+		before := testutil.ContentChecksum(t, home, testutil.TrashRoot)
 		_, out, _ := cli(t, "clean", "--apply", "--json")
 		var res plan.Result
 		exactlyOneJSON(t, out, &res)
@@ -570,7 +583,7 @@ func TestRestoreFindsARenamedTrashEntry(t *testing.T) {
 			}
 		}
 		code, _, _ := cli(t, "restore", res.ReceiptID, "--apply")
-		if code != exitOK || testutil.ContentChecksum(t, home, ".Trash") != before {
+		if code != exitOK || testutil.ContentChecksum(t, home, testutil.TrashRoot) != before {
 			t.Fatalf("exit %d", code)
 		}
 	})

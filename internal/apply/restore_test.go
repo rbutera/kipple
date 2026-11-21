@@ -255,7 +255,7 @@ func TestRestoreParentSwapped(t *testing.T) {
 // mtime, read through the verified Trash descriptor.
 func TestRestoreForgedReceiptForeignTrashEntry(t *testing.T) {
 	f, e, _ := cleaned(t)
-	foreign := f.abs(".Trash/foreign-secret")
+	foreign := f.abs(testutil.TrashRel + "/foreign-secret")
 	if err := os.WriteFile(foreign, []byte("not kipple's"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -288,8 +288,8 @@ func TestRestoreWithoutTrashDescriptor(t *testing.T) {
 	f, e, _ := cleaned(t)
 	store := f.store
 	o := RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true,
-		openTrash: func() (*trash.DirTrasher, error) {
-			return nil, &fs.PathError{Op: "open", Path: f.abs(".Trash"), Err: syscall.EPERM}
+		openTrash: func() (*homeTrash, error) {
+			return nil, &fs.PathError{Op: "open", Path: f.abs(testutil.TrashRel), Err: syscall.EPERM}
 		}}
 	res, err := Restore(context.Background(), o)
 	if !errors.Is(err, ErrTrashAccess) || len(res.Restored) != 0 {
@@ -305,10 +305,10 @@ func TestRestoreWithoutTrashDescriptor(t *testing.T) {
 // A Trash folder that cannot be opened (here mode 000) is ErrTrashAccess.
 func TestRestoreTrashAccessDenied(t *testing.T) {
 	f, e, _ := cleaned(t)
-	if err := os.Chmod(f.abs(".Trash"), 0); err != nil {
+	if err := os.Chmod(f.abs(testutil.TrashRel), 0); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(f.abs(".Trash"), 0o700) })
+	t.Cleanup(func() { _ = os.Chmod(f.abs(testutil.TrashRel), 0o700) })
 	store := f.store
 	res, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Store: &store, Apply: true})
 	if !errors.Is(err, ErrTrashAccess) || len(res.Restored) != 0 {
@@ -320,7 +320,7 @@ func TestRestoreTrashAccessDenied(t *testing.T) {
 // ino, size and mtime is refused: the entry lacks kipple's tag.
 func TestRestoreForgedReceiptCopiedIdentity(t *testing.T) {
 	f, e, _ := cleaned(t)
-	foreign := f.abs(".Trash/foreign-secret")
+	foreign := f.abs(testutil.TrashRel + "/foreign-secret")
 	if err := os.WriteFile(foreign, []byte("not kipple's"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -394,16 +394,21 @@ func TestDisplacedObjectIsRecordedAndRestorable(t *testing.T) {
 	item := itemByRel(t, p, "Library/Caches/com.example.a")
 	o := f.opts(p)
 	o.Only = []string{item.ID}
-	o.openTrash = errTrashEPERM(f.home)
-	o.Finder = func() (trash.ExpectTrasher, error) {
-		return displacingTrasher{decoy: f.abs("decoy"), dest: f.abs(".Trash/com.example.a")}, nil
+	// The mover stands in for one that displaces (on macOS the
+	// NSFileManager fallback, where a swap can reach the Trash).
+	o.openTrash = func() (*homeTrash, error) {
+		d, err := trash.OpenDirTrasher(f.abs(testutil.TrashRel))
+		if err != nil {
+			return nil, err
+		}
+		return &homeTrash{dir: d, mover: displacingTrasher{decoy: f.abs("decoy"), dest: f.abs(testutil.TrashRel + "/com.example.a")}, name: homeMover, close: d.Close}, nil
 	}
 	res := f.run(o)
 	if len(res.Moved) != 0 || len(res.Displaced) != 1 || len(res.Skipped) != 1 || res.Skipped[0].Reason != plan.SkipIdentityChanged || ExitCode(res) != ExitPartial {
 		t.Fatalf("%+v", res)
 	}
 	e, err := f.store.Load(res.ReceiptID)
-	if err != nil || len(e.Receipt.Displaced) != 1 || e.Receipt.Displaced[0].TrashPath != f.abs(".Trash/com.example.a") || e.Receipt.Displaced[0].Ino == 0 {
+	if err != nil || len(e.Receipt.Displaced) != 1 || e.Receipt.Displaced[0].TrashPath != f.abs(testutil.TrashRel+"/com.example.a") || e.Receipt.Displaced[0].Ino == 0 {
 		t.Fatalf("receipt %+v %v", e.Receipt, err)
 	}
 	// The approved item never moved; once it is gone, the displaced object
@@ -500,30 +505,30 @@ func TestPendingItemIsRestored(t *testing.T) {
 // restore, and nothing reaches the folder it points to.
 func TestTrashSymlinkIsRefused(t *testing.T) {
 	f, e, _ := cleaned(t)
-	if err := os.Rename(f.abs(".Trash"), f.abs("real-trash")); err != nil {
+	if err := os.Rename(f.abs(testutil.TrashRoot), f.abs("real-trash")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(f.abs("elsewhere"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(f.abs("elsewhere"), f.abs(".Trash")); err != nil {
+	if err := os.Symlink(f.abs("elsewhere"), f.abs(testutil.TrashRoot)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Apply: true}); err == nil || errors.Is(err, ErrTrashAccess) {
+	if _, err := Restore(context.Background(), RestoreOptions{Env: f.env, Rules: rules.Catalogue(), Receipt: e, Apply: true}); err == nil || errors.Is(err, ErrTrashAccess) != symlinkedTrashIsTrashAccess {
 		t.Fatalf("restore through a symlinked .Trash: %v", err)
 	}
 	g := newFx(t, threeSafe())
-	if err := os.Remove(g.abs(".Trash")); err != nil {
+	if err := os.RemoveAll(g.abs(testutil.TrashRoot)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(g.abs("elsewhere"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(g.abs("elsewhere"), g.abs(".Trash")); err != nil {
+	if err := os.Symlink(g.abs("elsewhere"), g.abs(testutil.TrashRoot)); err != nil {
 		t.Fatal(err)
 	}
 	p := g.scan("")
-	if _, err := Run(context.Background(), g.opts(p)); err == nil || errors.Is(err, ErrTrashAccess) {
+	if _, err := Run(context.Background(), g.opts(p)); err == nil || errors.Is(err, ErrTrashAccess) != symlinkedTrashIsTrashAccess {
 		t.Fatalf("clean through a symlinked .Trash: %v", err)
 	}
 	for _, d := range []string{f.abs("elsewhere"), g.abs("elsewhere")} {
@@ -548,8 +553,8 @@ func TestPendingItemThatNeverMoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc := plan.Receipt{CreatedAt: now, Home: f.home, Level: "safe", Mover: plan.MoverRename, TrashDir: f.abs(".Trash"),
-		Pending: []plan.MovedItem{{ID: it.ID, Rule: it.Rule, Path: it.Path, Dev: it.Dev, Ino: it.Ino, Size: fi.Size(), Mtime: fi.ModTime().UTC(), Mover: plan.MoverRename}}}
+	rc := plan.Receipt{CreatedAt: now, Home: f.home, Level: "safe", Mover: homeMover, TrashDir: f.abs(testutil.TrashRel),
+		Pending: []plan.MovedItem{{ID: it.ID, Rule: it.Rule, Path: it.Path, Dev: it.Dev, Ino: it.Ino, Size: fi.Size(), Mtime: fi.ModTime().UTC(), Mover: homeMover}}}
 	path, err := f.store.Create(&rc)
 	if err != nil {
 		t.Fatal(err)
@@ -620,7 +625,7 @@ func TestRestoreLeavesNoStagingNames(t *testing.T) {
 	if rr := f.restore(e, true); len(rr.Restored) != 3 {
 		t.Fatalf("%+v", rr)
 	}
-	entries, _ := os.ReadDir(f.abs(".Trash"))
+	entries, _ := os.ReadDir(f.abs(testutil.TrashRel))
 	for _, de := range entries {
 		if strings.Contains(de.Name(), "(kipple ") {
 			t.Fatalf("staging name left behind: %s", de.Name())
@@ -643,7 +648,7 @@ func TestRestoreFindsAnInterruptedStagingEntry(t *testing.T) {
 	<-done
 	afterStage = nil
 	var staged string
-	entries, _ := os.ReadDir(f.abs(".Trash"))
+	entries, _ := os.ReadDir(f.abs(testutil.TrashRel))
 	for _, de := range entries {
 		if strings.Contains(de.Name(), "(kipple restoring ") {
 			staged = de.Name()

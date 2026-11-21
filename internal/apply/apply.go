@@ -14,12 +14,17 @@
 //     contains_mount, contains_protected);
 //  3. the owner app or process and, for project artifacts, agent working
 //     directories are checked (procs);
-//  4. policy.Session.VerifyParent re-checks with fcntl(F_GETPATH) that the
-//     parent descriptor is still the planned parent;
-//  5. the item moves with renameatx_np(RENAME_EXCL) from that parent
-//     descriptor into the verified Trash descriptor (trash.DirTrasher), which
-//     refuses unless the entry is still the approved (dev, ino). A different
-//     device is skipped, never copied. When ~/.Trash cannot be opened (macOS
+//  4. policy.Session.VerifyParent re-checks with fcntl(F_GETPATH) (macOS)
+//     or /proc/self/fd (Linux) that the parent descriptor is still the
+//     planned parent;
+//  5. the item moves with renameatx_np(RENAME_EXCL) (macOS) or
+//     renameat2(RENAME_NOREPLACE) (Linux) from that parent descriptor into
+//     the verified Trash descriptor (trash.DirTrasher for ~/.Trash,
+//     trash.FreedesktopTrasher for ~/.local/share/Trash, which first
+//     reserves and writes the item's .trashinfo), refusing unless the entry
+//     is still the approved (dev, ino). A different device is skipped,
+//     never copied; a Linux file system without RENAME_NOREPLACE stops the
+//     run with ErrTrashAccess before anything moves. When ~/.Trash cannot be opened (macOS
 //     TCC: no Full Disk Access), Options.Finder supplies the NSFileManager
 //     mover, which re-checks the approved object by descriptor immediately
 //     before the call and trashes a file reference to it; when that mover
@@ -134,8 +139,8 @@ type Options struct {
 	// beforeMove, in tests, runs after every check and immediately before
 	// the parent re-check and the move.
 	beforeMove func(plan.Item)
-	// openTrash, in tests, replaces opening the home .Trash.
-	openTrash func() (*trash.DirTrasher, error)
+	// openTrash, in tests, replaces opening the home Trash.
+	openTrash func() (*homeTrash, error)
 	// SaveReceipt, when set, replaces Receipts.Save. Tests use it to fail
 	// on the Nth save, as a full disk would.
 	SaveReceipt func(plan.Receipt) error
@@ -172,6 +177,9 @@ type applier struct {
 	pending []plan.MovedItem
 	// saveErr is the first failure to save the receipt; no move follows it.
 	saveErr error
+	// stopErr stops the run: the Trash turned out to be unusable at the
+	// first move (no RENAME_NOREPLACE). Nothing moves after it.
+	stopErr error
 }
 
 // Run executes o.Plan and returns the result. It returns an error, having
@@ -208,7 +216,7 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 		res.Normalize()
 		return res, nil
 	}
-	trashDir := o.Env.Home + "/.Trash"
+	trashDir := HomeTrashDir(o.Env.Home)
 	switch {
 	case o.Permanent:
 		a.moverName = plan.MoverDelete
@@ -219,20 +227,24 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	default:
 		open := o.openTrash
 		if open == nil {
-			open = func() (*trash.DirTrasher, error) { return openHomeTrash(sess, o.Env.Home) }
+			// Linux creates a missing freedesktop Trash here: an --apply
+			// run with at least one item to move.
+			open = func() (*homeTrash, error) { return openHomeTrash(sess, o.Env.Home, true) }
 		}
 		tr, err := open()
 		switch {
 		case err == nil:
 			defer func() { _ = tr.Close() }()
-			a.mover, a.moverName, trashDir = tr, plan.MoverRename, tr.Path()
-		case isPermission(err) && o.Finder != nil:
+			a.mover, a.moverName, trashDir = tr.mover, tr.name, tr.dir.Path()
+		case finderFallback && isPermission(err) && o.Finder != nil:
 			ft, ferr := o.Finder()
 			if ferr != nil {
 				return res, fmt.Errorf("%w: %v; the NSFileManager fallback is unavailable: %v", ErrTrashAccess, err, ferr)
 			}
 			a.mover, a.moverName = ft, plan.MoverNSFileManager
 			res.Warnings = append(res.Warnings, "the Trash folder cannot be opened without Full Disk Access; moving items with NSFileManager instead")
+		case errors.Is(err, ErrTrashAccess):
+			return res, err
 		case isPermission(err):
 			return res, fmt.Errorf("%w: %v", ErrTrashAccess, err)
 		default:
@@ -266,6 +278,10 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the receipt could not be saved")
 			continue
 		}
+		if a.stopErr != nil {
+			a.skip(t.item, plan.SkipMoveFailed, "not attempted: the Trash cannot be used")
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			a.skip(t.item, plan.SkipMoveFailed, "not attempted: interrupted")
 			continue
@@ -287,6 +303,9 @@ func Run(ctx context.Context, o Options) (plan.Result, error) {
 	if a.saveErr != nil {
 		return res, fmt.Errorf("%w (%s, after %d moves): %v; any item it lists as pending can be recovered with kipple restore %s --apply",
 			ErrReceipt, path, len(res.Moved), a.saveErr, rc.ID)
+	}
+	if a.stopErr != nil {
+		return res, a.stopErr
 	}
 	return res, nil
 }
@@ -551,6 +570,13 @@ func (a *applier) one(t target) {
 		}
 	} else {
 		moved.TrashPath, err = a.trashTagged(f, it, dev, ino, dir)
+	}
+	if errors.Is(err, trash.ErrNoReplaceUnsupported) {
+		// Nothing moved; the file system cannot do a move that never
+		// replaces, so no later move is attempted either.
+		a.stopErr = noReplaceError(f.ParentFd, err)
+		a.skip(it, plan.SkipMoveFailed, a.stopErr.Error())
+		return
 	}
 	if err != nil {
 		a.skip(it, classify(err), err.Error())

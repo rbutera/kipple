@@ -151,7 +151,8 @@ goes to stderr. Errors are also reported on stdout as
 Environment:
   KIPPLE_HOME       use this folder as home (for tests and agents)
   KIPPLE_STATE_DIR  where receipts are kept, in its receipts folder
-                    (default ~/Library/Application Support/kipple)`
+                    (default ~/Library/Application Support/kipple on macOS,
+                    ~/.local/state/kipple on Linux)`
 
 // run executes kipple with args and returns the exit code.
 func run(args []string, stdout, stderr io.Writer, rt runtimeEnv) int {

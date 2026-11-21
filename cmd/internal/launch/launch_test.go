@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/rbutera/kipple/internal/gitstate"
@@ -92,8 +93,21 @@ func TestStateDirAndStore(t *testing.T) {
 		t.Fatalf("a relative KIPPLE_STATE_DIR: %v", err)
 	}
 	t.Setenv("KIPPLE_STATE_DIR", "")
-	if d, _ := StateDir(rt, h); d != filepath.Join(home, "Library", "Application Support", "kipple") {
+	if d, _ := StateDir(rt, h); d != DefaultStateDir(runtime.GOOS, home) {
 		t.Fatalf("default state dir %q", d)
+	}
+}
+
+// Spec scenario "Linux state directory" (platform-support), as data: the
+// default state folder per platform, under the effective home.
+func TestDefaultStateDir(t *testing.T) {
+	for _, tc := range []struct{ goos, want string }{
+		{"darwin", "/h/Library/Application Support/kipple"},
+		{"linux", "/h/.local/state/kipple"},
+	} {
+		if got := DefaultStateDir(tc.goos, "/h"); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.goos, got, tc.want)
+		}
 	}
 }
 

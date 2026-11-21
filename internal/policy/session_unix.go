@@ -226,6 +226,53 @@ func (s *Session) Open(path string) (Entry, error) {
 	return e, nil
 }
 
+// Mkdir creates the directory path, strictly below home, with mode (less
+// the umask), in its parent reached by the same verified walk as Open (no
+// symlink, home's device, stored names) or in the pinned home descriptor.
+// Nothing is followed or replaced: an existing entry is EEXIST, a missing
+// parent is an error. It authorises nothing and is used only to create the
+// freedesktop.org Trash folders on Linux, in an --apply run.
+func (s *Session) Mkdir(path string, mode uint32) error {
+	home := s.env.Home
+	if !isCanonicalAbs(path) || !isCanonicalAbs(home) || home == "/" {
+		return &RefusedError{Path: path, Reason: ReasonNotAbsolute}
+	}
+	if !strings.HasPrefix(path, home+"/") {
+		return &RefusedError{Path: path, Reason: ReasonOutsideHome}
+	}
+	s.life.RLock()
+	defer s.life.RUnlock()
+	if s.closed {
+		return &RefusedError{Path: path, Reason: ReasonInvalidEnv}
+	}
+	if s.homeFail != "" {
+		return &RefusedError{Path: path, Reason: s.homeFail}
+	}
+	if d := s.checkHomeStillPinned(); !d.Allowed {
+		return &RefusedError{Path: path, Reason: d.Reason}
+	}
+	comps := strings.Split(path[len(home)+1:], "/")
+	dirfd := s.homeFd
+	if len(comps) > 1 {
+		w := s.walk(comps[:len(comps)-1], directory, nil, true, true)
+		defer w.close(s.homeFd)
+		if !w.d.Allowed {
+			return &RefusedError{Path: path, Reason: w.d.Reason, Err: w.err}
+		}
+		dirfd = w.finalFd
+	}
+	for {
+		err := unix.Mkdirat(dirfd, comps[len(comps)-1], mode)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return &fs.PathError{Op: "mkdir", Path: path, Err: err}
+		}
+		return nil
+	}
+}
+
 // Guard returns the protected-descendant checker for item (an absolute
 // path below home) of rule, used while measuring the item.
 func (s *Session) Guard(rule Rule, item string) *Guard {

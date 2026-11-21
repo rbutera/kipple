@@ -3,6 +3,7 @@ package guimodel
 import (
 	"context"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -56,11 +57,11 @@ type fx struct {
 	cfg   Config
 }
 
-// newFx builds a fixture home (with a .Trash) and the model's config for
+// newFx builds a fixture home (with a Trash) and the model's config for
 // it, as cmd/internal/guilaunch would for a KIPPLE_HOME.
 func newFx(t *testing.T, spec testutil.Spec) *fx {
 	t.Helper()
-	spec.Dirs = append(spec.Dirs, testutil.Dir{Path: ".Trash", Mode: 0o700})
+	spec.Dirs = append(spec.Dirs, testutil.TrashDirs()...)
 	home := testutil.NewHome(t, spec)
 	fi, err := os.Lstat(home)
 	if err != nil {
@@ -128,3 +129,31 @@ func (g countingGit) Inspect(context.Context, string) gitstate.Result {
 	*g.n++
 	return gitstate.Result{State: gitstate.StateUnavailable, Detail: "no Command Line Tools"}
 }
+
+// unavailableNote is what the confirmation says when the Trash cannot be
+// opened for lack of permission: the Full Disk Access story on macOS, the
+// error itself elsewhere.
+func unavailableNote(note string) bool {
+	if runtime.GOOS == "darwin" {
+		return note == UnavailableNote
+	}
+	return strings.HasPrefix(note, "kipple can't use the Trash folder here, so it can't move anything: ") && !strings.Contains(note, "Full Disk Access")
+}
+
+// breakTrash makes the fixture's Trash unusable for a reason other than
+// permission: ~/.Trash removed on macOS (kipple never creates it), a file
+// where the freedesktop Trash folder should be on Linux.
+func breakTrash(t *testing.T, home string) {
+	t.Helper()
+	if err := os.RemoveAll(testutil.Abs(home, testutil.TrashRoot)); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "darwin" {
+		if err := os.WriteFile(testutil.Abs(home, testutil.TrashRoot), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// homeMover is the receipt mover of a run into this platform's Trash.
+var homeMover = map[bool]string{true: plan.MoverFreedesktop, false: plan.MoverRename}[runtime.GOOS == "linux"]

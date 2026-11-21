@@ -159,6 +159,8 @@ func Mover(m string) string {
 		return "Moved straight into the Trash folder."
 	case plan.MoverNSFileManager:
 		return "Moved with macOS's Trash command (no Full Disk Access)."
+	case plan.MoverFreedesktop:
+		return "Moved into the Trash folder (~/.local/share/Trash), where your file manager can restore it too."
 	}
 	return ""
 }

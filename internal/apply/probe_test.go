@@ -10,35 +10,29 @@ import (
 	"github.com/rbutera/kipple/internal/trash"
 )
 
+// probeCase is one TestProbeTrash case; platformProbeCases adds the
+// platform's own (probe_darwin_test.go, probe_linux_test.go).
+type probeCase struct {
+	name    string
+	lock    bool // make the fixture's Trash unreadable (chmod 000)
+	setup   func(f *fx, o *Options)
+	want    TrashMode
+	wantErr error
+}
+
 // ProbeTrash makes Run's choice of mover and changes nothing: the fixture's
 // checksum is the same afterwards and no receipt is written.
 func TestProbeTrash(t *testing.T) {
-	finder := func() (trash.ExpectTrasher, error) { return trash.NewFinderTrasher(nil) }
-	cases := []struct {
-		name    string
-		lock    bool // make the fixture's Trash unreadable (chmod 000)
-		setup   func(f *fx, o *Options)
-		want    TrashMode
-		wantErr error
-	}{
+	cases := append([]probeCase{
 		{"an openable Trash is used directly", false, func(*fx, *Options) {}, TrashRename, nil},
-		{"an unreadable Trash with the fallback uses NSFileManager", true, func(_ *fx, o *Options) {
-			o.Finder = func() (trash.ExpectTrasher, error) { return nil, nil }
-		}, TrashFallback, nil},
 		{"an unreadable Trash without the fallback (KIPPLE_HOME) is unavailable", true, func(_ *fx, o *Options) {
 			o.Finder = nil
 		}, TrashUnavailable, ErrTrashAccess},
-		{"a fallback that cannot be made is unavailable", false, func(f *fx, o *Options) {
+		{"a Trash that cannot be opened for lack of permission is unavailable", false, func(f *fx, o *Options) {
 			o.openTrash = errTrashEPERM(f.home)
 			o.Finder = func() (trash.ExpectTrasher, error) { return nil, errors.New("no cgo") }
 		}, TrashUnavailable, ErrTrashAccess},
-		{"a missing Trash is unavailable", false, func(f *fx, o *Options) {
-			if err := os.Remove(f.abs(".Trash")); err != nil {
-				t.Fatal(err)
-			}
-			o.Finder = finder
-		}, TrashUnavailable, nil},
-	}
+	}, platformProbeCases...)
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			testutil.GuardRealHome(t)
@@ -47,7 +41,7 @@ func TestProbeTrash(t *testing.T) {
 			c.setup(f, &o)
 			before := testutil.Checksum(t, f.home)
 			if c.lock {
-				chmod(t, f.abs(".Trash"), 0o000)
+				chmod(t, f.abs(testutil.TrashRel), 0o000)
 			}
 			got, err := ProbeTrash(o)
 			if got != c.want {
@@ -59,7 +53,7 @@ func TestProbeTrash(t *testing.T) {
 			if c.want != TrashUnavailable && err != nil {
 				t.Fatalf("error %v", err)
 			}
-			chmod(t, f.abs(".Trash"), 0o700)
+			chmod(t, f.abs(testutil.TrashRel), 0o700)
 			if testutil.Checksum(t, f.home) != before {
 				t.Fatal("ProbeTrash changed the fixture")
 			}
@@ -72,7 +66,7 @@ func TestProbeTrash(t *testing.T) {
 		testutil.GuardRealHome(t)
 		f := newFx(t, threeSafe())
 		o := f.opts(f.scan(""))
-		tr, err := trash.OpenDirTrasher(f.abs(".Trash"))
+		tr, err := trash.OpenDirTrasher(f.abs(testutil.TrashRel))
 		if err != nil {
 			t.Fatal(err)
 		}

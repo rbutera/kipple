@@ -15,6 +15,7 @@ import (
 	"github.com/rbutera/kipple/internal/scan"
 	"github.com/rbutera/kipple/internal/selection"
 	"github.com/rbutera/kipple/internal/testutil"
+	"github.com/rbutera/kipple/internal/words"
 )
 
 // Pre-selection: exactly what a scan at level safe selects, never info.
@@ -226,12 +227,12 @@ func TestConfirmSummary(t *testing.T) {
 	})
 	t.Run("an unusable Trash disables Move", func(t *testing.T) {
 		m.cfg.ProbeFunc = apply.ProbeTrash
-		if err := os.Chmod(testutil.Abs(f.home, ".Trash"), 0); err != nil {
+		if err := os.Chmod(testutil.Abs(f.home, testutil.TrashRel), 0); err != nil {
 			t.Fatal(err)
 		}
-		defer func() { _ = os.Chmod(testutil.Abs(f.home, ".Trash"), 0o700) }()
+		defer func() { _ = os.Chmod(testutil.Abs(f.home, testutil.TrashRel), 0o700) }()
 		m.OpenConfirm()
-		if v := m.Confirm(); v.Note != UnavailableNote || v.CanMove {
+		if v := m.Confirm(); !unavailableNote(v.Note) || v.CanMove {
 			t.Fatalf("%+v", v)
 		}
 		if _, ok := m.StartApply(); ok {
@@ -290,11 +291,14 @@ func TestApplyMovesSelection(t *testing.T) {
 		t.Fatalf("receipt: %v %+v", err, e.Receipt)
 	}
 	d := m.Done()
-	if d.Title != fmt.Sprintf("Moved %d items to the Trash", len(want)) || d.Card.ID != res.ReceiptID || d.Card.How != "Moved straight into the Trash folder." {
+	if d.Title != fmt.Sprintf("Moved %d items to the Trash", len(want)) || d.Card.ID != res.ReceiptID || d.Card.How != words.Mover(homeMover) {
 		t.Fatalf("%+v", d)
 	}
-	if d.Card.TrashDir != f.home+"/.Trash" || !d.CanPutBack || !strings.Contains(d.ChangedMind, "Finder's Put Back doesn't know") {
+	if d.Card.TrashDir != testutil.Abs(f.home, testutil.TrashRel) || !d.CanPutBack || !strings.Contains(d.ChangedMind, d.Command) {
 		t.Fatalf("%+v", d)
+	}
+	if homeMover == plan.MoverRename && !strings.Contains(d.ChangedMind, "Finder's Put Back doesn't know") {
+		t.Fatalf("changed mind %q", d.ChangedMind)
 	}
 	if !strings.HasPrefix(m.Status(), "Finished ") {
 		t.Fatalf("status %q", m.Status())
@@ -327,7 +331,7 @@ func TestPutBack(t *testing.T) {
 		t.Fatalf("%+v", d.Restored)
 	}
 	// Everything is back where it was; the Trash is empty again.
-	entries, _ := os.ReadDir(testutil.Abs(f.home, ".Trash"))
+	entries, _ := os.ReadDir(testutil.Abs(f.home, testutil.TrashRel))
 	if len(entries) != 0 {
 		t.Fatalf("Trash still holds %d entries", len(entries))
 	}

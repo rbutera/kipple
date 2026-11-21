@@ -63,6 +63,11 @@ func (s *Session) Open(path string) (Entry, error) {
 // Guard returns nil: Open always fails here, so nothing is measured.
 func (s *Session) Guard(Rule, string) *Guard { return nil }
 
+// Mkdir is unsupported here.
+func (s *Session) Mkdir(path string, _ uint32) error {
+	return &RefusedError{Path: path, Reason: ReasonInvalidEnv}
+}
+
 // VerifyParent refuses everything on non-unix platforms.
 func (s *Session) VerifyParent(*Fresh, string) Decision { return refuse(ReasonParentChanged) }
 

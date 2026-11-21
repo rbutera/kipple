@@ -108,9 +108,7 @@ func TestConfirmRulesInListOrder(t *testing.T) {
 func TestMissingTrashNote(t *testing.T) {
 	f := newFx(t, fixtureSpec())
 	m := f.scanned()
-	if err := os.Remove(testutil.Abs(f.home, ".Trash")); err != nil {
-		t.Fatal(err)
-	}
+	breakTrash(t, f.home)
 	m.OpenConfirm()
 	v := m.Confirm()
 	if v.CanMove || strings.Contains(v.Note, "Full Disk Access") || !strings.HasPrefix(v.Note, "kipple can't use the Trash folder here, so it can't move anything: ") {

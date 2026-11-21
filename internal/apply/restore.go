@@ -45,8 +45,8 @@ type RestoreOptions struct {
 
 	// beforeMove, in tests, runs immediately before the parent re-check.
 	beforeMove func(plan.MovedItem)
-	// openTrash, in tests, replaces opening the home .Trash.
-	openTrash func() (*trash.DirTrasher, error)
+	// openTrash, in tests, replaces opening the home Trash.
+	openTrash func() (*homeTrash, error)
 }
 
 // Restore moves entries recorded in a receipt (moved items, displaced
@@ -186,18 +186,27 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 		return res, nil
 	}
 	tr := o.Trash
+	var info infoRemover
 	if tr == nil {
 		open := o.openTrash
 		if open == nil {
-			open = func() (*trash.DirTrasher, error) { return openHomeTrash(sess, o.Env.Home) }
+			// Restore never creates the Trash.
+			open = func() (*homeTrash, error) { return openHomeTrash(sess, o.Env.Home, false) }
 		}
-		if tr, err = open(); err != nil {
-			if isPermission(err) {
-				return res, fmt.Errorf("%w: %v", ErrTrashAccess, err)
-			}
+		h, err := open()
+		switch {
+		case err == nil:
+		case errTrashCreatable != nil && errors.Is(err, errTrashCreatable):
+			return res, fmt.Errorf("restore: the Trash folder %s does not exist, so nothing can be put back from it", HomeTrashDir(o.Env.Home))
+		case errors.Is(err, ErrTrashAccess):
+			return res, err
+		case isPermission(err):
+			return res, fmt.Errorf("%w: %v", ErrTrashAccess, err)
+		default:
 			return res, fmt.Errorf("restore: %w", err)
 		}
-		defer func() { _ = tr.Close() }()
+		defer func() { _ = h.Close() }()
+		tr, info = h.dir, h.info
 	} else if err := tr.Verify(); err != nil {
 		return res, fmt.Errorf("restore: %w", err)
 	}
@@ -208,6 +217,7 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			skip(m, plan.SkipMoveFailed, "not attempted: interrupted")
 			continue
 		}
+		recorded := filepath.Base(m.TrashPath)
 		switch {
 		case kind[m] == "pending":
 			// The run stopped between saving this item as pending and
@@ -237,6 +247,9 @@ func Restore(ctx context.Context, o RestoreOptions) (plan.Result, error) {
 			now := o.Now().UTC()
 			m.RestoredAt = &now
 			annotated = true
+			if info != nil && (rc.Mover == plan.MoverFreedesktop || m.Mover == plan.MoverFreedesktop) {
+				res.Warnings = append(res.Warnings, removeInfo(tr, info, m, recorded)...)
+			}
 			res.Restored = append(res.Restored, plan.RestoredItem{Kind: kind[m], ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
 		case reason == "would":
 			res.Restored = append(res.Restored, plan.RestoredItem{Kind: kind[m], ID: m.ID, Rule: m.Rule, Path: m.Path, TrashPath: m.TrashPath, Bytes: m.Bytes})
@@ -267,6 +280,11 @@ func restoreOne(sess *policy.Session, tr *trash.DirTrasher, r rules.Rule, m *pla
 	efd, info, err := openEntry(tr.Fd(), name)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
+		if taggedAt(sess, m.Path, m.Dev, m.Ino, tag) {
+			// Put back by something else (GNOME's or KDE's Restore,
+			// Finder's Put Back): the object kipple moved, with its tag.
+			return plan.SkipAlreadyRestored, "the item is already back at its original path (restored outside kipple, for example from the file manager)", false
+		}
 		return plan.SkipTrashItemMissing, "nothing at " + m.TrashPath, false
 	case errors.Is(err, syscall.ELOOP):
 		return plan.SkipTrashItemMismatch, m.TrashPath + " is a symbolic link", false
@@ -314,6 +332,27 @@ func restoreOne(sess *policy.Session, tr *trash.DirTrasher, r rules.Rule, m *pla
 		return classify(err), err.Error(), false
 	}
 	return "", "", true
+}
+
+// removeInfo removes the .trashinfo of an entry restore just put back
+// (freedesktop receipts): the one for the name the entry was found under,
+// and, when that differs from the name the receipt recorded, the recorded
+// name's too, but only while no entry of that name is in the Trash (so no
+// entry is ever left without its info file). trash.FreedesktopTrasher
+// removes a file only if its decoded Path is the item's original path; any
+// file it leaves is returned as a warning.
+func removeInfo(tr *trash.DirTrasher, info infoRemover, m *plan.MovedItem, recorded string) []string {
+	var warnings []string
+	names := []string{filepath.Base(m.TrashPath)}
+	if recorded != names[0] && recorded != "." && recorded != "/" && !entryExists(tr.Fd(), recorded) {
+		names = append(names, recorded)
+	}
+	for _, n := range names {
+		if _, err := info.RemoveInfo(n, m.Path); err != nil {
+			warnings = append(warnings, m.Path+": restored; its Trash info file was not removed: "+err.Error())
+		}
+	}
+	return warnings
 }
 
 // protectedSource refuses a Trash entry whose own name, or anything inside

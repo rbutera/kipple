@@ -162,7 +162,7 @@ func TestVersionReportsTrashFallback(t *testing.T) {
 // receipt to put back; a clean dry run exits 0. The README says exactly
 // this.
 func TestNothingToDoExitCode(t *testing.T) {
-	testutil.NewHome(t, testutil.Spec{Dirs: []testutil.Dir{{Path: ".Trash", Mode: 0o700}}})
+	testutil.NewHome(t, testutil.Spec{Dirs: testutil.TrashDirs()})
 	if code, _, _ := cli(t, "clean"); code != exitOK {
 		t.Fatalf("clean dry run on an empty home: exit %d", code)
 	}

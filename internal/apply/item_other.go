@@ -15,9 +15,17 @@ func withOwnerWrite(*os.File, func() error) error              { return trash.Er
 func isPermission(error) bool                                  { return false }
 
 func classify(error) string { return plan.SkipMoveFailed }
-func openHomeTrash(*policy.Session, string) (*trash.DirTrasher, error) {
+func openHomeTrash(*policy.Session, string, bool) (*homeTrash, error) {
 	return nil, trash.ErrUnsupported
 }
+
+const homeTrashRel = ".Trash"
+
+const finderFallback = false
+
+var errTrashCreatable error
+
+func noReplaceError(_ int, err error) error { return err }
 
 func tagTarget(*policy.Fresh, uint64, uint64, *os.File) (int, func(), error) {
 	return -1, nil, trash.ErrUnsupported
@@ -42,3 +50,7 @@ func findInTrash(int, uint64, uint64) (string, bool) { return "", false }
 func entryIs(int, string, uint64, uint64) bool { return false }
 
 func tagDisplaced(string, uint64, uint64, []byte) error { return trash.ErrUnsupported }
+
+func entryExists(int, string) bool { return false }
+
+func taggedAt(*policy.Session, string, uint64, uint64, []byte) bool { return false }

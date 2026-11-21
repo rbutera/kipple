@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 	"unicode/utf8"
 
@@ -120,25 +121,6 @@ func classify(err error) string {
 	default:
 		return plan.SkipMoveFailed
 	}
-}
-
-// openHomeTrash opens <home>/.Trash through the session (no symlink on the
-// way, same device as home, stored names) and checks it is a directory
-// owned by this user.
-func openHomeTrash(sess *policy.Session, home string) (*trash.DirTrasher, error) {
-	path := home + "/.Trash"
-	e, err := sess.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("the Trash folder %s cannot be used: %w", path, err)
-	}
-	if e.Dir == nil {
-		return nil, fmt.Errorf("the Trash folder %s is not a folder", path)
-	}
-	defer func() { _ = e.Dir.Close() }()
-	if st, ok := e.Info.Sys().(*unix.Stat_t); !ok || int(st.Uid) != os.Geteuid() {
-		return nil, fmt.Errorf("the Trash folder %s is not owned by you", path)
-	}
-	return trash.NewDirTrasher(e.Dir, path)
 }
 
 // errSpecialFile: the item is a device node, FIFO or socket, which cannot
@@ -352,4 +334,35 @@ func tagDisplaced(path string, dev, ino uint64, tag []byte) error {
 		return trash.ErrItemChanged
 	}
 	return setTag(fd, tag)
+}
+
+// entryExists reports whether the Trash folder open at trashFd has an
+// entry name (of any type, without following it).
+func entryExists(trashFd int, name string) bool {
+	var st unix.Stat_t
+	return fstatat(trashFd, name, &st) == nil
+}
+
+// taggedAt reports whether path, reached through the session's verified
+// walk to its parent (no symlink followed), is a regular file or directory
+// with identity (dev, ino) carrying exactly tag: an item that something
+// other than kipple put back from the Trash.
+func taggedAt(sess *policy.Session, path string, dev, ino uint64, tag []byte) bool {
+	parent, err := sess.Open(filepath.Dir(path))
+	if err != nil || parent.Dir == nil {
+		return false
+	}
+	defer func() { _ = parent.Dir.Close() }()
+	pfd, name := int(parent.Dir.Fd()), filepath.Base(path)
+	var st unix.Stat_t
+	if fstatat(pfd, name, &st) != nil || identOf(&st) != (ident{dev, ino}) || !taggableMode(policy.StatMode(uint32(st.Mode))) {
+		return false
+	}
+	fd, err := unix.Openat(pfd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = unix.Close(fd) }()
+	got, err := fstatOf(fd)
+	return err == nil && identOf(&got) == (ident{dev, ino}) && tagMatches(fd, tag)
 }
