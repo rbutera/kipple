@@ -68,3 +68,48 @@ agent-flow-check:
 # Captures every GUI screen from a fixture home into OUT (never the real home).
 gui-screenshots:
 	scripts/gui-screenshots.sh $(or $(OUT),dist/gui-screenshots)
+
+# ---------------------------------------------------------------------------
+# Linux test harness (openspec/changes/linux-port design L12). The suite runs
+# in a container as the unprivileged user kipple (uid 1000) with a
+# container-local home; the repository and the host module cache are mounted
+# read-only, the network is off for Go (GOPROXY=off), the Go build cache
+# lives in a named volume, /tmp is a tmpfs and /xdev a second tmpfs for
+# cross-device tests. Nothing from the host home is mounted writable.
+DOCKER ?= docker
+LINUX_IMAGE ?= kipple-linux-test
+LINUX_VOLUME ?= kipple-linux-gocache
+# LINUX_GOMOD=host mounts the host module cache read-only; LINUX_GOMOD=primed
+# uses the copy make test-linux-prime downloads into the named volume.
+LINUX_GOMOD ?= host
+ifeq ($(LINUX_GOMOD),primed)
+LINUX_GOMOD_FLAGS = -e GOMODCACHE=/cache/gomod
+else
+LINUX_GOMOD_FLAGS = -v "$$($(GO) env GOMODCACHE)":/gomod:ro -e GOMODCACHE=/gomod
+endif
+LINUX_RUN = $(DOCKER) run --rm \
+	-v "$(CURDIR)":/src:ro -w /src \
+	$(LINUX_GOMOD_FLAGS) \
+	-v $(LINUX_VOLUME):/cache \
+	--tmpfs /tmp:rw,exec,mode=1777 --tmpfs /xdev:rw,mode=1777 \
+	-e GOFLAGS="-buildvcs=false -mod=readonly" -e GOPROXY=off -e GOTOOLCHAIN=local \
+	-e GOCACHE=/cache/go-build -e GOPATH=/tmp/gopath -e HOME=/home/kipple -e TMPDIR=/tmp
+
+.PHONY: linux-image test-linux test-linux-prime
+
+linux-image:
+	$(DOCKER) build -q -t $(LINUX_IMAGE) test/linux >/dev/null
+
+# The whole default suite with -race, go vet, the no-real-home check and
+# the agent flow, as uid 1000; fails if the container home changed.
+test-linux: linux-image
+	$(LINUX_RUN) $(LINUX_IMAGE) test/linux/run.sh
+
+# Fallback when the read-only host module cache cannot be used: downloads the
+# modules once into the named volume (network on for this step only). Then
+# run make test-linux LINUX_GOMOD=primed.
+test-linux-prime: linux-image
+	$(DOCKER) run --rm -v "$(CURDIR)":/src:ro -w /src -v $(LINUX_VOLUME):/cache \
+		-e GOMODCACHE=/cache/gomod -e GOFLAGS="-modcacherw -mod=readonly" -e GOTOOLCHAIN=local \
+		-e GOCACHE=/cache/go-build -e GOPATH=/tmp/gopath --tmpfs /tmp:rw,exec,mode=1777 \
+		$(LINUX_IMAGE) go mod download

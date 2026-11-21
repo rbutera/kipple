@@ -8,13 +8,13 @@ Baseline before wave 1 (design Context): in the container, 14 packages pass and 
 
 Exit criterion: `make test-linux` is green for every package, run as uid 1000, with darwin-only tests excluded by build constraints only. This wave is not releasable on its own: same-device bind mounts become a boundary in wave 2.
 
-- [ ] 1.1 Add the container harness (design L12). It has three parts:
+- [x] 1.1 Add the container harness (design L12). It has three parts:
   - `test/linux/Dockerfile`: `golang:1.23-bookworm` pinned by digest, user `kipple` uid 1000 with home `/home/kipple`, `USER kipple`.
   - `test/linux/run.sh`: refuses uid 0; a preflight sets a `user.` xattr in `$TMPDIR`; snapshots `find $HOME -printf '%p %s %T@ %i\n'` before and after; runs `go vet ./...`, `go test -race -count=1 ./...`, `scripts/check-no-real-home.sh` and `scripts/agent-flow-check.sh`.
   - Makefile targets `test-linux` and `test-linux-prime`: repo and host module cache mounted read-only, `GOPROXY=off`, `GOFLAGS=-buildvcs=false -mod=readonly`, a named volume for `GOCACHE`, tmpfs `/tmp`, a second tmpfs at `/xdev` for cross-device tests.
 
   Verify: "Harness refuses root" (`docker run --user 0 ... test/linux/run.sh` exits non-zero), and a scratch run that touches `$HOME/x` fails naming it ("Container home unchanged").
-- [ ] 1.2 Make the suite refuse root on every platform: `testutil.GuardedMain` fails the package before any test when the effective UID is 0, and `TestSuiteIsNotRoot` in `internal/testutil` asserts it. Verify: "Test suite refuses root" (run the testutil package under `docker run --user 0` and see it fail naming root), and `make check` is still green on macOS.
+- [x] 1.2 Make the suite refuse root on every platform: `testutil.GuardedMain` fails the package before any test when the effective UID is 0, and `TestSuiteIsNotRoot` in `internal/testutil` asserts it. Verify: "Test suite refuses root" (run the testutil package under `docker run --user 0` and see it fail naming root), and `make check` is still green on macOS.
 - [ ] 1.3 Run the baseline again as uid 1000 and record in the commit message which of the 92 failures remain and why. Tag the genuinely darwin-only tests with build constraints:
   - APFS normalisation and alias cases such as `TestNFDHomeIsRespelledToStoredNFC` and the on-disk `Documentſ` cases, into `*_darwin_test.go`;
   - FinderTrasher and Trash-fallback tests (`TestTrashFallback`, `TestProbeTrash` fallback cases);
