@@ -336,7 +336,6 @@ func tagDisplaced(path string, dev, ino uint64, tag []byte) error {
 	return setTag(fd, tag)
 }
 
-
 // taggedAt reports whether path, reached through the session's verified
 // walk to its parent (no symlink followed), is a regular file or directory
 // with identity (dev, ino) carrying exactly tag: an item that something
