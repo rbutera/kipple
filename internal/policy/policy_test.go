@@ -362,6 +362,16 @@ func TestDenylistContainsSpecMinimum(t *testing.T) {
 		".claude/projects", ".claude/memory", ".claude/plans", ".claude/skills", ".claude/settings*.json",
 		".codex/sessions", ".codex/memory",
 		"**/.env", "**/.env.*", "**/*.keychain*", "**/*.photoslibrary",
+		// Linux (linux-port design L9).
+		"Videos", "Templates", "Public",
+		".local/share/keyrings", ".local/share/kwalletd", ".pki", ".mozilla", ".thunderbird",
+		".config/google-chrome", ".config/chromium", ".config/BraveSoftware", ".config/microsoft-edge", ".config/vivaldi",
+		".config/1Password", ".config/Bitwarden", ".config/keepassxc", ".config/sops", ".config/rclone", ".config/containers",
+		".config/evolution", ".local/share/evolution", ".config/Signal", ".local/share/TelegramDesktop",
+		".config/Code/User", ".config/Cursor/User", ".config/Windsurf/User", ".config/Claude",
+		".local/state", ".local/share/fish", ".local/share/Trash", "**/.Trash-*",
+		".local/share/docker", ".local/share/containers", ".local/share/flatpak", "snap",
+		".var/app/*/data", ".var/app/*/config",
 	}
 	have := map[string]bool{}
 	for _, d := range Denylist() {
@@ -504,5 +514,36 @@ func TestOverlaps(t *testing.T) {
 		if got := Overlaps(tc.b, tc.a); got != tc.want {
 			t.Errorf("Overlaps(%q, %q) = %v, want %v", tc.b, tc.a, got, tc.want)
 		}
+	}
+}
+
+// specs/safety-policy scenarios for the Linux denylist entries, decided the
+// same way on every platform (one constant).
+func TestLinuxDenylist(t *testing.T) {
+	home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{
+		{Path: ".local/share/keyrings/login.keyring", Content: "x"},
+		{Path: ".local/share/Trash/files/http/blob", Content: "x"},
+		{Path: "media/disk/.Trash-1000/files/x", Content: "x"},
+		{Path: "documents/x", Content: "x"},
+		{Path: ".var/app/org.gimp.GIMP/cache/blob", Content: "x"},
+		{Path: ".var/app/org.gimp.GIMP/data/blob", Content: "x"},
+	}})
+	for _, tc := range []struct {
+		name, root, cand, want string
+	}{
+		{"Linux keyring refused", ".local/share/keyrings", ".local/share/keyrings/login.keyring", ReasonDenylisted},
+		{"Trash is never a source", ".local/share/Trash/files", ".local/share/Trash/files/http", ReasonDenylisted},
+		{"Top-directory Trash is never a source", "media/disk", "media/disk/.Trash-1000", ReasonDenylisted},
+		{"Folding applies on Linux", "documents", "documents/x", ReasonDenylisted},
+		{"Flatpak app data refused", ".var/app/org.gimp.GIMP/data", ".var/app/org.gimp.GIMP/data/blob", ReasonDenylisted},
+		{"Flatpak app cache allowed", ".var/app/org.gimp.GIMP/cache", ".var/app/org.gimp.GIMP/cache/blob", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := StaticRule{ID: "hypothetical", Roots: []string{tc.root}, Kind: MatchChildren}
+			got := authorizeBoth(t, Env{Home: home}, r, home+"/"+tc.cand)
+			if got.Reason != tc.want || got.Allowed != (tc.want == "") {
+				t.Fatalf("want %q, got %+v", tc.want, got)
+			}
+		})
 	}
 }

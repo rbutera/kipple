@@ -354,6 +354,9 @@ with `**/` match a name at any depth.
 - `Pictures/Photos Library.photoslibrary`
 - `Movies`
 - `Music`
+- `Videos`
+- `Templates`
+- `Public`
 - `Library/Mobile Documents`
 - `Library/CloudStorage`
 - `Library/Mail`
@@ -382,10 +385,34 @@ with `**/` match a name at any depth.
 - `Library/Application Support/1Password`
 - `Library/Application Support/Bitwarden`
 - `.password-store`
+- `.local/share/keyrings`
+- `.local/share/kwalletd`
+- `.pki`
+- `.config/1Password`
+- `.config/Bitwarden`
+- `.config/keepassxc`
+- `.config/sops`
+- `.config/rclone`
+- `.config/containers`
+- `.mozilla`
+- `.thunderbird`
+- `.config/google-chrome`
+- `.config/chromium`
+- `.config/BraveSoftware`
+- `.config/microsoft-edge`
+- `.config/vivaldi`
+- `.config/evolution`
+- `.local/share/evolution`
+- `.config/Signal`
+- `.local/share/TelegramDesktop`
 - `Library/Application Support/Code/User`
 - `Library/Application Support/Cursor/User`
 - `Library/Application Support/Windsurf/User`
 - `Library/Application Support/Claude`
+- `.config/Code/User`
+- `.config/Cursor/User`
+- `.config/Windsurf/User`
+- `.config/Claude`
 - `Library/Developer/Xcode/UserData`
 - `Library/MobileDevice/Provisioning Profiles`
 - `Library/Developer/CoreSimulator/Devices`
@@ -410,6 +437,15 @@ with `**/` match a name at any depth.
 - `.cargo/credentials*`
 - `.zsh_history`
 - `.bash_history`
+- `.local/state`
+- `.local/share/fish`
+- `.local/share/Trash`
+- `.local/share/docker`
+- `.local/share/containers`
+- `.local/share/flatpak`
+- `snap`
+- `.var/app/*/data`
+- `.var/app/*/config`
 - `.ark`
 - `.claude/projects`
 - `.claude/memory`
@@ -441,4 +477,5 @@ with `**/` match a name at any depth.
 - `**/*.p12`
 - `**/id_rsa*`
 - `**/id_ed25519*`
+- `**/.Trash-*`
 <!-- denylist:end -->

@@ -18,6 +18,9 @@ var denyPrefixes = [...]string{
 	"Pictures/Photos Library.photoslibrary",
 	"Movies",
 	"Music",
+	"Videos",
+	"Templates",
+	"Public",
 	"Library/Mobile Documents",
 	"Library/CloudStorage",
 	"Library/Mail",
@@ -53,11 +56,39 @@ var denyPrefixes = [...]string{
 	"Library/Application Support/Bitwarden",
 	".password-store",
 
+	// Linux: keyrings, certificates and secrets.
+	".local/share/keyrings",
+	".local/share/kwalletd",
+	".pki",
+	".config/1Password",
+	".config/Bitwarden",
+	".config/keepassxc",
+	".config/sops",
+	".config/rclone",
+	".config/containers", // registry auth.json
+
+	// Linux: browser and mail profiles, messengers.
+	".mozilla",
+	".thunderbird",
+	".config/google-chrome",
+	".config/chromium",
+	".config/BraveSoftware",
+	".config/microsoft-edge",
+	".config/vivaldi",
+	".config/evolution",
+	".local/share/evolution",
+	".config/Signal",
+	".local/share/TelegramDesktop",
+
 	// Editor and app settings (their Cache folders stay cleanable).
 	"Library/Application Support/Code/User",
 	"Library/Application Support/Cursor/User",
 	"Library/Application Support/Windsurf/User",
 	"Library/Application Support/Claude",
+	".config/Code/User",
+	".config/Cursor/User",
+	".config/Windsurf/User",
+	".config/Claude",
 
 	// Developer identity and device state. CoreSimulator Devices and
 	// Runtimes are info-tier: measured, never moved.
@@ -86,9 +117,24 @@ var denyPrefixes = [...]string{
 	".gem/credentials",
 	".cargo/credentials*",
 
-	// Shell history.
+	// Shell history and Linux application state (kipple's own receipts
+	// are in .local/state).
 	".zsh_history",
 	".bash_history",
+	".local/state",
+	".local/share/fish",
+
+	// The freedesktop.org home Trash is never a source (top-directory
+	// trashes, .Trash-<uid>, are refused as a component below).
+	".local/share/Trash",
+
+	// Linux info-tier roots (measured, never moved) and Flatpak app data.
+	".local/share/docker",
+	".local/share/containers",
+	".local/share/flatpak",
+	"snap",
+	".var/app/*/data",
+	".var/app/*/config",
 
 	// Agent state that is not a cache.
 	".ark",
@@ -128,6 +174,7 @@ var denyComponents = [...]string{
 	"*.p12",
 	"id_rsa*",
 	"id_ed25519*",
+	".Trash-*", // freedesktop.org top-directory trashes
 }
 
 // Denylist returns the built-in denylist for documentation and tests:
