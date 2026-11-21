@@ -602,7 +602,7 @@ func (a *applier) trashTagged(f *policy.Fresh, it plan.Item, dev, ino uint64, di
 	if err := setTag(tfd, tag); err != nil {
 		return "", fmt.Errorf("could not tag the item for restore: %w", err)
 	}
-	dest, err := a.trashItem(f, dev, ino, dir)
+	dest, err := a.trashItem(f, it, dev, ino, dir)
 	if err == nil {
 		return dest, nil
 	}
@@ -629,16 +629,30 @@ func (a *applier) trashTagged(f *policy.Fresh, it plan.Item, dev, ino uint64, di
 // directory item for the duration of the rename when the system requires
 // it (macOS needs write permission on a directory to move it to another
 // folder; Go's module cache is read-only). Contents are never changed.
-func (a *applier) trashItem(f *policy.Fresh, dev, ino uint64, dir *os.File) (string, error) {
-	dest, err := a.mover.TrashExpect(f.ParentFd, f.Name, dev, ino)
+func (a *applier) trashItem(f *policy.Fresh, it plan.Item, dev, ino uint64, dir *os.File) (string, error) {
+	move := func() (string, error) {
+		// A mover that records where the item came from (the freedesktop
+		// Trash's .trashinfo) gets the parent VerifyParent just confirmed.
+		if at, ok := a.mover.(atTrasher); ok {
+			return at.TrashExpectAt(f.ParentFd, f.Name, filepath.Dir(it.Path), dev, ino)
+		}
+		return a.mover.TrashExpect(f.ParentFd, f.Name, dev, ino)
+	}
+	dest, err := move()
 	if err != nil && dir != nil && isPermission(err) {
 		err = withOwnerWrite(dir, func() error {
 			var e error
-			dest, e = a.mover.TrashExpect(f.ParentFd, f.Name, dev, ino)
+			dest, e = move()
 			return e
 		})
 	}
 	return dest, err
+}
+
+// atTrasher is a mover told the verified parent path of each item
+// (trash.FreedesktopTrasher).
+type atTrasher interface {
+	TrashExpectAt(parentFd int, name, parent string, dev, ino uint64) (string, error)
 }
 
 // running checks the rule's owner and, for project artifacts, agent

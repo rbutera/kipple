@@ -401,3 +401,86 @@ func TestClaudeCodeOpenInProjectLinux(t *testing.T) {
 		t.Fatalf("skipped %+v moved %+v", res.Skipped, res.Moved)
 	}
 }
+
+// Regression for the wave 1 red-team finding: while apply runs, a loop
+// exchanges the items' parent folder with a folder outside home
+// (renameat2 RENAME_EXCHANGE). Whatever moves, every .trashinfo must name
+// where its item really came from, no decoy from outside may reach the
+// Trash, and every moved item's info file must exist.
+func TestParentExchangeLoopDuringApply(t *testing.T) {
+	spec := testutil.Spec{}
+	for i := 0; i < 40; i++ {
+		spec.Files = append(spec.Files, testutil.File{Path: fmt.Sprintf("Library/Caches/c%03d/blob", i), Content: "item", MTime: old})
+	}
+	f := newFx(t, spec)
+	outside := filepath.Join(filepath.Dir(f.home), "outside")
+	for i := 0; i < 40; i++ {
+		d := filepath.Join(outside, fmt.Sprintf("c%03d", i))
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "secret"), []byte("secret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(d, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := f.scan("")
+	caches := f.abs("Library/Caches")
+	stop := make(chan struct{})
+	done := make(chan int)
+	go func() {
+		n := 0
+		for {
+			select {
+			case <-stop:
+				if n%2 == 1 {
+					_ = unix.Renameat2(unix.AT_FDCWD, caches, unix.AT_FDCWD, outside, unix.RENAME_EXCHANGE)
+					n++
+				}
+				done <- n
+				return
+			default:
+			}
+			if unix.Renameat2(unix.AT_FDCWD, caches, unix.AT_FDCWD, outside, unix.RENAME_EXCHANGE) == nil {
+				n++
+			}
+		}
+	}()
+	res, err := Run(context.Background(), f.opts(p))
+	close(stop)
+	if n := <-done; n == 0 {
+		t.Fatal("the exchange loop never ran")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoDir := f.abs(".local/share/Trash/info")
+	for _, m := range res.Moved {
+		info := infoOf(t, f, filepath.Base(m.TrashPath))
+		if info.Path != m.Path {
+			t.Errorf("%s: info Path %q", m.Path, info.Path)
+		}
+		if b, err := os.ReadFile(m.TrashPath + "/blob"); err != nil || string(b) != "item" {
+			t.Errorf("%s: the Trash entry is not the item: %q %v", m.TrashPath, b, err)
+		}
+	}
+	es, _ := os.ReadDir(infoDir)
+	for _, e := range es {
+		info := infoOf(t, f, strings.TrimSuffix(e.Name(), ".trashinfo"))
+		if !strings.HasPrefix(info.Path, caches+"/") {
+			t.Errorf("%s names %s, outside the rule root", e.Name(), info.Path)
+		}
+	}
+	files, _ := os.ReadDir(f.abs(".local/share/Trash/files"))
+	for _, e := range files {
+		if _, err := os.Stat(filepath.Join(f.abs(".local/share/Trash/files"), e.Name(), "secret")); err == nil {
+			t.Errorf("a folder from outside home reached the Trash: %s", e.Name())
+		}
+	}
+	if len(files) != len(res.Moved) || len(es) != len(res.Moved) {
+		t.Errorf("%d files and %d info entries for %d moved items", len(files), len(es), len(res.Moved))
+	}
+	t.Logf("moved %d, skipped %d", len(res.Moved), len(res.Skipped))
+}

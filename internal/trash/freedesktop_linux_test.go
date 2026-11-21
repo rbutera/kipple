@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/rbutera/kipple/internal/testutil"
 )
 
@@ -282,4 +284,70 @@ func swap(t *testing.T, a, b string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// Should-fix from the wave 1 review: the info file records the parent the
+// caller verified, and a parent moved before the reservation or during the
+// rename means the item stays (or is put back) and no info file is left.
+func TestFreedesktopParentMoved(t *testing.T) {
+	t.Run("Parent moved before the move", func(t *testing.T) {
+		home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "c/a/f", Content: "x"}}})
+		tr := fdTrash(t, home)
+		dev, ino := identity(t, testutil.Abs(home, "c/a"))
+		pfd := parentFd(t, testutil.Abs(home, "c"))
+		if err := os.Rename(testutil.Abs(home, "c"), testutil.Abs(home, "moved")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tr.TrashExpectAt(pfd, "a", testutil.Abs(home, "c"), dev, ino); !errors.Is(err, ErrItemChanged) {
+			t.Fatalf("err = %v, want ErrItemChanged", err)
+		}
+		if !exists(testutil.Abs(home, "moved/a")) || entries(t, testutil.Abs(home, ".local/share/Trash/info")) != 0 {
+			t.Fatal("something moved or an info file was left")
+		}
+	})
+	t.Run("Parent exchanged during the move", func(t *testing.T) {
+		home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "c/a/f", Content: "x"}, {Path: "other/keep", Content: "k"}}})
+		tr := fdTrash(t, home)
+		dev, ino := identity(t, testutil.Abs(home, "c/a"))
+		tr.afterRename = func(string) {
+			if err := unix.Renameat2(unix.AT_FDCWD, testutil.Abs(home, "c"), unix.AT_FDCWD, testutil.Abs(home, "other"), unix.RENAME_EXCHANGE); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err := tr.TrashExpectAt(parentFd(t, testutil.Abs(home, "c")), "a", testutil.Abs(home, "c"), dev, ino)
+		if !errors.Is(err, ErrItemChanged) {
+			t.Fatalf("err = %v, want ErrItemChanged", err)
+		}
+		// The original parent is now at other/; the item went back into it.
+		if d, i := identity(t, testutil.Abs(home, "other/a")); d != dev || i != ino {
+			t.Fatal("the item was not put back into its parent")
+		}
+		for _, d := range []string{"files", "info"} {
+			if n := entries(t, testutil.Abs(home, ".local/share/Trash/"+d)); n != 0 {
+				t.Fatalf("%d entries left in %s", n, d)
+			}
+		}
+	})
+	t.Run("The info file records the verified parent", func(t *testing.T) {
+		home := testutil.NewHome(t, testutil.Spec{Files: []testutil.File{{Path: "c/a/f", Content: "x"}}})
+		tr := fdTrash(t, home)
+		dev, ino := identity(t, testutil.Abs(home, "c/a"))
+		if _, err := tr.TrashExpectAt(parentFd(t, testutil.Abs(home, "c")), "a", testutil.Abs(home, "c"), dev, ino); err != nil {
+			t.Fatal(err)
+		}
+		if got := readInfo(t, testutil.Abs(home, ".local/share/Trash/info/a.trashinfo")); got.Path != testutil.Abs(home, "c/a") {
+			t.Fatalf("Path %q", got.Path)
+		}
+	})
+}
+
+func exists(p string) bool { _, err := os.Lstat(p); return err == nil }
+
+func entries(t *testing.T, dir string) int {
+	t.Helper()
+	es, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(es)
 }

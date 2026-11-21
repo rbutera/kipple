@@ -152,7 +152,37 @@ func (t *FreedesktopTrasher) TrashExpect(parentFd int, name string, dev, ino uin
 	return t.trash(parentFd, name, &[2]uint64{dev, ino})
 }
 
+// TrashExpectAt is TrashExpect for an item whose parent folder the caller
+// verified to be parent (an absolute path) immediately before: the info
+// file records parent/name, not whatever the descriptor's path is by then.
+// The descriptor must still be at parent before the name is reserved and
+// again after the rename; if it moved in between (a rename or exchange of
+// the parent), the item is moved back and ErrItemChanged is returned, so
+// no info file ever describes a location the item did not come from.
+func (t *FreedesktopTrasher) TrashExpectAt(parentFd int, name, parent string, dev, ino uint64) (string, error) {
+	if !strings.HasPrefix(parent, "/") {
+		return "", fmt.Errorf("trash: parent %q is not absolute", parent)
+	}
+	return t.trashAt(parentFd, name, parent, &[2]uint64{dev, ino})
+}
+
 func (t *FreedesktopTrasher) trash(parentFd int, name string, want *[2]uint64) (string, error) {
+	return t.trashAt(parentFd, name, "", want)
+}
+
+// parentAt checks that the descriptor parentFd is still at parent.
+func parentAt(parentFd int, parent string) error {
+	got, err := policy.DescriptorPath(parentFd)
+	if err != nil {
+		return fmt.Errorf("trash: the location of the parent folder: %w", err)
+	}
+	if got != parent {
+		return fmt.Errorf("%w: the parent folder moved from %s to %s", ErrItemChanged, parent, got)
+	}
+	return nil
+}
+
+func (t *FreedesktopTrasher) trashAt(parentFd int, name, planned string, want *[2]uint64) (string, error) {
 	if !validName(name) {
 		return "", ErrInvalidName
 	}
@@ -174,9 +204,15 @@ func (t *FreedesktopTrasher) trash(parentFd int, name string, want *[2]uint64) (
 	if pst.Dev != t.files.dev || ist.Dev != t.files.dev {
 		return "", ErrDifferentDevice
 	}
-	parent, err := policy.DescriptorPath(parentFd)
-	if err != nil {
-		return "", fmt.Errorf("trash: the original location of %s: %w", name, err)
+	parent := planned
+	if parent == "" {
+		p, err := policy.DescriptorPath(parentFd)
+		if err != nil {
+			return "", fmt.Errorf("trash: the original location of %s: %w", name, err)
+		}
+		parent = p
+	} else if err := parentAt(parentFd, parent); err != nil {
+		return "", err
 	}
 	original := parent + "/" + name
 	if parent == "/" {
@@ -218,6 +254,23 @@ func (t *FreedesktopTrasher) trash(parentFd int, name string, want *[2]uint64) (
 				}
 				t.removeOwn(cand, info)
 				return "", aerr
+			}
+			if planned != "" {
+				if perr := parentAt(parentFd, planned); perr != nil {
+					// The parent moved while the item was being moved:
+					// the info file would name the wrong place. Put
+					// the item back into its parent, wherever that is.
+					if berr := MoveNoReplace(t.files.fd, cand, parentFd, name); berr != nil {
+						de := &DisplacedError{Dest: t.files.path + "/" + cand, Why: "the parent folder moved during the move and the item could not be put back (" + berr.Error() + ")"}
+						var got unix.Stat_t
+						if fstatat(t.files.fd, cand, &got) == nil {
+							de.Dev, de.Ino, de.Size, de.Mtime, de.Known = got.Dev, got.Ino, got.Size, time.Unix(got.Mtim.Unix()).UTC(), true
+						}
+						return de.Dest, de
+					}
+					t.removeOwn(cand, info)
+					return "", perr
+				}
 			}
 			return t.files.path + "/" + cand, nil
 		case errors.Is(err, unix.EEXIST):
