@@ -303,6 +303,19 @@ can be moved; it is also `manual`, so it moves only when you name it. A
   file inside an item. Such a file goes to the Trash with the item and can
   be restored from there.
 
+### On Linux
+
+- A home on a file system without atomic no-replace renames (NFS, some
+  FUSE file systems) is scan-only. kipple writes its receipt with the same
+  kind of rename, so `clean --apply` stops when it cannot write the receipt,
+  before anything moves; if the receipt can be written elsewhere
+  (`KIPPLE_STATE_DIR`), the first move stops the run with `trash_access`.
+  Nothing is ever moved with a rename that could replace something.
+- A mount point is a boundary even when it shares its device with home (a
+  bind mount): an item that is or contains one is never moved, and a Trash
+  folder that is one is refused. (The v0.3.0 development snapshots before
+  this check could move a bind mount that lived on home's device.)
+
 <a id="permanent"></a>
 ## Permanent deletion
 
