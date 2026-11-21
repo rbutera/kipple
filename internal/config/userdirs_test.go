@@ -25,6 +25,7 @@ func TestParseUserDirs(t *testing.T) {
 		{"Escaping home with dot-dot ignored", `XDG_VIDEOS_DIR="$HOME/../other"`, nil, 1},
 		{"Comments and blank lines", "# written by xdg-user-dirs-update\n\nXDG_TEMPLATES_DIR=\"$HOME/Vorlagen\"\n", []string{"/home/me/Vorlagen"}, 0},
 		{"Malformed lines warn, good ones count", "garbage\nXDG_Y_DIR=\"$HOME/a\\\"b\"\nXDG_Z_DIR=\"$HOME/two words\"\nXDG_PUBLICSHARE_DIR=\"$HOME/Öffentlich\"", []string{"/home/me/Öffentlich"}, 3},
+		{"Comments and tildes", "XDG_DOCUMENTS_DIR=\"$HOME/Docs\" # mine\nXDG_MUSIC_DIR=~/Musik\nXDG_VIDEOS_DIR=\"$HOME/x\" trailing", []string{"/home/me/Docs", "/home/me/Musik"}, 1},
 		{"Shell forms the desktop accepts", "XDG_MUSIC_DIR=$HOME/Musik\nexport XDG_VIDEOS_DIR=\"${HOME}/Filme\"\nXDG_TEMPLATES_DIR=${HOME}/Vorlagen", []string{"/home/me/Filme", "/home/me/Musik", "/home/me/Vorlagen"}, 0},
 		{"Relative value", `XDG_DOCUMENTS_DIR="Documents"`, nil, 1},
 	} {

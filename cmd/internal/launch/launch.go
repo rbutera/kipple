@@ -207,13 +207,18 @@ func XDGWarnings(getenv func(string) string, home string) []string {
 		if val == "" || !filepath.IsAbs(val) || filepath.Clean(val) == home+"/"+v.def {
 			continue
 		}
-		// The default spelled through a symlinked home (Silverblue's
-		// /home -> var/home) is the default.
-		if r, err := filepath.EvalSymlinks(val); err == nil && r == home+"/"+v.def {
+		// Compare the value as the file system resolves it: the default
+		// spelled through a symlinked home (Silverblue's /home -> var/home)
+		// is the default, and a folder reached that way is inside home.
+		resolved := filepath.Clean(val)
+		if r, err := filepath.EvalSymlinks(val); err == nil {
+			resolved = r
+		}
+		if resolved == home+"/"+v.def {
 			continue
 		}
 		w := fmt.Sprintf("%s is set to %s, but kipple does not follow it: it scans only the default location ~/%s", v.name, filepath.Clean(val), v.def)
-		if !strings.HasPrefix(filepath.Clean(val)+"/", home+"/") {
+		if !strings.HasPrefix(resolved+"/", home+"/") {
 			w += ", and never looks outside your home folder"
 		}
 		if v.name == "XDG_DATA_HOME" {

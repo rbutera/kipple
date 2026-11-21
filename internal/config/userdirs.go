@@ -85,14 +85,29 @@ func ParseUserDirs(home string, data []byte) UserDirs {
 			continue
 		}
 		v := val
-		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
-			v = val[1 : len(val)-1]
+		if strings.HasPrefix(val, "\"") {
+			// "..." optionally followed by a shell comment.
+			end := strings.Index(val[1:], "\"")
+			if end < 0 {
+				warn("%s has an unterminated quote (%s); ignored", key, val)
+				continue
+			}
+			if after := strings.TrimSpace(val[end+2:]); after != "" && !strings.HasPrefix(after, "#") {
+				warn("%s has a value kipple does not understand (%s); ignored", key, val)
+				continue
+			}
+			v = val[1 : end+1]
+		} else if i := strings.Index(val, " #"); i >= 0 {
+			v = val[:i]
 		}
 		if strings.ContainsAny(v, "\"\\`' \t") {
 			warn("%s has a value kipple does not understand (%s); ignored", key, val)
 			continue
 		}
 		v = strings.Replace(v, "${HOME}", "$HOME", 1)
+		if v == "~" || strings.HasPrefix(v, "~/") {
+			v = "$HOME" + v[1:] // the shell expands a tilde in an assignment
+		}
 		var p string
 		switch {
 		case v == "$HOME":
