@@ -50,6 +50,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -882,13 +883,38 @@ func (a *applier) running(r rules.Rule, it plan.Item) (string, string) {
 				return reason, detail
 			}
 		}
+		proj, projErr := os.Lstat(project)
 		for _, c := range cwds {
-			if procs.Within(c, project) {
+			if procs.Within(c, project) || (projErr == nil && reachesFolder(c, proj, os.Lstat)) {
 				return plan.SkipToolRunning, "an agent process is working in " + c
 			}
 		}
 	}
 	return "", ""
+}
+
+// reachesFolder reports whether the folder cwd, or one of the folders above
+// it, is the folder target by identity (device and inode). An agent can
+// work in a project through another path than the one kipple scanned, such
+// as a bind mount of the project mounted elsewhere, which a comparison of
+// path strings misses; the mount's root has the project's identity. stat
+// does not follow symbolic links. A folder that cannot be examined is
+// passed over: the string comparison still applies.
+func reachesFolder(cwd string, target fs.FileInfo, stat func(string) (fs.FileInfo, error)) bool {
+	tdev, tino, ok := policy.Identity(target)
+	if !ok || !filepath.IsAbs(cwd) {
+		return false
+	}
+	for p := filepath.Clean(cwd); ; p = filepath.Dir(p) {
+		if fi, err := stat(p); err == nil && fi.IsDir() {
+			if dev, ino, ok := policy.Identity(fi); ok && dev == tdev && ino == tino {
+				return true
+			}
+		}
+		if p == filepath.Dir(p) {
+			return false
+		}
+	}
 }
 
 // Preview returns p as kipple clean would act on it with only: named items

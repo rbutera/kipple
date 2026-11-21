@@ -139,6 +139,46 @@ func TestClaudeCodeOpenInProject(t *testing.T) {
 	})
 }
 
+// Ubuntu CI follow-up: an agent working in the project through another path
+// (a bind mount of the project mounted elsewhere, whose root has the
+// project's identity) is found by identity, not only by path. The bind is
+// modelled by a stat function; scripts/linux-mount-check.sh checks a real
+// one.
+func TestAgentInProjectThroughAnotherPath(t *testing.T) {
+	f := newFx(t, testutil.Spec{
+		Repos: []testutil.Repo{gitProject("dev/app")},
+		Files: []testutil.File{{Path: "dev/app/node_modules/x/i.js", Content: "x"}},
+	})
+	project, err := os.Lstat(f.abs("dev/app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	alias := filepath.Join(other, "alias")
+	stat := func(p string) (fs.FileInfo, error) {
+		if p == alias {
+			return project, nil // the bind's root is the project
+		}
+		return os.Lstat(p)
+	}
+	for _, tc := range []struct {
+		cwd  string
+		want bool
+	}{
+		{alias + "/src", true},
+		{alias, true},
+		{f.abs("dev/app/src"), true},
+		{other, false},
+		{f.abs("dev"), false},
+		{"relative/src", false},
+		{alias + "/missing/deeper", true}, // folders that cannot be examined are passed over
+	} {
+		if got := reachesFolder(tc.cwd, project, stat); got != tc.want {
+			t.Errorf("reachesFolder(%q) = %v, want %v", tc.cwd, got, tc.want)
+		}
+	}
+}
+
 // Spec scenarios "Receipt written" and "Partial run" (clean-apply).
 func TestReceiptWrittenAndPartialRun(t *testing.T) {
 	f := newFx(t, threeSafe())

@@ -364,6 +364,53 @@ statedir_check() {
 }
 statedir_check
 
+# 4d. Ubuntu CI follow-up: an agent working in a project through a bind
+#     mount of the project mounted outside home is still found (by identity:
+#     the bind's root is the project), so the project's node_modules is
+#     skipped with tool_running, not moved. The agent is a process whose
+#     argv[0] is claude, started as uid 1000 in the bind's src folder.
+agent_bind_check() {
+	local r=/tmp/agentbind app id res agent when
+	many_fixture "$r" 1
+	when="@$(date -d '60 days ago' +%s) +0000"
+	app="$r/home/dev/app"
+	mkdir -p "$app/src" "$app/node_modules/x" /tmp/agentbind-remote /tmp/agentbind-alias
+	printf '{}' >"$app/package.json"
+	printf 'node_modules/\n' >"$app/.gitignore"
+	printf x >"$app/src/index.js"
+	printf x >"$app/node_modules/x/i.js"
+	chown -R 1000:1000 "$r/home/dev" /tmp/agentbind-remote /tmp/agentbind-alias
+	user_in "$r" sh -c "git init -q --bare /tmp/agentbind-remote/app.git &&
+		cd '$app' && git init -q -b main && git add -A &&
+		GIT_AUTHOR_DATE='$when' GIT_COMMITTER_DATE='$when' git -c user.name=t -c user.email=t@example.invalid commit -q -m init &&
+		git remote add origin /tmp/agentbind-remote/app.git && git push -q -u origin main"
+	find "$app" -exec touch -h -d "$old" {} +
+	mount --bind "$app" /tmp/agentbind-alias
+	user_in "$r" "$K" scan --json --level review >"$r/out/plan.json"
+	id="$(jq -r --arg p "$app/node_modules" '[.items[] | select(.path == $p) | .id][0] // empty' "$r/out/plan.json")"
+	if [ -z "$id" ]; then
+		fail "agent through a bind: the fixture's node_modules is not in the plan"
+		umount /tmp/agentbind-alias
+		return
+	fi
+	setpriv --reuid=1000 --regid=1000 --clear-groups --reset-env bash -c 'cd /tmp/agentbind-alias/src && exec -a claude sleep 60' &
+	agent=$!
+	sleep 0.5
+	set +e
+	user_in "$r" "$K" clean --apply --json --only "$id" >"$r/out/res.json" 2>"$r/out/res.err"
+	set -e
+	kill "$agent" 2>/dev/null || true
+	wait "$agent" 2>/dev/null || true
+	res="$(jq -r --arg p "$app/node_modules" '[.skipped[]? | select(.path == $p) | .reason + ": " + .detail][0] // "moved"' "$r/out/res.json")"
+	if [ -e "$app/node_modules/x/i.js" ] && [[ "$res" == "tool_running: an agent process is working in /tmp/agentbind-alias/src" ]]; then
+		ok "an agent working in the project through a bind mount blocks node_modules ($res)"
+	else
+		fail "an agent working in the project through a bind mount: $res"
+	fi
+	umount /tmp/agentbind-alias
+}
+agent_bind_check
+
 # 5. Wave 2 red-team R3: with statx denied (kernels before 5.8), kipple
 #    falls back to /proc/self/mountinfo. A bind present at scan is
 #    contains_mount, and binds made while clean --apply runs must be seen
