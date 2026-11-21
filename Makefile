@@ -114,3 +114,17 @@ test-linux-prime: linux-image
 		-e GOMODCACHE=/cache/gomod -e GOFLAGS="-modcacherw -mod=readonly" -e GOTOOLCHAIN=local \
 		-e GOCACHE=/cache/go-build -e GOPATH=/tmp/gopath --tmpfs /tmp:rw,exec,mode=1777 \
 		$(LINUX_IMAGE) go mod download
+
+# Real bind, tmpfs and overlay mounts inside a fixture home (task 2.7): a
+# throwaway --privileged container whose only mount is the read-only repo,
+# with the kipple binary cross-compiled into dist/ first. If Docker refuses
+# privileged containers, this target fails saying so; it never passes
+# without running the check.
+.PHONY: test-linux-mounts
+test-linux-mounts: linux-image
+	@arch="$$($(DOCKER) version --format '{{.Server.Arch}}')" && \
+	CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) build -trimpath -o dist/linux-mount-check/kipple ./cmd/kipple
+	@$(DOCKER) run --rm --privileged --network none $(LINUX_IMAGE) true >/dev/null 2>&1 || \
+		{ echo "test-linux-mounts: this Docker cannot run --privileged containers, so the real-mount check cannot run (the stub-based mount tests in make test-linux remain the contract)" >&2; exit 1; }
+	$(DOCKER) run --rm --privileged --network none --user 0 -v "$(CURDIR)":/src:ro -w /src \
+		--tmpfs /tmp:rw,exec,mode=1777 $(LINUX_IMAGE) scripts/linux-mount-check.sh /src/dist/linux-mount-check/kipple

@@ -66,7 +66,7 @@ Exit criterion: `make test-linux` is green for every package, run as uid 1000, w
   - fixture scans in the container: "Old cache folder pre-selected", "Recent cache folder held back", "Excluded folder never offered" (one fixture child per exclude) and "Snap data is info only";
   - "Excludes documented" (docs/safety.md exclude table diffed against the rule).
 - [x] 2.6 Platform plumbing in `cmd/internal/launch` and `cmd/kipple`: `unsupported_platform` for other OSes, XDG warnings (ignored with `KIPPLE_HOME`), home resolution through a symlinked parent, and `os` and `arch` in `kipple version`. Verify with tests "Linux is supported", "Unsupported platform refused" (injected GOOS), "XDG_CACHE_HOME outside home", "XDG_CACHE_HOME elsewhere under home", "Fixture ignores XDG variables", "Symlinked /home" (fixture layout under `t.TempDir()`), "Symlink below home still refused", "Version JSON" and "Platform in version".
-- [ ] 2.7 Add `scripts/linux-mount-check.sh` and `make test-linux-mounts`, a privileged throwaway container whose only mount is the read-only repo. If Docker refuses `--privileged`, the target exits non-zero with that reason and never reports a pass. The script builds a fixture under `/tmp/fx` with:
+- [x] 2.7 Add `scripts/linux-mount-check.sh` and `make test-linux-mounts`, a privileged throwaway container whose only mount is the read-only repo. If Docker refuses `--privileged`, the target exits non-zero with that reason and never reports a pass. The script builds a fixture under `/tmp/fx` with:
   - a bind mount of `Documents` at `.cache/foo/docs`;
   - a bind mount at `.cache/bar`;
   - a tmpfs at `.cache/baz/t`;
