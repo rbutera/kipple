@@ -484,3 +484,51 @@ func TestParentExchangeLoopDuringApply(t *testing.T) {
 	}
 	t.Logf("moved %d, skipped %d", len(res.Moved), len(res.Skipped))
 }
+
+// Review should-fix 2: kipple changes the mode only of a folder it created.
+// A Trash folder that already exists keeps its mode, and one created by
+// someone else between kipple's check and its mkdir is checked, not
+// chmodded: world-writable is trash_access.
+func TestTrashFolderModesAreNotChanged(t *testing.T) {
+	t.Run("Existing Trash keeps its mode", func(t *testing.T) {
+		f := newFx(t, pipFixture())
+		if err := os.Chmod(f.abs(".local/share/Trash"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if res := f.run(f.opts(f.scan(""))); len(res.Moved) != 2 {
+			t.Fatalf("%+v", res)
+		}
+		if m := modeOf(t, f.abs(".local/share/Trash")); m != 0o755 {
+			t.Fatalf("mode %v, want 0755 as it was", m)
+		}
+	})
+	t.Run("Folder created concurrently is checked, not chmodded", func(t *testing.T) {
+		f := newFx(t, pipFixture())
+		if err := os.RemoveAll(f.abs(".local/share/Trash/info")); err != nil {
+			t.Fatal(err)
+		}
+		p := f.scan("")
+		beforeMkdir = func(path string) {
+			if path == f.abs(".local/share/Trash/info") {
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, 0o777); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		t.Cleanup(func() { beforeMkdir = nil })
+		if _, err := Run(context.Background(), f.opts(p)); !errors.Is(err, ErrTrashAccess) {
+			t.Fatalf("err = %v, want ErrTrashAccess", err)
+		}
+		if m := modeOf(t, f.abs(".local/share/Trash/info")); m != 0o777 {
+			t.Fatalf("mode %v: kipple changed a folder it did not create", m)
+		}
+		for _, it := range p.Items {
+			if !exists(it.Path) {
+				t.Errorf("%s moved", it.Path)
+			}
+		}
+	})
+}

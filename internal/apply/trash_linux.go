@@ -62,6 +62,10 @@ func openHomeTrash(sess *policy.Session, home string, create bool) (*homeTrash, 
 	return &homeTrash{dir: ft.Files(), mover: ft, name: plan.MoverFreedesktop, info: ft, close: ft.Close}, nil
 }
 
+// beforeMkdir, in tests, runs just before a missing Trash folder is
+// created (to create it concurrently).
+var beforeMkdir func(path string)
+
 // trashFolder opens one folder of the Trash's path, creating it 0700 when
 // it is missing and create is set, and with check verifies its owner and
 // mode.
@@ -72,10 +76,19 @@ func trashFolder(sess *policy.Session, path string, create, check bool) (*os.Fil
 		if !create {
 			return nil, errTrashCreatable
 		}
-		if merr := sess.Mkdir(path, 0o700); merr != nil && !errors.Is(merr, fs.ErrExist) {
+		if beforeMkdir != nil {
+			beforeMkdir(path)
+		}
+		merr := sess.Mkdir(path, 0o700)
+		switch {
+		case merr == nil:
+			created = true
+		case errors.Is(merr, fs.ErrExist):
+			// Created by someone else in the meantime: it is not ours to
+			// chmod; the checks below decide whether it is usable.
+		default:
 			return nil, fmt.Errorf("%w: %s could not be created: %v", ErrTrashAccess, path, merr)
 		}
-		created = true
 		e, err = sess.Open(path)
 	}
 	if err != nil {
@@ -89,8 +102,14 @@ func trashFolder(sess *policy.Session, path string, create, check bool) (*os.Fil
 		return nil, fmt.Errorf("%w: %s is not a folder", ErrTrashAccess, path)
 	}
 	if created {
-		// Exactly 0700, whatever the umask.
-		if err := unix.Fchmod(int(e.Dir.Fd()), 0o700); err != nil {
+		// Exactly 0700, whatever the umask, but only on the folder mkdirat
+		// just made: owned by us and with no group or other bits it could
+		// not have gained. Anything else was not ours (replaced between
+		// the mkdir and the open) and is checked, never changed.
+		var st unix.Stat_t
+		if err := unix.Fstat(int(e.Dir.Fd()), &st); err != nil || int(st.Uid) != os.Geteuid() || st.Mode&0o077 != 0 {
+			created = false
+		} else if err := unix.Fchmod(int(e.Dir.Fd()), 0o700); err != nil {
 			_ = e.Dir.Close()
 			return nil, fmt.Errorf("%w: %s: %v", ErrTrashAccess, path, err)
 		}
