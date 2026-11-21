@@ -32,8 +32,11 @@ if [ ! -d /xdev ] || [ ! -w /xdev ]; then
 	exit 1
 fi
 
+# Path, type, mode, owner, group, size, mtime, ctime and inode of every
+# entry: the ctime catches chmod, chown, extended attributes and in-place
+# writes that leave size and mtime alone.
 snapshot() {
-	find "$HOME" -printf '%p %s %T@ %i\n' | LC_ALL=C sort
+	find "$HOME" -printf '%p %y %m %U %G %s %T@ %C@ %i\n' | LC_ALL=C sort
 }
 before="$(mktemp "$TMPDIR/kipple-home-before.XXXXXX")"
 after="$(mktemp "$TMPDIR/kipple-home-after.XXXXXX")"

@@ -75,7 +75,8 @@ gui-screenshots:
 # container-local home; the repository and the host module cache are mounted
 # read-only, the network is off for Go (GOPROXY=off), the Go build cache
 # lives in a named volume, /tmp is a tmpfs and /xdev a second tmpfs for
-# cross-device tests. Nothing from the host home is mounted writable.
+# cross-device tests, and the container has no network at all. Nothing from
+# the host home is mounted writable.
 DOCKER ?= docker
 LINUX_IMAGE ?= kipple-linux-test
 LINUX_VOLUME ?= kipple-linux-gocache
@@ -87,7 +88,7 @@ LINUX_GOMOD_FLAGS = -e GOMODCACHE=/cache/gomod
 else
 LINUX_GOMOD_FLAGS = -v "$$($(GO) env GOMODCACHE)":/gomod:ro -e GOMODCACHE=/gomod
 endif
-LINUX_RUN = $(DOCKER) run --rm \
+LINUX_RUN = $(DOCKER) run --rm --network none \
 	-v "$(CURDIR)":/src:ro -w /src \
 	$(LINUX_GOMOD_FLAGS) \
 	-v $(LINUX_VOLUME):/cache \
